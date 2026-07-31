@@ -2,4 +2,4 @@
 # Pinned below the next major so an upstream mkdocs-material release cannot
 # silently break the strict docs build on an unrelated commit. Raise the cap
 # after rebuilding the docs against a new major.
-mkdocs-material>=9.5,<10
+mkdocs-material>=9.7.7,<10
