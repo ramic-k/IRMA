@@ -1,0 +1,37 @@
+name: Bug report
+description: Something produced a wrong result, an error, or a crash
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Deck or configuration that reproduces it
+      description: The smallest input that shows the problem (a deck, a spectra YAML, or the exact command line). Attach files if easier.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: IRMA version
+      description: Output of `irma --version`
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and Python version, e.g. "macOS 15, Python 3.12"
+  - type: textarea
+    id: log
+    attributes:
+      label: Full error output
+      description: The complete traceback or error message, if there is one.
+      render: text

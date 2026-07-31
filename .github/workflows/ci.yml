@@ -1,0 +1,234 @@
+name: CI
+
+# IRMA CI on hosted runners.
+# Every gate is self-contained: no test executes NJOY or OCLIMAX, the
+# golden comparisons read committed reference tapes, so nothing here
+# needs a special machine.
+#
+# The two plugin gates carried `resource_group: irma-ci-plugin-env` on
+# GitLab because they force-reinstalled into ONE shared persistent conda
+# env and would corrupt each other (and did, 2026-07-01). Hosted runners
+# are ephemeral, so that constraint is gone and the gates run in parallel.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]          # version tags only (GitLab rule matched ANY tag)
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true   # GitLab `interruptible: true`
+
+env:
+  # Pin native BLAS/OMP pools to 1 for the whole job, before any Python
+  # starts: the mode-1/2 engine parallelizes across SPAWNED workers, and a
+  # threaded BLAS in parent or workers oversubscribes the cores (measured
+  # >10x slowdown).
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  VECLIB_MAXIMUM_THREADS: "1"
+  BLIS_NUM_THREADS: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  ruff-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: ruff --version
+      - run: ruff check irma/ tests/ tools/ ncrystal_plugin_IRMA/ ncrystal_plugin_ENDFTSL/
+
+  pytest:
+    # Full Python range on Linux; one version on the other platforms keeps
+    # the matrix informative without paying 9x. Windows is advisory on the
+    # first pass (MSVC/text-mode/path unknowns) -- promote to blocking once
+    # it is green.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest,  python: "3.11", blocking: true}
+          - {os: ubuntu-latest,  python: "3.12", blocking: true}
+          - {os: ubuntu-latest,  python: "3.13", blocking: true}
+          - {os: macos-latest,   python: "3.12", blocking: true}
+          - {os: windows-latest, python: "3.12", blocking: false}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.blocking }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      # Tk gives the GUI tests a real run instead of an importorskip; xvfb
+      # supplies the display they need on Linux. Both platforms' absence is
+      # handled by the tests themselves, so this is upside, not a gate.
+      - name: Install Tk + Xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - run: pip install -e ".[phonopy,spectra,mlip]"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m irma --version          # package / CLI smoke
+      - name: pytest (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m pytest
+      - name: pytest
+        if: runner.os != 'Linux'
+        run: python -m pytest
+
+  bare-install:
+    # Core only (numpy + endf-parserpy + threadpoolctl). The pytest job
+    # always installs the extras, so only this job can catch a stray
+    # module-level scipy/pyyaml/phonopy import reaching the core import
+    # path -- which would ship a broken `pip install irma`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .                  # NO extras
+      - run: pip install -r requirements-dev.txt
+      - run: python -m irma --version
+      - name: core import contracts
+        run: |
+          python -c "import irma, irma.cli, irma.core.engine, irma.core.kernels, irma.core.grids, irma.core.endf_writer, irma.core.deck; print('bare core import OK')"
+          python -c "import irma.spectra.elastic, irma.spectra.config, irma.spectra.sqe, irma.spectra.cli; print('spectra submodules core-import OK (no scipy/pyyaml at module top)')"
+          python -c "import irma.mlip, irma.mlip.cli, irma.mlip.calculators, irma.core.nuclear_data; print('mlip modules core-import OK (no ase/torch/phonopy at module top)')"
+      # tests/mlip is ignored at COLLECTION time (-k deselects only after import)
+      - run: python -m pytest --ignore=tests/mlip -k "not spectra and not ns_panel" -q
+
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install build twine
+      - run: python -m build                   # sdist + wheel -> dist/
+      - run: twine check dist/*                # metadata / long-description render
+
+  docs-lint:
+    # mkdocs --strict fails on broken links, missing nav entries, or a stale
+    # version/CHANGELOG reference. Skipped on the default branch, where the
+    # pages workflow already does the strict build before publishing.
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements-docs.txt
+      - run: python -m mkdocs build --strict -d .docs-lint-out
+
+  reference-gate:
+    # IRMA-as-reference gate for the in-repo NCrystal plugin: build it and
+    # assert it still reproduces the IRMA-produced expected cross sections.
+    # NOTE the expectations are platform-specific (NCrystal's integration
+    # differs across platforms); regenerate per platform if the matrix grows.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, blocking: true}
+          - {os: macos-latest,  blocking: false}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.blocking }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: irma_ci
+          create-args: >-
+            python=3.12 ncrystal cmake ninja scikit-build-core pytest pip
+          init-shell: bash
+      - name: build plugin + run its self-test and reference
+        run: |
+          set -e
+          cd ncrystal_plugin_IRMA
+          rm -rf build _skbuild
+          # Pin ncrystal-core to the version the installed ncrystal API
+          # package requires: the plugin only constrains >=4.3.0, so a plain
+          # install pulls the newest core and breaks the env-pinned API
+          # ("Inconsistent environment"). Harmless on a fresh runner, kept
+          # because it also documents the constraint.
+          NC_VER=$(python -m pip show ncrystal | sed -n "s/^Version: //p")
+          python -m pip install --no-build-isolation --force-reinstall --no-cache-dir "ncrystal-core==$NC_VER" .
+          ncrystal-pluginmanager --test IRMA
+          cd "$GITHUB_WORKSPACE"
+          python -m pytest ncrystal_plugin_IRMA/reference/test_reference_graphite.py -q
+
+  endftsl-reference-gate:
+    # Standalone ENDF->NCrystal plugin: C++ self-test via the plugin
+    # manager, then the converter tests + the end-to-end reference
+    # (vendored MEF tape -> NCMAT -> NCrystal auto-discovery -> coherent
+    # sigma == tape S(E)/E verbatim). Never imports irma.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: endftsl_ci
+          create-args: >-
+            python=3.12 ncrystal cmake ninja scikit-build-core endf-parserpy pytest pip
+          init-shell: bash
+      - name: build plugin + run its self-test and reference
+        run: |
+          set -e
+          cd ncrystal_plugin_ENDFTSL
+          rm -rf build _skbuild
+          NC_VER=$(python -m pip show ncrystal | sed -n "s/^Version: //p")
+          python -m pip install --no-build-isolation --force-reinstall --no-cache-dir "ncrystal-core==$NC_VER" .
+          ncrystal-pluginmanager --test ENDFTSL
+          cd "$GITHUB_WORKSPACE"
+          python -m pytest ncrystal_plugin_ENDFTSL/tests ncrystal_plugin_ENDFTSL/reference -q
+
+  build-wheel:
+    # Release-artifact guard, VERSION TAGS ONLY (the GitLab rule matched any
+    # tag, so a non-version tag started a deploy that then failed on the
+    # tag/version comparison -- QA finding REL-13, fixed here by the port).
+    # Depends on every mandatory gate at the same commit: a tag cannot
+    # produce a wheel unless lint, tests, installs, docs, and both plugin
+    # gates passed.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ruff-lint, pytest, bare-install, build-check, reference-gate, endftsl-reference-gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(python -c "import re;print(re.search(r'__version__\s*=\s*[\"\']([^\"\']+)', open('irma/__init__.py').read()).group(1))")
+          test "$TAG" = "$VER" || { echo "tag $TAG != package version $VER"; exit 1; }
+      - name: install the REAL wheel and smoke-test it
+        run: |
+          python -m venv .wheeltest
+          .wheeltest/bin/pip install dist/*.whl
+          .wheeltest/bin/python -m irma --version
+          .wheeltest/bin/python -c "import irma; print('wheel import OK', irma.__version__)"
+          .wheeltest/bin/python -c "
+          import importlib.util as u
+          assert u.find_spec('irma.gui.app') is not None, 'irma.gui.app missing from the wheel (package discovery dropped irma.gui)'
+          print('irma-gui entry point packaged OK')"
+      - uses: actions/upload-artifact@v4
+        with: {name: dist, path: dist/}

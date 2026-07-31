@@ -1,0 +1,115 @@
+[build-system]
+requires = ["setuptools>=77"]            # >=77 for the PEP 639 SPDX `license` string
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "irma"
+description = "(In)elastic Representation of Materials As S(alpha,beta) evaluations"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+license = "BSD-3-Clause AND Apache-2.0"    # PEP 639 SPDX expression: BSD project with Apache-2.0-derived portions (see THIRD_PARTY_NOTICES.md)
+# THIRD_PARTY_NOTICES.md must ship with every artifact: kernels.py (NJOY BSD-3)
+# and crystal.py (NCrystal Apache-2.0) defer their required notices to it.
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "LICENSES/Apache-2.0.txt"]
+authors = [
+    { name = "Kemal Ramic", email = "ramick@ornl.gov" },
+]
+keywords = [
+    "thermal neutron scattering",
+    "S(alpha,beta)",
+    "thermal scattering law",
+    "ENDF",
+    "LEAPR",
+    "phonon",
+    "inelastic neutron scattering",
+]
+dependencies = [
+    "numpy>=2.0",
+    # endf-parserpy is pre-1.0 and sits on the MF7 write path; cap below the next
+    # unvalidated minor so a silent 0.x bump cannot change tape output. 0.17 is
+    # the CI-validated version. Bump protocol: the weekly deps-watch canary's
+    # core-preview job runs the FULL suite (including the bit-for-bit reference
+    # tape gates) past this cap, so a green preview against a new minor IS the
+    # revalidation -- raise the cap in the same change that cites that run, and
+    # keep the conda recipe's pin in step.
+    "endf-parserpy>=0.12,<0.18",
+    # threadpoolctl backs limit_native_threads_to_one() (irma.core.noncubic_workers):
+    # the noncubic mode-1/2 spawn ProcessPool pins native BLAS/OMP threads to 1 in the
+    # parent and in every spawned worker. Without it the pin silently no-ops and a
+    # multi-threaded BLAS in the workers oversubscribes the cores (measured >10x
+    # slowdown). Required, not optional.
+    "threadpoolctl>=3.0",
+]
+classifiers = [
+    # NOTE: no per-minor `Python :: 3.x` classifiers -- CI runs a single version
+    # (3.12). Add them only alongside a pinned multi-version CI matrix.
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Repository = "https://github.com/ramic-k/IRMA"
+Issues = "https://github.com/ramic-k/IRMA/issues"
+Documentation = "https://ramic-k.github.io/IRMA/"
+
+[project.optional-dependencies]
+# Required only for the generalized noncubic inelastic paths
+# (iel=10 with inelastic_mode=1 or 2); everything else runs without it.
+# Floor 4.2: the supported major is phonopy 4 (project decision 2026-07-10;
+# suite + numerical-identity + performance parity verified on 4.3.1). The
+# code itself still runs on 2.x/3.x because primitive-cell semantics are
+# pinned explicitly (pinned_primitive_matrix_kwargs), but only 4.x is tested.
+phonopy = ["phonopy>=4.2"]
+# The neutron-scattering forward model (irma.spectra): scipy for the S(Q,E)
+# interpolation, PyYAML for the (primary) YAML config format. Declared
+# explicitly so the capability installs correctly on a bare `pip install
+# irma[spectra]` instead of relying on phonopy pulling these transitively.
+spectra = ["scipy>=1.10", "pyyaml>=6"]
+# The MLIP phonon front end (irma.mlip): structure relaxation + finite
+# displacement with a pretrained universal interatomic potential, producing
+# a phonon model bundle for the ENDF/spectra/NCrystal consumers. ASE drives the
+# relax/displace loop, phonopy assembles force constants, PyYAML backs the
+# emitted spectra/ncrystal configs. The potential packages themselves
+# (mattersim, sevenn, orb-models, mace-torch) are NOT listed: their pins
+# conflict with each other, they pull their own torch, and every import is
+# lazy -- install any subset alongside this extra (see INSTALL.md).
+mlip = ["ase>=3.23", "phonopy>=4.2", "pyyaml>=6"]
+
+[project.scripts]
+irma = "irma.cli:main"
+
+[project.gui-scripts]
+irma-gui = "irma.gui.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "irma.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["irma*"]
+
+[tool.ruff]
+# Lenient first pass: catch real bugs, not stylistic noise. Line length / blank
+# lines / import sorting are intentionally NOT enforced yet (tighten over time).
+target-version = "py311"
+line-length = 100          # documented intent; not enforced (E501 unselected)
+
+[tool.ruff.lint]
+# F  = pyflakes  (unused imports, undefined names, redefinitions -- real bugs)
+# E9 = syntax errors (always-green sanity)
+select = ["F", "E9"]
+# F841 (assigned-but-unused local) is enforced: the 12 dead locals it flagged were
+# swept (deleted, the card-consuming `nout` read kept without its binding, and the
+# Tk app ref kept with `# noqa: F841`). A new dead local now reds the gate.
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# engine.py and noncubic_engine.py are deliberate backward-compat FACADES: they
+# re-import names (run_leapr, the LEAPR kernels, the worker/numerics primitives)
+# purely to re-export them for the public API and the test suite. Those imports
+# are "unused" within the module by design, so F401 does not apply here.
+"irma/core/engine.py" = ["F401"]
+"irma/core/noncubic_engine.py" = ["F401"]

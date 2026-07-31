@@ -1,0 +1,157 @@
+# Dependency canary: run IRMA's gates against the LATEST releases of
+# everything on a weekly clock, plus a preview job that deliberately
+# upgrades past the declared caps (early warning for the day a cap must
+# be revalidated, e.g. endf-parserpy 0.18). Any failure files/updates a
+# 'deps-watch' issue with the run link and the resolved versions.
+#
+# NOTE: GitHub auto-disables scheduled workflows after ~60 days without
+# repository activity; re-enable from the Actions tab if that happens.
+name: Deps watch
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"     # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  core-latest:
+    # newest releases satisfying the declared pins (what a fresh
+    # `pip install irma[mlip,spectra]` would resolve today)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[mlip,spectra] pytest
+          { echo '### core-latest resolved versions'; echo '```'; \
+            python -m pip freeze | grep -iE "numpy|endf-parserpy|phonopy|ase|scipy|pyyaml|threadpoolctl"; \
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          python -m pytest -q
+
+  core-preview:
+    # beyond the caps: upgrade every scientific dependency to its very
+    # latest, ignoring pyproject upper bounds. A failure here is the
+    # early warning that a cap is doing real work.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[mlip,spectra] pytest
+          python -m pip install --upgrade numpy endf-parserpy phonopy ase scipy pyyaml threadpoolctl
+          { echo '### core-preview resolved versions (caps ignored)'; echo '```'; \
+            python -m pip freeze | grep -iE "numpy|endf-parserpy|phonopy|ase|scipy|pyyaml|threadpoolctl"; \
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          python -m pytest -q
+
+  python-latest:
+    # NEWEST STABLE CPython, whatever it is that week. The jobs above pin
+    # 3.12 and vary the dependencies, so they watch dependency drift and
+    # are blind to interpreter drift. Nothing stops a user from landing on
+    # a Python newer than the CI matrix: pyproject declares
+    # requires-python >=3.11 with no cap, so both `pip install irma` and a
+    # conda solver will happily pick the newest interpreter available
+    # (measured: a fresh conda env resolved to 3.14 the day 1.0.0 shipped,
+    # while CI covered 3.11-3.13).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"        # latest stable, no pre-releases
+      - name: install python3-tk (the GUI suites need a display toolkit)
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[mlip,spectra] pytest
+          { echo "### python-latest: $(python -V)"; echo '```'; \
+            python -m pip freeze | grep -iE "numpy|endf-parserpy|phonopy|ase|scipy|pyyaml|threadpoolctl"; \
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a python -m pytest -q
+
+  plugin-latest:
+    # in-repo NCrystal plugin against the newest conda-forge NCrystal
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: irma_watch
+          create-args: >-
+            python=3.12 ncrystal cmake ninja scikit-build-core pytest pip
+          init-shell: bash
+      - name: build plugin + run its self-test and reference
+        run: |
+          set -e
+          { echo '### plugin-latest NCrystal'; echo '```'; \
+            python -m pip show ncrystal | sed -n "s/^Version: /ncrystal /p"; \
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cd ncrystal_plugin_IRMA
+          rm -rf build _skbuild
+          NC_VER=$(python -m pip show ncrystal | sed -n "s/^Version: //p")
+          python -m pip install --no-build-isolation --force-reinstall --no-cache-dir "ncrystal-core==$NC_VER" .
+          ncrystal-pluginmanager --test IRMA
+          cd "$GITHUB_WORKSPACE"
+          python -m pytest ncrystal_plugin_IRMA/reference/test_reference_graphite.py -q
+
+  endftsl-latest:
+    # standalone ENDF->NCrystal plugin against the newest NCrystal
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: endftsl_watch
+          create-args: >-
+            python=3.12 ncrystal cmake ninja scikit-build-core endf-parserpy pytest pip
+          init-shell: bash
+      - name: build plugin + run its self-test and reference
+        run: |
+          set -e
+          cd ncrystal_plugin_ENDFTSL
+          rm -rf build _skbuild
+          NC_VER=$(python -m pip show ncrystal | sed -n "s/^Version: //p")
+          python -m pip install --no-build-isolation --force-reinstall --no-cache-dir "ncrystal-core==$NC_VER" .
+          ncrystal-pluginmanager --test ENDFTSL
+          cd "$GITHUB_WORKSPACE"
+          python -m pytest ncrystal_plugin_ENDFTSL/tests ncrystal_plugin_ENDFTSL/reference -q
+
+  notify:
+    # file (or extend) a deps-watch issue whenever anything above broke
+    needs: [core-latest, core-preview, python-latest, plugin-latest,
+            endftsl-latest]
+    if: failure()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          gh label create deps-watch --repo "$GITHUB_REPOSITORY" \
+            --description "automated dependency-canary reports" \
+            --color D93F0B 2>/dev/null || true
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          body="Scheduled dependency canary failed on $(date -u +%F): $run_url — the run summary lists the resolved dependency versions per job."
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --label deps-watch \
+                       --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label deps-watch \
+              --title "Dependency watch: latest-release breakage" --body "$body"
+          fi

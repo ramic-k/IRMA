@@ -1,0 +1,14 @@
+# Base runtime dependencies (mirrors pyproject.toml [project.dependencies]).
+# Optional extras (mirror pyproject.toml [project.optional-dependencies]):
+#   [phonopy]  phonopy>=4.2 for iel=10 with inelastic_mode=1/2; 4.x is the
+#              only tested major (pip install -e ".[phonopy]").
+#   [spectra]  scipy>=1.10 + pyyaml>=6 for the irma.spectra forward model
+#              (pip install -e ".[spectra]").
+#   [mlip]     ase>=3.23 + phonopy>=4.2 + pyyaml>=6 for the MLIP phonon front
+#              end (pip install -e ".[mlip]"); the potential packages
+#              themselves are never listed -- see INSTALL.md.
+numpy>=2.0
+endf-parserpy>=0.12,<0.18
+# threadpoolctl backs limit_native_threads_to_one() (irma.core.noncubic_workers);
+# required, not optional -- see the comment in pyproject.toml [project.dependencies].
+threadpoolctl>=3.0

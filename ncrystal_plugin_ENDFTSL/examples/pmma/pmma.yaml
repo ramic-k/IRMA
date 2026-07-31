@@ -1,0 +1,10 @@
+# PMMA / acrylic glass C5O2H8 from ENDF/B-VIII.1 TSL: three principal scatterers,
+# 5:2:8. All three tapes are LTHR=2 (incoherent-elastic + inelastic, no coherent);
+# hydrogen dominates (sigma_bound ~82 b).
+material_id: pmma_endftsl
+temperature: 300          # must be one of the tape's stored MT4 temperatures
+density: 1.18
+species:
+  - {tape: tsl-CinC5O2H8.endf, symbol: C, mass: 12.0107, fraction: 0.33333333333333}
+  - {tape: tsl-OinC5O2H8.endf, symbol: O, mass: 15.9994, fraction: 0.13333333333333}
+  - {tape: tsl-HinC5O2H8.endf, symbol: H, mass: 1.00794, fraction: 0.53333333333333}

@@ -1,0 +1,95 @@
+
+################################################################################
+##                                                                            ##
+##  This file is part of NCrystal (see https://mctools.github.io/ncrystal/)   ##
+##                                                                            ##
+##  Copyright 2015-2026 NCrystal developers                                   ##
+##                                                                            ##
+##  Licensed under the Apache License, Version 2.0 (the "License");           ##
+##  you may not use this file except in compliance with the License.          ##
+##  You may obtain a copy of the License at                                   ##
+##                                                                            ##
+##      http://www.apache.org/licenses/LICENSE-2.0                            ##
+##                                                                            ##
+##  Unless required by applicable law or agreed to in writing, software       ##
+##  distributed under the License is distributed on an "AS IS" BASIS,         ##
+##  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  ##
+##  See the License for the specific language governing permissions and       ##
+##  limitations under the License.                                            ##
+##                                                                            ##
+################################################################################
+
+cmake_minimum_required(VERSION 3.20...3.31)
+
+#Extract plugin name from ncplugin_name.txt:
+file( STRINGS "${CMAKE_CURRENT_LIST_DIR}/ncplugin_name.txt" NCPlugin_NAME LIMIT_COUNT 1)
+string(STRIP "${NCPlugin_NAME}" NCPlugin_NAME)
+
+project( "NCPlugin_${NCPlugin_NAME}" VERSION 0.0.1 LANGUAGES CXX)
+
+set( ncplugin_data_file_pattern "data/*" )
+
+if ( DEFINED SKBUILD_PROJECT_NAME )
+  if ( NOT "${SKBUILD_PROJECT_NAME}" STREQUAL "ncrystal_plugin_${NCPlugin_NAME}" )
+    message(
+      FATAL_ERROR "Mismatch in plugin name hardcoded in "
+      " ncplugin_name.txt and pyproject.toml's project.name field."
+    )
+  endif()
+endif()
+
+#Must always build against NCrystal:
+if( NOT DEFINED "NCrystal_DIR" )
+  #Need to invoke "ncrystal-config --show cmakedir" if we want to be able to
+  #work with ncrystal-core installed via python wheels:
+  execute_process(
+    COMMAND ncrystal-config --show cmakedir
+    OUTPUT_VARIABLE "NCrystal_DIR" OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+endif()
+find_package( NCrystal 4.3.0 REQUIRED )
+
+function( ncrystal_srcfileglob varname pattern )
+  #Glob while ignoring temporary files.
+  file(
+    GLOB tmpall LIST_DIRECTORIES false
+    CONFIGURE_DEPENDS "${pattern}"
+  )
+  set(tmp "")
+  foreach(fn ${tmpall})
+    get_filename_component( bn "${fn}" NAME)
+    if (bn MATCHES "(#|~| )+")
+      message( WARNING "Ignoring file with invalid name: ${bn}")
+    else()
+      list(APPEND tmp "${fn}")
+    endif()
+  endforeach()
+  set( ${varname} ${tmp} PARENT_SCOPE )
+endfunction()
+
+ncrystal_srcfileglob( plugin_srcfiles "${PROJECT_SOURCE_DIR}/src/*.cc" )
+ncrystal_srcfileglob( plugin_hdrfiles  "${PROJECT_SOURCE_DIR}/src/*.hh" )
+set( pluglib "NCPlugin_${NCPlugin_NAME}" )
+add_library( ${pluglib} MODULE ${plugin_srcfiles} )
+set_source_files_properties( ${plugin_srcfiles} PROPERTIES OBJECT_DEPENDS "${plugin_hdrfiles}" )
+target_compile_definitions( ${pluglib} PRIVATE "NCPLUGIN_NAME=${NCPlugin_NAME}" "NCRYSTAL_NO_CMATH_CONSTANTS" )
+target_link_libraries( ${pluglib} PRIVATE NCrystal::NCrystal )
+target_include_directories( ${pluglib} PRIVATE "${PROJECT_SOURCE_DIR}/src" )
+
+if ( ncplugin_data_file_pattern )
+  file(GLOB plugin_datafiles LIST_DIRECTORIES false CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/${ncplugin_data_file_pattern}" )
+else()
+  set( plugin_datafiles "" )
+endif()
+
+if ( DEFINED SKBUILD_PROJECT_NAME )
+  #Install in wheel platlib dir:
+  set( pymoddir "${SKBUILD_PLATLIB_DIR}/ncrystal_plugin_${NCPlugin_NAME}")
+  install( TARGETS ${pluglib} LIBRARY DESTINATION "${pymoddir}/plugins" )
+  #Special location for data files:
+  install( FILES ${plugin_datafiles} DESTINATION "${pymoddir}/data" )
+else()
+  install( TARGETS ${pluglib} LIBRARY DESTINATION lib )
+  install( FILES ${plugin_datafiles} DESTINATION data )
+endif()

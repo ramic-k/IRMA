@@ -1,0 +1,17 @@
+# Reference gate fixture: a small graphite mode-2 export. Small mesh/grid/directions
+# keep it fast + deterministic; it exercises the full path (coherent 1-phonon +
+# anisotropic-DW elastic + multiphonon) the plugin must reproduce faithfully.
+material:
+  phonopy_yaml: tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml
+  mesh: [4, 4, 4]
+  temperature_K: 296.0
+  scatterers:
+    - {symbol: C, sigma_bound_b: 5.551, awr: 11.898, b_coh_fm: 6.646, sigma_inc_b: 0.001}
+export:
+  material_id: graphite_reference
+  inelastic_mode: 2
+  num_directions: 200
+  multiphonon_num_directions: 100
+  multiphonon_max_order: 4
+  alpha_grid: [0.05, 0.12, 0.3, 0.7, 1.5, 3.0, 6.0, 12.0, 24.0]
+  beta_grid: [0.0, 0.2, 0.5, 1.0, 1.8, 3.0, 5.0, 8.0, 13.0]

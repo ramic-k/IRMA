@@ -1,0 +1,17 @@
+NCMAT v5
+@CELL
+  lengths 2.4606 2.46060000039 6.705
+  angles 90 90 119.999999995
+@ATOMPOSITIONS
+  C 0 0 0
+  C 0 0 0.5
+  C 0.333333333333 0.666666666667 0
+  C 0.666666666667 0.333333333333 0.5
+@DYNINFO
+  element C
+  fraction 1
+  type vdosdebye
+  debye_temp 868.449286015
+
+@CUSTOM_IRMA
+  pack graphite_reference__C.irmapack

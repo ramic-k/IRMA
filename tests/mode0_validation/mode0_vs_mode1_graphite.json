@@ -1,0 +1,15 @@
+{
+  "mesh": [
+    16,
+    16,
+    16
+  ],
+  "T_K": 300.0,
+  "n_atoms_cell": 4,
+  "integral_mode0": 0.04749763162488169,
+  "integral_mode1": 0.0467336186167734,
+  "integral_ratio_mode0_over_mode1": 1.0163482527294403,
+  "shape_cosine_similarity": 0.919987405438113,
+  "peak_meV_mode0": 0.0,
+  "peak_meV_mode1": 1.0
+}
