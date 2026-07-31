@@ -1,0 +1,41 @@
+# Line-ending and diff policy.
+#
+# IRMA compares generated ENDF tapes against committed references BYTE FOR
+# BYTE. Git's line-ending translation on a Windows checkout would rewrite
+# those references and fail every golden gate for reasons unrelated to the
+# code, so the byte-compared data is pinned to LF (or marked binary)
+# regardless of platform or a user's core.autocrlf setting.
+
+# Default: let git detect text, but never translate on checkout.
+* -text
+
+# Byte-compared nuclear-data artifacts and the decks that generate them:
+# always LF in the working tree, on every platform.
+*.endf   text eol=lf
+*.leapr  text eol=lf
+*.input  text eol=lf
+*.template text eol=lf
+*.ncmat  text eol=lf
+*.oclimax text eol=lf
+
+# Binary fixtures: no translation, no textual diff.
+*.gz     binary
+*.npz    binary
+*.png    binary
+*.pdf    binary
+*.irmapack binary
+
+# Source and docs: LF in the working tree so a Windows contributor cannot
+# introduce CRLF into the tree.
+*.py     text eol=lf
+*.pyx    text eol=lf
+*.cc     text eol=lf
+*.hh     text eol=lf
+*.h      text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.toml   text eol=lf
+*.cfg    text eol=lf
+*.txt    text eol=lf
+*.sh     text eol=lf

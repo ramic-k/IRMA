@@ -1,0 +1,42 @@
+# IRMA spectra — direct geometry, constant-|Q| cuts
+#
+# Three constant-Q cuts through the powder S(Q,E) at Ei = 250 meV, each
+# averaged over a finite +/- 0.25 1/A detector Q-bin, with a polynomial
+# resolution width.
+#
+# Run from this directory (examples/spectra/):
+#   python -m irma spectra run graphite_direct_qcuts.yaml -o graphite_qcuts.csv
+#
+# Runtime: under a minute with the quick settings below.
+#
+# NOTE on the energy grid: grid.e_max_meV must cover the FULL one-phonon
+# spectrum (~200 meV for graphite) whenever multiphonon terms are on, because
+# the engine derives its internal multiphonon work grid from the output grid.
+# A narrower window (e.g. e_max 90) truncates the multiphonon kernels and IRMA
+# warns loudly ("multiphonon kernel area vs analytic MSD differs..."). Since
+# direct geometry also requires e_max < Ei, low-Ei setups that cannot reach the
+# phonon cutoff should set physics.max_phonon_order: 1 instead.
+material:
+  phonopy_yaml: ../../tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml
+  mesh: [12, 12, 12]
+  temperature_K: 300.0
+  scatterers:
+    - {symbol: C, sigma_bound_b: 5.551, awr: 11.898, b_coh_fm: 6.646,
+       sigma_inc_b: 0.001}
+physics:
+  inelastic_mode: 1
+  max_phonon_order: auto
+  n_directions: 1000
+  multiphonon_directions: 200
+  elastic: true
+grid: {e_min_meV: 0.0, e_max_meV: 220.0, de_meV: 0.5, dq_max_invA: 0.1}
+instrument:
+  geometry: direct
+  e_fixed_meV: 250.0                # Ei (> e_max, and the grid spans the
+                                    # ~200 meV graphite phonon cutoff)
+  angles_deg: [10.0, 60.0]          # detector span (sets the kinematic reach)
+  output_mode: cuts
+  cut_by: q
+  q_cuts: [3.0, 5.0, 7.0]           # constant-|Q| values [1/A]
+  cut_dq_invA: 0.25                 # finite Q-bin half-width for each cut
+  sigma_coeffs: [1.5, 0.01, 0.0]    # sigma(E) = c0 + c1*E + c2*E^2 [meV]

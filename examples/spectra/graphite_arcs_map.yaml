@@ -1,0 +1,32 @@
+# IRMA spectra — direct-geometry 2-D S(Q,E) map with the ARCS chopper model
+#
+# A powder S(Q,E) map for ARCS at Ei = 250 meV, resolution-broadened with the
+# automatic chopper model (validated against Mantid PyChop), masked to the
+# instrument's detector coverage.
+#
+# Run from this directory (examples/spectra/):
+#   python -m irma spectra map graphite_arcs_map.yaml --q-max 16 --mask \
+#       --angle-range 2.4 136 -o graphite_arcs_sqe.csv
+#
+# (.npz output: just change the extension. Omit --mask for the full rectangle.)
+# Runtime: ~1-2 minutes with the quick settings below.
+material:
+  phonopy_yaml: ../../tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml
+  mesh: [12, 12, 12]                # production: [40, 40, 40]
+  temperature_K: 300.0
+  scatterers:
+    - {symbol: C, sigma_bound_b: 5.551, awr: 11.898, b_coh_fm: 6.646,
+       sigma_inc_b: 0.001}
+physics:
+  inelastic_mode: 1                 # incoherent approximation (fast survey)
+  max_phonon_order: auto
+  n_directions: 1000
+  multiphonon_directions: 200
+  elastic: true
+grid: {e_min_meV: -50.0, e_max_meV: 240.0, de_meV: 1.0, dq_max_invA: 0.1}
+instrument:
+  geometry: direct
+  e_fixed_meV: 250.0                # Ei
+  angles_deg: [5.0, 60.0]
+  resolution_model: chopper
+  chopper_spec: {instrument: ARCS, package: ARCS-700-1.5-AST, frequency: 600}

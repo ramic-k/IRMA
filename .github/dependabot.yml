@@ -1,0 +1,15 @@
+# Per-release dependency PRs: each new release of a Python dependency or
+# a pinned GitHub Action becomes a pull request whose CI verdict answers
+# "does the new version break IRMA?". Complements the deps-watch canary.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [deps-watch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [deps-watch]

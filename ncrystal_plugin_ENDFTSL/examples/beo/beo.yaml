@@ -1,0 +1,10 @@
+# BeO from ENDF/B-VIII.1 TSL: two principal scatterers, 1:1. Both tapes are
+# LTHR=1 (coherent elastic + inelastic, no incoherent); each carries the FULL
+# per-atom Bragg comb, which the converter fraction-weights (0.5 each) so the two
+# packs sum to the per-atom coherent cross section.
+material_id: beo_endftsl
+temperature: 293.6        # must be one of the tape's stored MT4 temperatures
+density: 3.01
+species:
+  - {tape: tsl-BeinBeO.endf, symbol: Be, mass: 9.0122,  fraction: 0.5}
+  - {tape: tsl-OinBeO.endf,  symbol: O,  mass: 15.9994, fraction: 0.5}

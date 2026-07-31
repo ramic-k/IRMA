@@ -1,0 +1,609 @@
+"""The phonon-model bundle: the artifact boundary of the MLIP front end.
+
+A bundle directory is the complete, self-contained deliverable of
+`irma mlip build`:
+
+    <outdir>/
+      phonopy.yaml            relaxed cell + embedded force constants
+                              (+ embedded NAC when a BORN file was given)
+      structure_relaxed.vasp  POSCAR form of the relaxed cell
+      manifest.json           provenance incl. artifact sha256s (schema 1)
+      dos.dat                 total DOS on the quick-look mesh (meV, 2 col)
+      dos.png                 written only when matplotlib is importable
+      scratch/                per-displacement force cache (removable)
+
+The embedded-FC phonopy.yaml is the load-bearing choice: IRMA's resolver
+prefers embedded force constants over every loose file and never falls back
+to the cwd, so this one file feeds Card 6f (ENDF modes 1/2), the spectra
+config, and the NCrystal exporter with no loose-file hazards.
+
+NAC contract (single mechanism): a BORN file is parsed against the phonopy
+primitive and assigned to nac_params ONLY for the duration of the save (the
+prior state is restored afterwards, so one builder call can never leak NAC
+into a later bundle), and the writer asserts the saved yaml embeds NAC. A
+phonon object arriving with nac_params already set and no born_path is
+rejected as ambiguous. Emitted decks use use_born=0 -- IRMA consumes embedded
+NAC directly. No BORN file is copied into the bundle.
+
+All heavy imports are function-level (core-clean module).
+"""
+from __future__ import annotations
+
+import datetime as _dt
+import hashlib
+import json
+import os
+from dataclasses import dataclass
+
+MANIFEST_SCHEMA = 1
+THZ_TO_MEV = 4.13566553853599
+IMAGINARY_FLOOR_MEV = -0.05     # below this a mode counts as imaginary
+
+# every file write_bundle owns (dos.png is conditionally produced but always
+# owned: a stale one must not survive an overwrite where matplotlib vanished)
+_OWNED = ("phonopy.yaml", "structure_relaxed.vasp", "manifest.json",
+          "dos.dat", "dos.png")
+_STAGING = ".bundle-staging"
+
+_ADVICE = ("imaginary modes usually mean the structure is not at a true "
+           "minimum of this potential or the supercell truncates the force "
+           "constants: tighten --fmax, enlarge --supercell, or try another "
+           "potential; small flexural artifacts are common in layered "
+           "materials")
+
+
+@dataclass
+class Bundle:
+    path: str
+    phonopy_yaml: str
+    structure: str
+    manifest: dict
+
+    @property
+    def fingerprint(self) -> str:
+        return self.manifest.get("fingerprint", "")
+
+
+def _sha256(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _safe_name(name, what) -> str:
+    """Manifest file entries must be plain names inside the bundle dir."""
+    if (not name or os.path.isabs(name) or os.sep in name
+            or (os.altsep and os.altsep in name) or ".." in name):
+        raise ValueError(f"unsafe {what} in bundle manifest: {name!r}")
+    return name
+
+
+def dos_grid_and_fallback(phonon, method, dos_sigma_mev=None,
+                          fallback_sigma_mev=1.0):
+    """Run a phonopy DOS method with a resolving grid + flat-band guards.
+
+    ``method`` is ``"run_total_dos"`` or ``"run_projected_dos"`` (same
+    sigma/freq_pitch API); the mesh must already be run. Returns None
+    when the tetrahedron result stood, else the smearing width (meV)
+    that was applied.
+
+    Grid pitch: min(0.5 meV, span/200) -- never coarser than 0.5 meV on
+    wide (hydrous) spectra, never coarser than phonopy's old 201-point
+    default on narrow ones -- floored at 0.01 meV, and halved below an
+    explicit sigma so the grid always resolves the smearing (a 0.05 meV
+    sigma sampled every 0.5 meV integrates to almost anything).
+
+    Fallback trigger (tetrahedron path only): any band whose spread
+    across the mesh is <= the pitch (numerically flat: zero tetrahedron
+    width; covers Gamma-only meshes, where every band qualifies).
+
+    Known limitation: a flat band buried INSIDE a dispersive continuum
+    re-sorts across band-index columns at each crossing and can evade
+    the per-column spread test. A state-count check was prototyped and
+    rejected: the tetrahedron DOS integral oscillates +-2-3% on
+    quick-look meshes (measured on EMT Al at 6^3-10^3), the same size
+    as a lost small band, so it cannot be thresholded reliably.
+    Physically the corner is remote -- bands are numerically flat
+    because their modes are decoupled (isolated molecular units,
+    Gamma-only meshes), and a mode inside a continuum hybridizes and
+    acquires width.
+    """
+    import numpy as np
+    f_mesh = np.asarray(phonon.mesh.frequencies, float) * THZ_TO_MEV
+    span = float(f_mesh.max() - f_mesh.min())
+    pitch_mev = min(0.5, span / 200.0) if span > 0 else 0.5
+    if dos_sigma_mev is not None:
+        pitch_mev = min(pitch_mev, float(dos_sigma_mev) / 2.0)
+    pitch_mev = max(pitch_mev, 0.01)
+    run = getattr(phonon, method)
+    pitch_thz = pitch_mev / THZ_TO_MEV
+    if dos_sigma_mev is not None:
+        run(freq_pitch=pitch_thz, sigma=float(dos_sigma_mev) / THZ_TO_MEV)
+        return None
+    band_spread = f_mesh.max(axis=0) - f_mesh.min(axis=0)
+    if float(band_spread.min()) > pitch_mev:
+        run(freq_pitch=pitch_thz)
+        return None
+    run(freq_pitch=pitch_thz, sigma=fallback_sigma_mev / THZ_TO_MEV)
+    return fallback_sigma_mev
+
+
+def _dos_and_census(phonon, mesh, dos_sigma_mev=None):
+    """Quick-look mesh: total DOS (meV) + weight-aware imaginary census.
+
+    dos_sigma_mev optionally widens the smearing (phonopy sigma, converted
+    from meV) -- Gamma-only disordered runs need broadening to read as a
+    smooth DOS.
+
+    The linear tetrahedron default has a blind spot found live on
+    scawtite: a numerically dispersionless band (molecular O-H stretch
+    on a small supercell; every band of a Gamma-only mesh) has zero
+    tetrahedron width and drops out of the DOS entirely -- at ANY grid
+    pitch. A per-band mesh-spread guard covers it (see
+    dos_grid_and_fallback, including its documented crossing
+    limitation): any numerically flat band falls the DOS back to 1 meV
+    Gaussian smearing, recorded in the census. The grid
+    pitch is also pinned (phonopy's default 201-point grid is ~2.7 meV
+    on a 500-meV hydrous spectrum, coarse enough to step over narrow
+    bands even where the tetrahedra see them)."""
+    import math as _math
+    import numpy as np
+    if dos_sigma_mev is not None and (
+            not _math.isfinite(float(dos_sigma_mev))
+            or float(dos_sigma_mev) <= 0):
+        raise ValueError(f"dos_sigma_mev must be positive and finite, "
+                         f"got {dos_sigma_mev!r}")
+    phonon.run_mesh(list(mesh))
+    fallback = dos_grid_and_fallback(phonon, "run_total_dos", dos_sigma_mev)
+    e_mev = np.asarray(phonon.total_dos.frequency_points, float) * THZ_TO_MEV
+    rho = np.asarray(phonon.total_dos.dos, float) / THZ_TO_MEV   # per meV
+    # symmetry-reduced mesh: weight each irreducible q-point's modes so the
+    # census counts modes over the FULL requested mesh (review finding 7)
+    freqs = np.asarray(phonon.mesh.frequencies, float) * THZ_TO_MEV
+    weights = np.asarray(phonon.mesh.weights, int)
+    n_modes = int(weights.sum()) * freqs.shape[1]
+    n_imag = int((weights[:, None] * (freqs < IMAGINARY_FLOOR_MEV)).sum())
+    census = {
+        "mesh": [int(n) for n in mesh],
+        "freq_min_meV": float(freqs.min()),
+        "freq_max_meV": float(freqs.max()),
+        "n_modes": n_modes,
+        "n_modes_irreducible": int(freqs.size),
+        "n_imaginary": n_imag,
+    }
+    if fallback is not None:
+        census["dos_smearing_fallback_mev"] = fallback
+    if n_imag:
+        census["advice"] = _ADVICE
+    return e_mev, rho, census
+
+
+def _write_dos(outdir, e_mev, rho):
+    import numpy as np
+    path = os.path.join(outdir, "dos.dat")
+    np.savetxt(path, np.column_stack((e_mev, rho)),
+               header="energy_meV  dos_per_meV (total, quick-look mesh)")
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return path, None
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(e_mev, rho)
+    ax.set_xlabel("energy (meV)")
+    ax.set_ylabel("DOS (1/meV)")
+    ax.set_title("MLIP phonon model: total DOS (quick-look)")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    png = os.path.join(outdir, "dos.png")
+    fig.savefig(png, dpi=120)
+    plt.close(fig)
+    return path, png
+
+
+def _parse_born(phonon, born_path):
+    """Parse BORN against the phonopy primitive -> nac_params dict."""
+    from phonopy.file_IO import parse_BORN
+    nac = parse_BORN(phonon.primitive, filename=str(born_path))
+    if nac is None:
+        raise ValueError(f"could not parse BORN file {born_path}")
+    if not nac.get("factor"):
+        # BORN files may omit the conversion factor; install phonopy's own
+        # VASP-units value rather than a hand-rounded 14.4
+        try:
+            # phonopy >= 2.48; phonopy.units.* is deprecated and slated
+            # for removal (same guard as irma.core.noncubic_workers)
+            from phonopy.physical_units import get_physical_units
+            units = get_physical_units()
+            hartree, bohr = units.Hartree, units.Bohr
+        except ImportError:
+            from phonopy.units import Hartree as hartree, Bohr as bohr
+        nac["factor"] = hartree * bohr
+    return nac
+
+
+def check_born_rows(born_path, relaxed_atoms) -> str | None:
+    """Fail-fast BORN <-> relaxed-symmetry compatibility check.
+
+    phonopy's BORN format carries one tensor row per SYMMETRY-INDEPENDENT
+    atom, judged at phonopy's own tolerance against the structure the
+    file is parsed with. A file written for the input symmetry therefore
+    stops matching when relaxation drifts the positions off the exact
+    Wyckoff sites (spacegroup falls to P1 -> one row per atom expected).
+    Returning the problem BEFORE the displacement loop turns an
+    after-everything parse error into an immediate, actionable one.
+    Returns None when compatible, else the error message.
+    """
+    from phonopy.structure.atoms import PhonopyAtoms
+    from phonopy.structure.symmetry import Symmetry
+
+    rows = 0
+    try:
+        with open(born_path) as fh:
+            lines = [ln.strip() for ln in fh
+                     if ln.strip() and not ln.strip().startswith("#")]
+        rows = max(0, len(lines) - 2)      # factor line + dielectric line
+    except OSError as exc:
+        return f"cannot read BORN file {born_path}: {exc}"
+
+    pa = PhonopyAtoms(symbols=relaxed_atoms.get_chemical_symbols(),
+                      cell=relaxed_atoms.get_cell().array,
+                      scaled_positions=relaxed_atoms.get_scaled_positions(),
+                      masses=relaxed_atoms.get_masses())
+    symmetry = Symmetry(pa)                # phonopy's own tolerance
+    n_indep = len(symmetry.get_independent_atoms())
+    if rows == n_indep:
+        return None
+    sg = symmetry.get_international_table()
+    return (f"BORN file {born_path} has {rows} Born-tensor row(s), but "
+            f"the RELAXED structure has {n_indep} symmetry-independent "
+            f"atom(s) (spacegroup {sg} at phonopy's tolerance). If "
+            f"relaxation drifted the positions off the ideal Wyckoff "
+            f"sites, rebuild with --snap-symmetry, or supply one Born "
+            f"row per atom ({len(pa)} rows).")
+
+
+def preflight_bundle_outdir(outdir, overwrite=False):
+    """Fail fast on a target that write_bundle would reject AFTER the
+    (potentially long) relax + displacement compute: a path that is a file,
+    or a non-empty directory without overwrite. Scratch-only content is
+    fine (that is the resume case). Call before any expensive work."""
+    outdir = os.path.abspath(str(outdir))
+    if os.path.isfile(outdir):
+        raise FileExistsError(f"{outdir} is a file, not a directory")
+    if os.path.isdir(outdir):
+        existing = [n for n in os.listdir(outdir)
+                    if n not in ("scratch", _STAGING)]
+        if existing and not overwrite:
+            raise FileExistsError(
+                f"{outdir} is not empty (found {sorted(existing)[:5]}...); "
+                f"pass --overwrite to replace a previous bundle")
+    return outdir
+
+
+def write_bundle(outdir, *, phonon_result, relax_result, calc_meta,
+                 args_used, mesh, input_structure_path=None, born_path=None,
+                 disordered=False, dos_sigma_mev=None, overwrite=False,
+                 progress=print) -> Bundle:
+    """Serialize the model + provenance; see module docstring for layout.
+
+    The serialized model is ALWAYS phonon_result.phonon: metrics, the
+    fingerprint, and the saved yaml can never describe different objects.
+    """
+    from ase.io import write as ase_write
+    from irma import __version__ as irma_version
+    from irma.core.phonopy_io import (
+        phonopy_yaml_embeds_force_constants, phonopy_yaml_embeds_nac)
+
+    phonon = phonon_result.phonon
+    outdir = os.path.abspath(str(outdir))
+    os.makedirs(outdir, exist_ok=True)
+
+    # Guards run BEFORE anything is deleted or written: a failed overwrite
+    # must leave a previously valid bundle intact (review regression 2).
+    existing = [n for n in os.listdir(outdir)
+                if n != "scratch" and n != _STAGING]
+    if existing and not overwrite:
+        raise FileExistsError(
+            f"{outdir} is not empty (found {sorted(existing)[:5]}...); pass "
+            f"overwrite=True (--overwrite) to replace a previous bundle")
+    if phonon.nac_params is not None and born_path is None:
+        raise ValueError(
+            "the phonon object already carries nac_params but no born_path "
+            "was given; NAC must enter through born_path so its provenance "
+            "is recorded (clear nac_params or pass the BORN file)")
+
+    # Build everything in a staging directory inside outdir (same
+    # filesystem, so the final os.replace swaps are atomic per file).
+    staging = os.path.join(outdir, _STAGING)
+    if os.path.isdir(staging):
+        import shutil
+        shutil.rmtree(staging)
+    os.makedirs(staging)
+
+    yaml_path = os.path.join(staging, "phonopy.yaml")
+    prior_nac = phonon.nac_params
+    try:
+        if born_path is not None:
+            phonon.nac_params = _parse_born(phonon, born_path)
+        phonon.save(yaml_path, settings={"force_constants": True})
+        # DOS + census run INSIDE the NAC window: with NAC applied, the
+        # serialized model and every recorded phonon quantity describe the
+        # same physics (review regression 1).
+        e_mev, rho, census = _dos_and_census(phonon, mesh,
+                                             dos_sigma_mev=dos_sigma_mev)
+    finally:
+        phonon.nac_params = prior_nac      # never leak into later bundles
+
+    if not phonopy_yaml_embeds_force_constants(yaml_path):
+        raise RuntimeError(
+            f"{yaml_path} does not embed force constants after save; "
+            f"phonopy save contract changed")
+    nac_embedded = phonopy_yaml_embeds_nac(yaml_path)
+    if born_path is not None and not nac_embedded:
+        raise RuntimeError(
+            f"BORN was supplied but {yaml_path} does not embed NAC after "
+            f"save; phonopy save contract changed")
+
+    structure_path = os.path.join(staging, "structure_relaxed.vasp")
+    ase_write(structure_path, relax_result.atoms, direct=True, format="vasp")
+
+    dos_path, png_path = _write_dos(staging, e_mev, rho)
+    if census["n_imaginary"]:
+        progress(f"  WARNING: {census['n_imaginary']} imaginary mode(s) on "
+                 f"the {tuple(mesh)} mesh (min {census['freq_min_meV']:.2f} "
+                 f"meV). {_ADVICE}.")
+
+    import ase
+    import numpy as np
+    import phonopy as _phonopy
+
+    manifest = {
+        "schema": MANIFEST_SCHEMA,
+        "kind": "irma-mlip-phonon-bundle",
+        "created_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "irma_version": irma_version,
+        "disordered": bool(disordered),
+        "input": {
+            "args": dict(args_used),
+            "structure_path": (os.path.abspath(input_structure_path)
+                               if input_structure_path else None),
+            "structure_sha256": (_sha256(input_structure_path)
+                                 if input_structure_path
+                                 and os.path.isfile(input_structure_path)
+                                 else None),
+        },
+        "calculator": dict(calc_meta),
+        "relaxation": {
+            "snapped": relax_result.snapped,
+            "snap_max_shift_A": relax_result.snap_max_shift_A,
+            "jitter_cycles_used": getattr(relax_result,
+                                          "jitter_cycles_used", 0),
+            "converged": relax_result.converged,
+            "fmax_target": relax_result.fmax_target,
+            "fmax_initial": relax_result.fmax_initial,
+            "fmax_achieved": relax_result.fmax_achieved,
+            "fmax_atoms": relax_result.fmax_atoms,
+            "steps": relax_result.steps_taken,
+            "nmax": relax_result.nmax,
+            "cell_relaxed": relax_result.cell_relaxed,
+            "spacegroup_before": relax_result.spacegroup_before,
+            "spacegroup_after": relax_result.spacegroup_after,
+            "symmetry_changed": relax_result.symmetry_changed,
+            "symprec": relax_result.symprec,
+        },
+        "displacements": {
+            "count": phonon_result.n_displacements,
+            "from_cache": phonon_result.n_from_cache,
+            "delta": phonon_result.delta,
+            "jobs": phonon_result.jobs,
+            "supercell": list(phonon_result.supercell),
+            "wall_s": phonon_result.wall_s,
+        },
+        "fc_symmetrization": {
+            "asr_drift_before": phonon_result.asr_drift_before,
+            "correction_max_abs": phonon_result.symmetrization_delta,
+        },
+        "phonons": census,
+        "nac_embedded": bool(nac_embedded),
+        "born": {
+            "path": os.path.abspath(born_path) if born_path else None,
+            "sha256": (_sha256(born_path)
+                       if born_path and os.path.isfile(born_path) else None),
+        },
+        "fingerprint": phonon_result.fingerprint,
+        "versions": {
+            "ase": ase.__version__,
+            "phonopy": _phonopy.__version__,
+            "numpy": np.__version__,
+        },
+        "files": {
+            "phonopy_yaml": os.path.basename(yaml_path),
+            "structure": os.path.basename(structure_path),
+            "dos": os.path.basename(dos_path),
+            "dos_png": os.path.basename(png_path) if png_path else None,
+        },
+        "sha256": {
+            "phonopy_yaml": _sha256(yaml_path),
+            "structure": _sha256(structure_path),
+            "dos": _sha256(dos_path),
+            "dos_png": _sha256(png_path) if png_path else None,
+        },
+    }
+    manifest_staged = os.path.join(staging, "manifest.json")
+    with open(manifest_staged, "w") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+    # Swap the staged bundle into place: owned files replaced atomically,
+    # manifest LAST (its presence defines a bundle), stale extras removed.
+    import shutil
+    try:
+        for name in _OWNED:
+            final = os.path.join(outdir, name)
+            staged = os.path.join(staging, name)
+            if name == "manifest.json":
+                continue
+            if os.path.exists(staged):
+                os.replace(staged, final)
+            elif os.path.exists(final):
+                os.remove(final)           # e.g. a stale dos.png
+    except BaseException:
+        # a partial swap must not masquerade as a valid bundle: drop the old
+        # manifest so the directory reads as no-bundle rather than mixed
+        old_manifest = os.path.join(outdir, "manifest.json")
+        if os.path.exists(old_manifest):
+            os.remove(old_manifest)
+        raise
+    os.replace(manifest_staged, os.path.join(outdir, "manifest.json"))
+    shutil.rmtree(staging, ignore_errors=True)
+
+    return Bundle(path=outdir,
+                  phonopy_yaml=os.path.join(outdir, "phonopy.yaml"),
+                  structure=os.path.join(outdir, "structure_relaxed.vasp"),
+                  manifest=manifest)
+
+
+def load_bundle(path) -> Bundle:
+    """Open an existing bundle directory (no model loading; cheap).
+
+    Manifest file entries are constrained to plain names inside the bundle
+    directory (no separators, '..', or absolute paths).
+    """
+    path = os.path.abspath(str(path))
+    manifest_path = os.path.join(path, "manifest.json")
+    if not os.path.isfile(manifest_path):
+        raise FileNotFoundError(
+            f"{path} is not a bundle: no manifest.json (expected a directory "
+            f"produced by `irma mlip build`)")
+    manifest = json.load(open(manifest_path))
+    if not isinstance(manifest, dict) \
+            or manifest.get("kind") != "irma-mlip-phonon-bundle":
+        raise ValueError(f"{manifest_path} is not an irma-mlip bundle manifest")
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        raise ValueError(f"{manifest_path}: missing/invalid 'files' section")
+    yaml_name = _safe_name(files.get("phonopy_yaml"), "phonopy_yaml")
+    struct_name = _safe_name(files.get("structure"), "structure")
+    return Bundle(
+        path=path,
+        phonopy_yaml=os.path.join(path, yaml_name),
+        structure=os.path.join(path, struct_name),
+        manifest=manifest)
+
+
+def validate_bundle(path) -> list:
+    """Full check of a bundle; returns a list of problems (empty = valid).
+
+    Schema first, then artifact presence + sha256, then a real phonopy
+    reload under IRMA's pinned primitive policy with the embedded-FC and
+    NAC states cross-checked against the manifest's claims.
+
+    TRUST BOUNDARY: this is the documented first action on a RECEIVED
+    bundle, so the bundle contents are treated as UNTRUSTED throughout.
+    The manifest sha256 gate proves internal consistency only — an
+    attacker-built bundle is self-consistent — and phonopy's YAML parser
+    executes ``!!python/`` tags at parse time, so the phonopy.yaml is
+    scanned and rejected (reject_unsafe_phonopy_yaml) BEFORE any phonopy
+    parse runs. Validation never executes code from the bundle.
+    """
+    try:
+        bundle = load_bundle(path)
+    except (FileNotFoundError, ValueError, KeyError, TypeError, OSError,
+            json.JSONDecodeError) as exc:
+        return [str(exc)]
+    problems = []
+    m = bundle.manifest
+    if m.get("schema") != MANIFEST_SCHEMA:
+        problems.append(f"manifest schema {m.get('schema')!r} != "
+                        f"{MANIFEST_SCHEMA}")
+    for key in ("created_utc", "input", "calculator", "relaxation",
+                "displacements", "fc_symmetrization", "phonons",
+                "nac_embedded", "born", "fingerprint", "irma_version",
+                "versions", "files", "sha256", "disordered"):
+        if key not in m:
+            problems.append(f"manifest missing {key!r}")
+    for section in ("sha256", "files", "calculator", "relaxation",
+                    "displacements", "phonons", "input", "versions", "born"):
+        if section in m and not isinstance(m.get(section), dict):
+            problems.append(f"manifest {section} section is not a mapping")
+    ph = m.get("phonons")
+    if isinstance(ph, dict):
+        for key in ("freq_max_meV", "n_imaginary", "mesh"):
+            if key not in ph:
+                problems.append(f"manifest phonons section missing {key!r}")
+    if problems:
+        return problems
+
+    root = os.path.realpath(bundle.path)
+    try:
+        hashes = m["sha256"]
+        for label, name in m["files"].items():
+            if name is None:
+                if hashes.get(label) is not None:
+                    problems.append(f"{label}: hash recorded for an absent "
+                                    f"file")
+                continue
+            target = os.path.join(bundle.path, _safe_name(name, label))
+            # symlink containment: the RESOLVED path must stay inside the
+            # bundle (plain-name symlinks could otherwise escape)
+            resolved = os.path.realpath(target)
+            if os.path.commonpath([root, resolved]) != root:
+                problems.append(f"{label}: resolves outside the bundle "
+                                f"({resolved})")
+                continue
+            if not os.path.isfile(target):
+                problems.append(f"missing file: {target}")
+                continue
+            expected = hashes.get(label)
+            if not expected:
+                problems.append(f"{label}: no hash recorded for a present "
+                                f"file")
+            elif _sha256(target) != expected:
+                problems.append(f"{label}: sha256 mismatch (file changed "
+                                f"after the bundle was written)")
+    except (ValueError, TypeError, KeyError, OSError,
+            AttributeError) as exc:
+        problems.append(f"artifact check failed: {exc}")
+    if problems:
+        return problems
+
+    from irma.core.phonopy_io import (
+        phonopy_yaml_embeds_force_constants, phonopy_yaml_embeds_nac,
+        pinned_primitive_matrix_kwargs, reject_unsafe_phonopy_yaml)
+    # SEC guard, BEFORE any phonopy parse: phonopy's YAML loader executes
+    # `!!python/` tags, and this untrusted file must never reach it
+    try:
+        reject_unsafe_phonopy_yaml(bundle.phonopy_yaml)
+    except ValueError as exc:
+        return [str(exc)]
+    except OSError as exc:
+        return [f"could not scan {bundle.phonopy_yaml}: {exc}"]
+    if not phonopy_yaml_embeds_force_constants(bundle.phonopy_yaml):
+        problems.append("phonopy.yaml does not embed force constants")
+    if bool(m.get("nac_embedded")) != phonopy_yaml_embeds_nac(bundle.phonopy_yaml):
+        problems.append("manifest nac_embedded disagrees with phonopy.yaml")
+    try:
+        import phonopy
+
+        from irma.core.phonopy_io import isolated_phonopy_cwd
+
+        # the reload must see ONLY the bundle: phonopy.load picks up a
+        # stray ./BORN from the working directory, which broke validation
+        # of NAC-free bundles built next to an unrelated BORN file (found
+        # live in the ZrO2 campaign)
+        with isolated_phonopy_cwd():
+            ph = phonopy.load(
+                bundle.phonopy_yaml, log_level=0,
+                **pinned_primitive_matrix_kwargs(bundle.phonopy_yaml))
+        if ph.force_constants is None:
+            problems.append("reload produced no force constants")
+        if bool(m.get("nac_embedded")) != (ph.nac_params is not None):
+            problems.append("reloaded nac_params presence disagrees with "
+                            "the manifest")
+    except Exception as exc:
+        problems.append(f"phonopy reload failed: {exc}")
+    return problems

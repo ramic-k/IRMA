@@ -1,0 +1,522 @@
+"""Friendly deck-validation errors (DeckError with card/line context).
+
+Malformed input decks must fail with a message naming the offending card,
+what was expected, what was found, and the input line — never with cryptic
+downstream numerics (ZeroDivisionError, NaN conversions) and never by running
+to completion on garbage (a non-monotonic grid used to produce silent wrong
+output). Each case here was a real observed failure mode.
+"""
+import os
+import tempfile
+
+import pytest
+
+from irma.core.engine import run_leapr, DeckError
+
+# A minimal well-formed classic deck the cases below mutate.
+GOOD = """20 /
+'deck-error test'/
+1 1 4/
+1 1./
+1.0 20.0 1 0 0/
+0/
+3 4 1/
+0.05 1.0 8.0/
+0.0 0.6 2.0 6.0/
+300/
+0.005 6/
+0.0 0.20 0.45 0.55 0.30 0.0/
+0. 0. 1./
+0/
+/
+"""
+
+
+def _run(deck_text):
+    d = tempfile.mkdtemp()
+    inp = os.path.join(d, "deck.input")
+    with open(inp, "w") as f:
+        f.write(deck_text)
+    run_leapr(inp, os.path.join(d, "out.endf"))
+
+
+def _expect(deck_text, *fragments):
+    with pytest.raises(DeckError) as exc:
+        _run(deck_text)
+    msg = str(exc.value)
+    for frag in fragments:
+        assert frag in msg, f"expected {frag!r} in error message:\n  {msg}"
+    return msg
+
+
+def test_good_deck_runs():
+    _run(GOOD)   # sanity: the template itself is valid
+
+
+def test_empty_file():
+    _expect("", "no LEAPR cards found")
+
+
+def test_text_where_number_expected():
+    deck = GOOD.replace("1 1 4/", "one 1 4/")
+    _expect(deck, "Card 3", "expected a number", "'one'", "line 3")
+
+
+def test_truncated_input():
+    deck = "\n".join(GOOD.splitlines()[:8]) + "\n0.1 0.5\n"
+    _expect(deck, "Card 9", "beta", "input ended")
+
+
+def test_array_terminated_early_by_slash():
+    """ni says 6 rho values but the card supplies 4 — caught at Card 12,
+    not as a misaligned cascade further down."""
+    deck = GOOD.replace("0.0 0.20 0.45 0.55 0.30 0.0/", "0.0 0.20 0.45 0.0/")
+    _expect(deck, "Card 12", "4 of 6", "check the count")
+
+
+def test_zero_nalpha():
+    deck = GOOD.replace("3 4 1/", "0 4 1/")
+    _expect(deck, "Card 7", "nalpha")
+
+
+def test_invalid_iel():
+    deck = GOOD.replace("1.0 20.0 1 0 0/", "1.0 20.0 1 7 0/")
+    _expect(deck, "Card 5", "iel", "got 7")
+
+
+def test_nonmonotonic_beta_grid():
+    """A non-monotonic beta grid must fail at deck read, not write silent garbage."""
+    deck = GOOD.replace("0.0 0.6 2.0 6.0/", "0.0 2.0 0.6 6.0/")
+    _expect(deck, "Card 9", "strictly increasing", "0.6", "2")
+
+
+def test_nonpositive_alpha():
+    deck = GOOD.replace("0.05 1.0 8.0/", "0.0 1.0 8.0/")
+    _expect(deck, "Card 8", "alpha")
+
+
+def test_zero_tbeta():
+    """A zero tbeta must fail at deck read, not as a later ZeroDivisionError."""
+    deck = GOOD.replace("0. 0. 1./", "0. 0. 0./")
+    _expect(deck, "Card 13", "tbeta")
+
+
+def test_zero_temperature():
+    deck = GOOD.replace("300/", "0/", 1)
+    _expect(deck, "temperature", "nonzero")
+
+
+def test_missing_temperature_block():
+    """ntempr=2 but only one temperature card supplied: the comment
+    terminator gets consumed as an empty temperature card and is rejected."""
+    deck = GOOD.replace("1 1 4/", "2 1 4/")
+    _expect(deck, "temperature 2 of 2", "nonzero")
+
+
+def test_error_reports_line_number_and_file():
+    deck = GOOD.replace("0.0 0.6 2.0 6.0/", "0.0 2.0 0.6 6.0/")
+    msg = _expect(deck, "input line 9", "deck.input")
+    assert "Card 9" in msg
+
+
+def test_negative_first_temperature_still_reads_block():
+    """itemp==0 always reads the detail block even for a negative card."""
+    deck = GOOD.replace("300/", "-300/", 1)
+    _run(deck)   # must not raise
+
+
+def test_fortran_d_exponents_accepted():
+    """NJOY-style D-exponent numbers must parse like their E equivalents."""
+    deck = (GOOD.replace("0.005 6/", "5.0d-3 6/")
+                .replace("300/", "3.0D2/", 1))
+    _run(deck)   # must not raise
+
+
+def test_bad_elastic_mode_is_deck_error():
+    """iel=10 semantic validation must present as a DeckError with card
+    context, not a bare ValueError traceback."""
+    deck = """20 /
+'iel10 semantic'/
+1 1 4/
+1 6012./
+11.9 4.74 1 10 0 0/
+0/
+3 1 0 0/
+"""
+    _expect(deck, "Card 6b", "elastic_mode", "got 3")
+
+
+def test_principal_scatterer_mismatch_is_deck_error():
+    deck = """20 /
+'iel10 za mismatch'/
+1 1 4/
+1 6012./
+11.9 4.74 1 10 0 0/
+0/
+1 1 0 0/
+2.46 2.46 6.7 90. 90. 120./
+4 9 8.93 7.79 0.0018 1/
+0.0 0.0 0.0/
+"""
+    _expect(deck, "Principal scatterer", "not found", "Card 6d")
+
+_SPLIT_PRINCIPAL_DECK = """20 /
+'duplicate principal types'/
+1 1 5/
+1 6012./
+11.9 4.74 1 10 0 0/
+0/
+1 2 0 1/
+2.46 2.46 6.7 90. 90. 120./
+6 12 11.9 6.646 0.001 1/
+0.0 0.0 0.0/
+6 12 11.9 6.646 0.001 1/
+0.0 0.0 0.5/
+'/nonexistent/phonopy.yaml' /
+8 8 8 1 0 /
+100 100 /
+"""
+
+
+def test_principal_split_across_atom_types_is_merged_in_phonopy_modes():
+    """QA4 F3 (full fix): with inelastic_mode=1/2 a principal (Z,A) spread
+    over several Card 6d atom types is MERGED into one group (the MT4 law
+    accumulates over every represented site), so the deck must get PAST the
+    principal bookkeeping and only fail later on the nonexistent phonopy
+    model."""
+    with pytest.raises(RuntimeError, match="phonopy"):
+        _run(_SPLIT_PRINCIPAL_DECK)
+
+
+def test_principal_split_with_mismatched_data_rejected():
+    """Merging is only valid when the duplicate entries carry identical
+    nuclear data; a differing b_coh must stay a loud deck error."""
+    deck = _SPLIT_PRINCIPAL_DECK.replace(
+        "6 12 11.9 6.646 0.001 1/\n0.0 0.0 0.5/",
+        "6 12 11.9 7.000 0.001 1/\n0.0 0.0 0.5/")
+    _expect(deck, "differ in awr/b_coh/sigma_inc", "merged into one group")
+
+
+# An iel=10 mode-1 deck that reaches Card 6g without needing phonopy
+# (the 6g check fires before the phonopy mesh load is attempted).
+_MODE1_HEAD = """20 /
+'card 6g format deck'/
+1 1 5/
+1 6012./
+11.9 4.74 1 10 0 0/
+0/
+1 1 0 1/
+2.46 2.46 6.7 90. 90. 120./
+6 12 11.9 6.646 0.001 1/
+0.0 0.0 0.0/
+'/nonexistent/phonopy.yaml' /
+8 8 8 1 0 /
+"""
+
+
+def test_ncold_nsk_rejected_in_phonopy_modes():
+    """coldh/skold consume S(kappa) tables the phonopy-backed MT4 path never
+    builds; the combination must die as a deck error, not a mid-run crash."""
+    deck = _MODE1_HEAD.replace("11.9 4.74 1 10 0 0/",
+                               "11.9 4.74 1 10 1 0/") + "100 100 /\n"
+    _expect(deck, "ncold/nsk", "inelastic_mode=1")
+
+
+def test_secondary_scatterer_rejected_in_phonopy_modes():
+    deck = _MODE1_HEAD.replace("0/\n1 1 0 1/",
+                               "1 1. 15.85 3.88 1/\n1 1 0 1/") + "100 100 /\n"
+    _expect(deck, "secondary scatterer", "inelastic_mode=1")
+
+
+def test_nonzero_nspec_rejected_in_phonopy_modes():
+    """Card 6e partial spectra have no role when MT4/DW come from Phonopy:
+    nspec != 0 with inelastic_mode=1/2 is a deck error, never silently
+    consumed and ignored."""
+    deck = _MODE1_HEAD.replace("1 1 0 1/", "1 1 1 1/") + "100 100 /\n"
+    _expect(deck, "Card 6b", "nspec must be 0", "inelastic_mode=1")
+
+
+# ENG-1: the generalized (iel=10) MF7/MT2 builder reads only the last-computed
+# Debye-Waller array, which the bound (b7=0) two-pass merge leaves holding the
+# SECONDARY scatterer's data. The combination must die at Card 6b, not write a
+# tape whose whole elastic section comes from the wrong species. An analytic
+# (b7=1 free gas / b7=2 diffusion) secondary is single-pass — the principal's
+# Debye-Waller data stays in place — so it must stay legal.
+_IEL10_MODE0_BOUND_SECONDARY = """20 /
+'iel10 mode0 + bound two-pass secondary (must reject)'/
+1 1 4/
+1 6012./
+11.9 4.74 1 10 0 0/
+1 0. 11.9 4.74 1/
+1 1 0 0/
+"""
+
+
+def test_iel10_bound_secondary_rejected():
+    _expect(_IEL10_MODE0_BOUND_SECONDARY,
+            "Card 6 nss=1", "b7=0", "iel=10", "Debye-Waller")
+
+
+def test_iel10_freegas_secondary_gets_past_the_dw_guard():
+    """b7=1 (free gas) is single-pass: dwpix keeps the principal's DW, so the
+    guard must NOT fire. The deck head ends after Card 6b, so the parse fails
+    at Card 6c — proving it got PAST the guard."""
+    deck = _IEL10_MODE0_BOUND_SECONDARY.replace("1 0. 11.9 4.74 1/",
+                                                "1 1. 11.9 4.74 1/")
+    msg = _expect(deck, "Card 6c")
+    assert "Debye-Waller" not in msg and "two-pass" not in msg, (
+        f"analytic b7=1 secondary wrongly rejected by the iel=10 DW guard: {msg}")
+
+
+# Near-miss checks at the crystal-card level: the identical block must parse
+# to completion with nss=0 (no secondary at all) and with an analytic b7=1
+# secondary, so the guard is not over-broad.
+_IEL10_MODE0_BLOCK = (
+    "1 1 0 0/",                      # 6b: SEF, 1 atom type, inelastic_mode=0
+    "2.46 2.46 6.7 90. 90. 120./",   # 6c: graphite-like lattice
+    "6 12 11.9 6.646 0.001 1/",      # 6d: C atom
+    "0.0 0.0 0.0/",                  # 6d: position
+)
+
+
+def _crystal_block_tokens():
+    from irma.core.deck import _parse_line
+    toks = []
+    for ln in _IEL10_MODE0_BLOCK:
+        toks.extend(_parse_line(ln))
+    return toks
+
+
+def test_iel10_no_secondary_near_miss_still_parses():
+    from irma.core.crystal_cards import _parse_crystal_cards
+    from irma.core.engine import TokenReader
+    ci = _parse_crystal_cards(TokenReader(_crystal_block_tokens()),
+                              za=6012, nphon=100, nss=0, b7=0.0)
+    assert ci['inelastic_mode'] == 0 and ci['nat'] == 1
+
+
+def test_iel10_freegas_secondary_near_miss_still_parses():
+    from irma.core.crystal_cards import _parse_crystal_cards
+    from irma.core.engine import TokenReader
+    ci = _parse_crystal_cards(TokenReader(_crystal_block_tokens()),
+                              za=6012, nphon=100, nss=1, b7=1.0)
+    assert ci['inelastic_mode'] == 0 and ci['nat'] == 1
+
+
+def test_iel10_bound_secondary_rejected_at_crystal_block():
+    from irma.core.crystal_cards import _parse_crystal_cards
+    from irma.core.engine import TokenReader
+    with pytest.raises(DeckError, match="secondary-scatterer Debye-Waller"):
+        _parse_crystal_cards(TokenReader(_crystal_block_tokens()),
+                             za=6012, nphon=100, nss=1, b7=0.0)
+
+
+def test_five_field_card_6g_rejected():
+    """A 5-field Card 6g (extra trailing values) must fail loudly with
+    the supported layout named, never be silently reinterpreted."""
+    deck = _MODE1_HEAD + "100 100 1 0 0 /\n"
+    _expect(deck, "Card 6g", "2 values plus an optional 3rd value")
+
+
+def test_legacy_four_field_card_6g_rejected_with_migration_hint():
+    """Pre-v0.16 decks carried the removed incoherent-powder-method selector
+    as a 3rd field; the legacy 4-field layout must fail with a migration
+    hint, never be silently reinterpreted as the new 3-field layout."""
+    deck = _MODE1_HEAD + "100 100 0 1 /\n"
+    _expect(deck, "Card 6g", "4-field", "10000 1000 1 /")
+
+
+def test_card6g_word_method_rejected():
+    """The optional method selector written as a word ('numerical') instead
+    of its numeric code used to be dropped by read_card_floats, leaving
+    [100, 100] to pass the 2-field check with the method silently defaulted.
+    It must now fail loudly (QA2-032)."""
+    deck = _MODE1_HEAD + "100 100 numerical /\n"
+    _expect(deck, "Card 6g", "expected a number", "numerical")
+
+
+def test_new_card_6g_parses_then_fails_at_phonopy_load():
+    """The new 2-field Card 6g passes parsing; with a bogus phonopy path the
+    deck then fails at the mesh load, proving 6g itself was accepted."""
+    deck = _MODE1_HEAD + "100 100 /\n"
+    with pytest.raises(RuntimeError, match="phonopy mesh"):
+        _run(deck)
+
+
+def test_stray_empty_card_before_array_is_deck_error():
+    """A '/' on its own line where an array should start used to be silently
+    skipped, reading the array from the NEXT card and misaligning every card
+    after it."""
+    deck = GOOD.replace("0.005 6/", "0.005 6/\n/")
+    _expect(deck, "empty '/' card", "stray terminator")
+
+
+def test_zero_oscillator_energy_is_deck_error():
+    """A zero oscillator energy used to flow into discre and divide by zero."""
+    deck = GOOD.replace("0/\n/", "2/\n0.0 0.2/\n0.3 0.2/\n/")
+    _expect(deck, "oscillator energies", "> 0")
+
+
+def test_negative_oscillator_weight_is_deck_error():
+    deck = GOOD.replace("0/\n/", "1/\n0.2/\n-0.3/\n/")
+    _expect(deck, "oscillator weights")
+
+
+def test_invalid_b7_is_deck_error():
+    deck = GOOD.replace("0/\n3 4 1/", "1 5. 16.0 4.0 1/\n3 4 1/")
+    _expect(deck, "b7", "got 5")
+
+
+def test_overflowing_exponent_is_deck_error():
+    """1e999 must not silently parse to inf and poison the numeric stream."""
+    deck = GOOD.replace("0.005 6/", "1e999 6/")
+    _expect(deck, "Card 11", "expected a number", "1e999")
+
+
+def test_unquoted_module_word_title_does_not_truncate():
+    """A title that is exactly an NJOY module word must still parse as the
+    title (Cards 1-2 are exempt from the module-boundary scan)."""
+    deck = GOOD.replace("'deck-error test'/", "thermr/")
+    _run(deck)   # must not raise
+
+
+# ---------- QA2 Bucket V: generalized-card validation hardening ----------
+
+_GEN_HEAD = """20 /
+'gen validation deck'/
+1 1 4/
+1 6012./
+11.9 4.74 1 10 0 0/
+0/
+1 1 0 0/
+2.46 2.46 6.7 90. 90. 120./
+6 12 11.9 6.646 0.001 4/
+0.0 0.0 0.0  0.0 0.0 0.5  0.333333 0.666667 0.0  0.666667 0.333333 0.5/
+"""
+
+
+def test_nbeta_one_rejected_at_card7():
+    """Every beta-grid consumer (trans slopes, coldh tables, NJOY sbfill)
+    needs a two-point bracket; nbeta=1 crashed mid-kernel."""
+    deck = GOOD.replace("3 4 1/", "3 1 1/").replace(
+        "0.0 0.6 2.0 6.0/", "0.0/")
+    _expect(deck, "Card 7", "nbeta must be >= 2")
+
+
+def test_integer_field_rejects_non_integral_float():
+    """1.9 on an integer-coded field is a malformed deck, not a 1."""
+    deck = GOOD.replace("3 4 1/", "3 4.9 1/")
+    _expect(deck, "expected an integer", "4.9")
+
+
+def test_integer_field_accepts_exactly_integral_float():
+    deck = GOOD.replace("3 4 1/", "3.0 4.0 1.0/")
+    _run(deck)   # NJOY list-directed compatibility: 4.0 is 4
+
+
+def test_underscore_numeric_token_rejected():
+    """Python's underscore digit grouping (1_000) is not Fortran syntax."""
+    deck = GOOD.replace("300/", "3_00/", 1)
+    _expect(deck, "3_00")
+
+
+def test_card6c_nonpositive_lattice_length_rejected():
+    """CX2-10: a non-positive lattice edge silently collapses the unit-cell
+    volume downstream; reject it at parse time with Card 6c context."""
+    deck = _GEN_HEAD.replace("2.46 2.46 6.7 90. 90. 120./",
+                             "0.0 2.46 6.7 90. 90. 120./")
+    _expect(deck, "Card 6c", "lattice a", "> 0")
+
+
+def test_card6c_out_of_range_angle_rejected():
+    deck = _GEN_HEAD.replace("2.46 2.46 6.7 90. 90. 120./",
+                             "2.46 2.46 6.7 90. 90. 200./")
+    _expect(deck, "Card 6c", "lattice angle gamma", "(0, 180)")
+
+
+def test_card6c_degenerate_angle_triple_rejected():
+    """Angles individually in range but with a non-positive metric determinant
+    term form an imaginary-volume cell (max(0,...) would zero the volume)."""
+    deck = _GEN_HEAD.replace("2.46 2.46 6.7 90. 90. 120./",
+                             "2.46 2.46 6.7 20. 20. 170./")
+    _expect(deck, "Card 6c", "valid cell", "metric determinant")
+
+
+def test_card6d_zero_npos_rejected():
+    deck = _GEN_HEAD.replace("6 12 11.9 6.646 0.001 4/",
+                             "6 12 11.9 6.646 0.001 0/")
+    _expect(deck, "Card 6d", "npos must be >= 1")
+
+
+def test_card6d_nonpositive_awr_rejected():
+    deck = _GEN_HEAD.replace("6 12 11.9 6.646 0.001 4/",
+                             "6 12 0.0 6.646 0.001 4/")
+    _expect(deck, "Card 6d", "awr must be > 0")
+
+
+def test_card6d_negative_sigma_inc_rejected():
+    deck = _GEN_HEAD.replace("6 12 11.9 6.646 0.001 4/",
+                             "6 12 11.9 6.646 -0.5 4/")
+    _expect(deck, "Card 6d", "sigma_inc must be >= 0")
+
+
+def test_card6e_bad_spectrum_rejected():
+    """Card 6e partial spectra obey the same validity rules as the classic
+    Card 11/12 spectrum they replace."""
+    head = _GEN_HEAD.replace("1 1 0 0/", "1 1 1 0/")
+    deck_zero_delta = head + "6 12 0.0 4/\n0.0 0.2 0.5 0.3/\n"
+    _expect(deck_zero_delta, "Card 6e", "delta", "must be > 0")
+    deck_all_zero = head + "6 12 0.005 4/\n0.0 0.0 0.0 0.0/\n"
+    _expect(deck_all_zero, "Card 6e", "rho values are all zero")
+    deck_neg = head + "6 12 0.005 4/\n0.0 -0.2 0.5 0.3/\n"
+    _expect(deck_neg, "Card 6e", "rho values must be >= 0")
+
+
+_MODE2_6F_HEAD = """20 /
+'card 6f validation deck'/
+1 1 4/
+1 6012./
+11.9 4.74 1 10 0 0/
+0/
+1 1 0 2/
+2.46 2.46 6.7 90. 90. 120./
+6 12 11.9 6.646 0.001 1/
+0.0 0.0 0.0/
+'/nonexistent/phonopy.yaml' /
+"""
+
+
+def test_card6f_semantic_checks():
+    _expect(_MODE2_6F_HEAD + "0 8 8 1 0 /\n100 100 /\n",
+            "Card 6f", "mesh dimensions must all be >= 1")
+    _expect(_MODE2_6F_HEAD + "8 8 8 0 0 /\n100 100 /\n",
+            "Card 6f", "ncpu must be >= 1")
+    _expect(_MODE2_6F_HEAD + "8 8 8 1 2 /\n100 100 /\n",
+            "Card 6f", "use_born must be 0 or 1")
+
+
+def test_missing_string_card_fails_loudly():
+    """A numeric token where the phonopy.yaml path card belongs (i.e. the
+    path card is missing) must not be silently stringified."""
+    deck = _MODE2_6F_HEAD.replace("'/nonexistent/phonopy.yaml' /\n", "") \
+        + "8 8 8 1 0 /\n100 100 /\n"
+    _expect(deck, "expected a quoted string", "number")
+
+
+# ---------- Codex diff-review refinements ----------
+
+def test_numeric_title_accepted():
+    """Card 2 is free text: an unquoted numeric title must not be rejected
+    by the strict string reader used for path cards."""
+    deck = GOOD.replace("'deck-error test'/", "1234/")
+    _run(deck)   # must not raise
+
+
+def test_card6g_non_integral_float_rejected():
+    deck = _MODE1_HEAD + "100.5 100 /\n"
+    _expect(deck, "ndir must be an integer", "100.5")
+
+
+def test_card5_non_integral_iel_rejected():
+    deck = GOOD.replace("1.0 20.0 1 0 0/", "1.0 20.0 1 0.7 0/")
+    _expect(deck, "iel must be an integer", "0.7")

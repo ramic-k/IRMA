@@ -1,0 +1,74 @@
+site_name: IRMA
+# Broken in-page anchors are INFO by default, which `mkdocs build --strict`
+# does NOT fail on (it gates WARNING+): a renamed heading with a stale
+# inbound #fragment link sailed through docs CI once already (reviews
+# R7/REL-7). Promote them so strict mode catches the whole class natively.
+validation:
+  links:
+    anchors: warn
+site_description: >-
+  (In)elastic Representation of Materials As S(α,β) evaluations: thermal
+  neutron scattering law generation, instrument spectra, and Monte Carlo
+  transport kernels from one phonon model
+site_url: https://ramic-k.github.io/IRMA/
+repo_url: https://github.com/ramic-k/IRMA
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - footnotes
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]          # repo root -> include the top-level CHANGELOG.md
+      check_paths: true
+  - pymdownx.arithmatex:
+      generic: true
+extra_javascript:
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: installation.md
+      - Quickstart: quickstart.md
+      - The GUI: gui.md
+  - User guide:
+      - Scattering modes: modes.md
+      - Neutron-scattering spectra: spectra.md
+      - DOS-based spectra (mode 0): spectra-mode0.md
+      - Automatic grids: grids.md
+      - Input deck reference: input-reference.md
+      - Crystalline extinction: extinction.md
+      - NJOY interoperability: njoy.md
+      - NCrystal data exporter: ncrystal-plugin.md
+      - MLIP phonon models: mlip.md
+      - MLIP examples: mlip-examples.md
+  - Validation:
+      - Methodology: validation/methodology.md
+      - Graphite: validation/graphite.md
+      - Beryllium: validation/beryllium.md
+      - Beryllium oxide: validation/beryllium-oxide.md
+  - Background:
+      - Theory: theory.md
+  - Troubleshooting: troubleshooting.md
+  - Changelog: changelog.md

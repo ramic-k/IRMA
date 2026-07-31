@@ -1,0 +1,65 @@
+
+################################################################################
+##                                                                            ##
+##  This file is part of NCrystal (see https://mctools.github.io/ncrystal/)   ##
+##                                                                            ##
+##  Copyright 2015-2026 NCrystal developers                                   ##
+##                                                                            ##
+##  Licensed under the Apache License, Version 2.0 (the "License");           ##
+##  you may not use this file except in compliance with the License.          ##
+##  You may obtain a copy of the License at                                   ##
+##                                                                            ##
+##      http://www.apache.org/licenses/LICENSE-2.0                            ##
+##                                                                            ##
+##  Unless required by applicable law or agreed to in writing, software       ##
+##  distributed under the License is distributed on an "AS IS" BASIS,         ##
+##  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  ##
+##  See the License for the specific language governing permissions and       ##
+##  limitations under the License.                                            ##
+##                                                                            ##
+################################################################################
+
+[project]
+name = "ncrystal-plugin-IRMA"
+# Versioning: minor for behavior changes (scattering model, loader/validation,
+# sampling), patch for packaging/doc-only -- see RELEASING.md "Plugin
+# subprojects". 0.1-0.5 stand in for the five scattering-model revisions that
+# shipped while the field was frozen at 0.0.1; 0.6.0 is the first correctly
+# versioned state (loader finiteness/NaN validation, sampler UB fix,
+# pack-parse caching).
+version = "0.6.0"
+description = "NCrystal plugin that samples IRMA's mode-2 powder thermal-scattering law from per-temperature baked .irmapack files (@CUSTOM_IRMA NCMAT sections)"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    { name = "Kemal Ramic", email = "ramick@ornl.gov" },
+]
+requires-python = ">=3.11"
+dependencies = [ "ncrystal-core>=4.3.0", "ncrystal-pypluginmgr>=0.0.5" ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+]
+
+[project.urls]
+Repository = "https://github.com/ramic-k/IRMA"
+
+# NOTE: This in-repo plugin ships a *thin* Python shim over irma.ncrystal (the
+# single producer/reference). The pack producers / CLIs live in the IRMA core
+# package (`python -m irma.ncrystal`), so no console-script entry points are
+# declared here.
+
+[build-system]
+requires = ["scikit-build-core>=0.12", "ncrystal-core>=4.3.0" ]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+#build.verbose = true
+#cmake.build-type = "Debug"
+logging.level = "INFO"
+minimum-version = "build-system.requires"
+wheel.packages = ["python/ncrystal_plugin_IRMA"]
+wheel.py-api = "py3"
+
+[tool.pytest.ini_options]
+pythonpath = ["python"]
