@@ -1,0 +1,44 @@
+[project]
+name = "ncrystal-plugin-ENDFTSL"
+# Versioning: minor for behavior changes, patch for packaging/doc-only -- see
+# RELEASING.md "Plugin subprojects". 0.1 stands in for the behavior changes
+# that shipped while the field was frozen at 0.0.1 (notably the per-atom
+# inelastic fix); 0.2.0 is the first correctly versioned state (loader
+# finiteness/NaN validation, sampler UB fix, pack-parse caching).
+version = "0.2.0"
+description = "NCrystal plugin: thermal neutron scattering straight from ENDF/TSL (MF7/MT2 + MF7/MT4) evaluations"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    { name = "Kemal Ramic", email = "ramick@ornl.gov" },
+]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+]
+dependencies = [
+    # endf-parserpy is pre-1.0 and sits on the MF7 read path; cap below the
+    # next unvalidated minor so a silent 0.x bump cannot change tape handling.
+    # The cap matches the core IRMA package (root pyproject.toml) -- both parse
+    # the same MF7 tapes, and an uncapped pin here could resolve a DIFFERENT
+    # parser version into the same environment. 0.17 is the CI-validated
+    # version; raise both caps together after re-validating a new minor.
+    "endf-parserpy>=0.13,<0.18",
+    "numpy>=1.24",
+    "pyyaml>=6",   # polyatomic --config (multi-species) convert mode
+    # runtime: the C++ plugin loads against NCrystal, and pypluginmgr is what makes
+    # NCrystal auto-discover the installed ncrystal_plugin_* module (.so).
+    "ncrystal-core>=4.3.0",
+    "ncrystal-pypluginmgr>=0.0.5",
+]
+
+[build-system]
+requires = ["scikit-build-core>=0.12", "ncrystal-core>=4.3.0"]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+wheel.packages = ["python/ncrystal_plugin_ENDFTSL"]
+# The compiled module links only against NCrystal (no Python C API), so the
+# wheel is interpreter-independent: tag it py3 instead of the building CPython.
+wheel.py-api = "py3"

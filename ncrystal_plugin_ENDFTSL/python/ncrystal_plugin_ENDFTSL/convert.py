@@ -1,0 +1,181 @@
+"""Assemble an ENDFTSLPack from a parsed evaluation (ports irma.ncrystal.convert math)."""
+from __future__ import annotations
+import bisect
+import math
+from dataclasses import dataclass
+from .reader import TSLEvaluation, read_tsl
+from . import physics
+from .pack import ENDFTSLPack
+
+
+def build_pack(ev: TSLEvaluation, T: float, material_id: str,
+               element_symbol: str, element_mass_amu: float,
+               *, include_coherent: bool = True,
+               inelastic_scale: float = 1.0,
+               coherent_scale: float = 1.0) -> ENDFTSLPack:
+    if not (inelastic_scale > 0.0 and coherent_scale > 0.0):  # also rejects NaN
+        raise ValueError("inelastic_scale and coherent_scale must be > 0, got "
+                         f"{inelastic_scale}, {coherent_scale}")
+    law = physics.physical_inelastic(ev, T)
+    awr = law.awr
+    alpha_nc = [a * awr for a in law.alpha_phys]            # α_ncrystal = α_phys · AWR
+    # scaled-sym, beta-major (loop β outer, α inner) — matches NC SCALED_SYM_SAB / irma pack
+    max_sab = max((v for row in law.sab_asym_downscatter for v in row), default=0.0)
+    tol = max(1e-15, 1e-2 * max_sab)
+    sab_values = []
+    for bi, b in enumerate(law.beta_phys):
+        scale = math.exp(-0.5 * b)
+        for ai in range(len(alpha_nc)):
+            v = law.sab_asym_downscatter[ai][bi]
+            if v < -tol:
+                raise ValueError("S has a large negative value; check conventions")
+            sab_values.append(max(0.0, v) * scale)
+    # NCrystal cross sections are PER ATOM, but the C++ plugin sums every pack's
+    # channels at weight 1.0, so a naive multi-species pack yields per-FORMULA-unit
+    # cross sections (~N_atoms x too high). The converter restores the per-atom
+    # convention by scaling each pack:
+    #   - inelastic + incoherent elastic: * inelastic_scale (= the atom fraction f),
+    #     so sum_i f_i*sigma_i = per-atom-average. This is unambiguous: those laws
+    #     are genuinely per-species.
+    #   - coherent Bragg edges: * coherent_scale. The whole-crystal edge structure
+    #     is a per-atom quantity, but tapes store it under different conventions (per-atom
+    #     replicated -> f; SEF S/f single carrier -> f; per-atom single carrier ->
+    #     1), so the caller decides coherent_scale (see build_packs).
+    # Monatomic (both scales = 1) is unchanged. The physical species bound is kept
+    # in metadata.
+    coh = physics.coherent_edges(ev, T) if include_coherent else None
+    coh_cumS = [s * coherent_scale for s in coh[1]] if coh else []
+    inc = physics.incoherent_msd(ev, T)
+    inc_xs = (inc[1] * inelastic_scale) if inc else None
+    meta = {"source_za": f"{ev.za:.0f}", "lthr": str(ev.lthr), "lat": str(ev.lat),
+            "lasym": str(ev.lasym), "lln": str(ev.lln),
+            "inelastic_scale": f"{inelastic_scale:.10g}",
+            "coherent_scale": f"{coherent_scale:.10g}",
+            "physical_bound_xs_barn": f"{law.bound_xs_barn:.10g}",
+            "converter": "ncrystal_plugin_ENDFTSL/0.0.1"}
+    return ENDFTSLPack(
+        material_id=material_id, temperature_K=float(T),
+        bound_xs_barn=law.bound_xs_barn * inelastic_scale,
+        element_mass_amu=float(element_mass_amu),
+        sab_representation="scaled_sym_sab",
+        alpha_grid=alpha_nc, beta_grid=list(law.beta_phys), sab_values=sab_values,
+        coh_edges_ev=list(coh[0]) if coh else [], coh_cumS=coh_cumS,
+        elastic_msd_a2=inc[0] if inc else None,
+        elastic_incoherent_xs_barn=inc_xs,
+        elastic_scale=1.0, metadata=meta)
+
+
+@dataclass
+class SpeciesSpec:
+    """One principal scatterer of a (poly)atomic material: its own ENDF/TSL tape."""
+    tape: str
+    symbol: str
+    mass: float
+    fraction: float | None = None  # atom fraction; weights this tape's coherent Bragg edges
+
+
+def build_packs(specs, T: float, material_id: str,
+                coherent_convention: str = "auto"):
+    """Build one ENDFTSLPack per principal scatterer (e.g. BeO -> Be + O packs).
+
+    Inelastic + incoherent elastic are always scaled by the species atom fraction
+    (those laws are genuinely per-species, so sum_i f_i*sigma_i = per-atom-average).
+
+    Coherent elastic is the whole-crystal per-atom Bragg-edge structure, but tapes
+    store it differently and the convention is NOT always recoverable from one tape:
+      - per-atom edges replicated on >=2 coherent tapes (standard ENDF/B-VIII.1,
+        IRMA MEF): scale each by f -> sum_i f_i*sigma = sigma_coh. Unambiguous.
+      - sole coherent carrier (the other species are LTHR=2): a single LTHR=1 edge set
+        is INDISTINGUISHABLE between "per-atom" (standard, e.g. a hydride where only
+        the metal scatters coherently -> take as-is, scale 1) and "1/f_DC-scaled"
+        (IRMA SEF -> scale f; the 'cef_scaled' value name keeps the
+        format's historical CEF spelling as frozen API). The caller MUST
+        disambiguate via
+        ``coherent_convention`` ('per_atom' or 'cef_scaled'); 'auto' raises so the
+        ambiguity is never resolved silently.
+    Monatomic / fraction==1 is unchanged either way. ``specs`` is a list of
+    SpeciesSpec, each needing its atom ``fraction``.
+    """
+    fracs = [sp.fraction for sp in specs]
+    if any(f is None for f in fracs):
+        missing = [sp.symbol for sp in specs if sp.fraction is None]
+        raise ValueError(f"species {missing} need atom fractions")
+    if any(not (0.0 < float(f) <= 1.0) for f in fracs):
+        raise ValueError(f"atom fractions must each lie in (0, 1], got {fracs}")
+    if abs(sum(float(f) for f in fracs) - 1.0) > 1e-6:
+        raise ValueError(f"atom fractions must sum to 1, got {sum(float(f) for f in fracs)}")
+    if coherent_convention not in ("auto", "per_atom", "cef_scaled"):
+        raise ValueError("coherent_convention must be 'auto', 'per_atom' or "
+                         f"'cef_scaled', got {coherent_convention!r}")
+
+    evs = [read_tsl(sp.tape) for sp in specs]
+    coh_data = [physics.coherent_edges(ev, T) for ev in evs]
+    has_coh = [c is not None for c in coh_data]
+    n_coh = sum(has_coh)
+
+    if n_coh >= 2:
+        # The replicate-and-fraction-weight branch is correct ONLY if the coherent
+        # tapes carry the SAME per-atom whole-crystal edges AND their atom fractions
+        # total 1 (so sum_i f_i*sigma_coh == sigma_coh). Otherwise the weight-1.0 C++ sum yields
+        # a silent partial Bragg cross section. Verify both before trusting it.
+        coh_frac_sum = sum(float(sp.fraction)
+                           for sp, hc in zip(specs, has_coh) if hc)
+        if abs(coh_frac_sum - 1.0) > 1e-6:
+            raise ValueError(
+                f"coherent elastic is carried by {n_coh} tapes whose atom fractions sum "
+                f"to {coh_frac_sum:.6g} != 1; a per-atom whole-crystal Bragg-edge "
+                "structure cannot be reconstructed by fraction-weighting a partial set "
+                "(standard ENDF replicates the per-atom edges on every principal tape).")
+        # Compare the physical coherent CROSS SECTION sigma_coh(E)=cumS(<=E)/E, NOT the
+        # raw edge arrays: independently-written tapes represent the SAME whole-crystal
+        # edges with different edge ENERGIES (ENDF rounding ~1%; e.g. SiO2-alpha Si vs O
+        # differ up to 0.7% in edge energy yet are bit-identical in sigma_coh). The raw-
+        # array comparison false-positived on that; sigma_coh is the physical quantity
+        # and is robust to edge jitter, while a genuinely PARTITIONED per-species edge set
+        # differs by O(1) (use the median over sampled energies to ignore the few
+        # samples that straddle a jittered edge).
+        def _sig(edges, cumS, E):
+            i = bisect.bisect_right(edges, E) - 1
+            return cumS[i] / E if i >= 0 else 0.0
+        ref_e, ref_s = next(c for c in coh_data if c is not None)
+        lo = ref_e[1] if len(ref_e) > 1 else ref_e[0]
+        hi = ref_e[-1]
+        sampleE = ([lo * (hi / lo) ** (k / 15.0) for k in range(16)]
+                   if hi > lo > 0 else [hi])
+        for c in coh_data:
+            if c is None:
+                continue
+            e, s = c
+            devs = sorted(abs(_sig(e, s, E) - _sig(ref_e, ref_s, E))
+                          / _sig(ref_e, ref_s, E)
+                          for E in sampleE if _sig(ref_e, ref_s, E) > 0)
+            median = devs[len(devs) // 2] if devs else 0.0
+            if median > 0.10:
+                raise ValueError(
+                    f"coherent-bearing tapes carry DIFFERENT Bragg edges (median "
+                    f"sigma_coh deviation {median:.2f}); fraction-weighting assumes the "
+                    "per-atom whole-crystal edge structure is replicated across principal "
+                    "tapes. A "
+                    "per-species partitioned coherent layout is not supported.")
+
+    packs = []
+    for sp, ev, hc in zip(specs, evs, has_coh):
+        f = float(sp.fraction)
+        if not hc:
+            coh_scale = 1.0                      # no Bragg edges on this tape
+        elif n_coh >= 2 or f >= 1.0 - 1e-12:
+            coh_scale = f                        # replicated per-atom (or monatomic)
+        elif coherent_convention == "cef_scaled":
+            coh_scale = f                        # 1/f_DC edges -> x f = per-atom
+        elif coherent_convention == "per_atom":
+            coh_scale = 1.0                      # per-atom edges -> take as-is
+        else:
+            raise ValueError(
+                f"{sp.symbol!r} is the SOLE coherent-elastic carrier (atom fraction "
+                f"{f}); a single LTHR=1 edge set is ambiguous between per-atom edges "
+                "(standard ENDF, scale 1) and 1/f_DC-scaled edges (IRMA SEF, scale "
+                "f). Set coherent_convention to 'per_atom' or 'cef_scaled'.")
+        packs.append(build_pack(
+            ev, T, f"{material_id}__{sp.symbol}", sp.symbol, sp.mass,
+            include_coherent=True, inelastic_scale=f, coherent_scale=coh_scale))
+    return packs

@@ -1,0 +1,57 @@
+MLIP validation-campaign census (2026-07-17 campaign, IRMA v0.20.0)
+====================================================================
+
+Provenance: extracted 2026-07-24 from the campaign bundle manifests at
+inspired_irma_work/validation/{ni,graphite,beo,zro2}/bundle_*/manifest.json
+(fields phonons.freq_max_meV and phonons.n_imaginary, computed by
+`irma mlip build` on the shared meshes documented in docs/mlip.md).
+This file backs the quantitative values quoted in docs/mlip.md's
+"Validation snapshot" section.
+
+Census (material, potential, freq_max [meV], imaginary-mode count)
+------------------------------------------------------------------
+ni        dpa3        31.67    0
+ni        grace       34.85    0
+ni        mace        34.98    0
+ni        mattersim   33.71    0
+ni        nequip      35.81    0
+ni        orb         35.95    0
+ni        pet-mad     34.50    0
+ni        sevennet    35.13    0
+graphite  dpa3       187.56    13848
+graphite  dpa3(Omat24 head) 193.80  14812
+graphite  grace      200.98    0
+graphite  mace-off   193.61    972
+graphite  mace       206.68    0
+graphite  mace(omat-0) 192.39  0
+graphite  mattersim  201.97    0
+graphite  nequip     201.71    0
+graphite  orb        201.04    176
+graphite  pet-mad    203.61    0
+graphite  sevennet   201.41    1060
+beo       dpa3       122.71    0
+beo       grace      136.88    0
+beo       mattersim  134.61    0
+beo       nequip     131.58    0
+beo       orb        135.30    0
+beo       pet-mad    134.33    0
+beo       sevennet   128.20    0
+zro2      dpa3        98.21    4
+zro2      grace      104.38    8
+zro2      mace       101.56    0
+zro2      mattersim  105.04    48
+zro2      nequip     100.48    0
+zro2      orb         99.84    0
+zro2      pet-mad    101.81    3556
+zro2      sevennet   100.51    0
+
+ZrO2 DFT reference, NAC sensitivity (zro2/prep_reference.txt)
+-------------------------------------------------------------
+without NAC: freq_max = 103.83 meV, 92 imaginary modes
+with BORN NAC: freq_max = 98.58 meV, 0 imaginary modes
+
+Graphite DFT functional spread (graphite/compare_graphite.py, the
+2026-07-15 seven-functional study)
+------------------------------------------------------------------
+freq_max spans 198.2-202.7 meV on the 40^3 mesh across
+LDA/PBE/rPBE/BLYP/AM05/optB88/vdW-D3.

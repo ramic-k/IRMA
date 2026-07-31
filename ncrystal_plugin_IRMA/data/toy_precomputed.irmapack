@@ -1,0 +1,12 @@
+IRMAPACK_TEXT_V1
+schema_version = 2
+material_id = toy_al_precomputed
+backend = precomputed_sab
+units = angstrom_meV_barn_K
+temperature_K = 300
+bound_xs_barn = 1
+element_mass_amu = 26.9815385
+alpha_grid = 0.001 0.01 0.05 0.1 0.2
+beta_grid = -1 -0.5 0 0.5 1
+sab_values = 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+meta.description = Tiny deterministic SAB fixture for plugin wiring tests.

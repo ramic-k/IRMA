@@ -1,0 +1,9 @@
+# Al2O3 (corundum) from ENDF/B-VIII.1 TSL: two principal scatterers, 2:3.
+# These tapes carry NO MF7/MT2 elastic (LTHR=0) -> the plugin material is
+# inelastic-only (no Bragg), because the evaluation does not carry an elastic line.
+material_id: al2o3_endftsl
+temperature: 296          # must be one of the tape's stored MT4 temperatures
+density: 3.987
+species:
+  - {tape: tsl-AlinAl2O3.endf, symbol: Al, mass: 26.9815, fraction: 0.4}
+  - {tape: tsl-OinAl2O3.endf,  symbol: O,  mass: 15.9994, fraction: 0.6}

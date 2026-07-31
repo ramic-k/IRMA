@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use IRMA in your research, please cite it as below."
+title: "IRMA — (In)elastic Representation of Materials As S(alpha,beta) evaluations"
+abstract: >-
+  IRMA generates thermal neutron scattering law S(alpha, beta) libraries in
+  ENDF-6 format using the phonon expansion method, with generalized coherent
+  elastic for arbitrary crystals and phonopy-backed noncubic inelastic paths
+  carrying an exact coherent one-phonon term. The same phonon model also drives
+  a neutron-scattering forward model (powder S(Q,E) to instrument-resolved
+  spectra) and an exporter that writes scattering kernels for a companion
+  NCrystal plugin, for Monte Carlo transport. A front end builds the phonon
+  model from a crystal structure using pretrained machine-learned interatomic
+  potentials.
+type: software
+authors:
+  - family-names: Ramic
+    given-names: Kemal
+    email: ramick@ornl.gov
+    affiliation: "Oak Ridge National Laboratory"
+    orcid: "https://orcid.org/0000-0002-3495-9821"
+version: "1.0.0"
+date-released: "2026-08-03"
+license:
+  - BSD-3-Clause
+  - Apache-2.0
+repository-code: "https://github.com/ramic-k/IRMA"
+keywords:
+  - thermal neutron scattering
+  - "S(alpha,beta)"
+  - thermal scattering law
+  - ENDF
+  - LEAPR
+  - phonon
+  - inelastic neutron scattering
+doi: "10.11578/dc.20260803.1"

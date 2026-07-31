@@ -1,0 +1,11 @@
+name: Question
+description: How do I do X? Is Y supported?
+labels: [question]
+body:
+  - type: textarea
+    id: q
+    attributes:
+      label: Your question
+      description: What you are trying to do and what you have tried so far.
+    validations:
+      required: true

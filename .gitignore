@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.endf
+*.so
+.env
+.venv
+env/
+venv/
+
+# macOS Finder metadata
+.DS_Store
+
+# generated mode-2 validation reports
+tests/mode2_euphonic_n1_validation/*_report/
+
+# CI virtualenv (created by .gitlab-ci.yml on the shell executor)
+.ci-venv/
+site/
+public/
+
+# Brainstorming/planning scratch — design specs/plans never belong in the repo
+docs/superpowers/
+
+# Stray McStas / compiled artifacts that occasionally land here from sibling work
+SNS_ARCS_*
+*.dSYM/

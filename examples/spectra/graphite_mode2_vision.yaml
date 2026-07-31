@@ -1,0 +1,30 @@
+# IRMA spectra — mode 2 (exact coherent one-phonon) VISION spectrum
+#
+# The full eigenvector engine: exact coherent + incoherent one-phonon plus
+# incoherent-approximation multiphonons, anisotropic Debye-Waller. This is the
+# highest-fidelity mode — use it when dispersion/coherence matters (graphite,
+# Be, ...). Mode 1 (incoherent approximation) is the same config with
+# inelastic_mode: 1.
+#
+# Run from this directory (examples/spectra/):
+#   python -m irma spectra run graphite_mode2_vision.yaml -o graphite_vision_mode2.csv
+#
+# Runtime: ~1-2 minutes with the quick settings below. For production, raise
+# mesh to [40, 40, 40] and n_directions to 10000 (the production default,
+# which matches the validation campaign's sampling).
+material:
+  phonopy_yaml: ../../tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml
+  mesh: [12, 12, 12]                # production: [40, 40, 40]
+  temperature_K: 300.0
+  scatterers:
+    - {symbol: C, sigma_bound_b: 5.551, awr: 11.898, b_coh_fm: 6.646,
+       sigma_inc_b: 0.001}
+physics:
+  inelastic_mode: 2                 # exact coherent one-phonon
+  max_phonon_order: auto
+  n_directions: 1000                # production default: 10000
+  multiphonon_directions: 200       # production default: 1000
+  elastic: true
+  elastic_kind: both
+grid: {e_min_meV: 0.0, e_max_meV: 250.0, de_meV: 1.0, dq_max_invA: 0.1}
+instrument: {geometry: vision, e_fixed_meV: 3.5}

@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.so
+/build/
+/dist/
+*.egg-info/
+.pytest_cache/
+
+# The vendored ENDF test fixtures MUST be tracked, despite the repo-root *.endf
+# ignore (which targets generated tapes in the normal IRMA workflow).
+!tests/data/*.endf
+# Example tapes (per-material dirs) are vendored so the examples run self-contained.
+!examples/**/*.endf
+# ...except PMMA, whose tapes are large and shipped GZIPPED (*.endf.gz, tracked);
+# the decompressed form a user produces with `gunzip` stays local/untracked.
+examples/pmma/*.endf
+
+# Generated converter output in the example dirs is NOT tracked (regenerate it by
+# running the documented convert command; only the tape + config + figure are kept).
+examples/**/*.ncmat
+examples/**/*.endftslpack
+.DS_Store

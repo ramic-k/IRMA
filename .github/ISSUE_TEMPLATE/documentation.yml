@@ -1,0 +1,18 @@
+name: Documentation report
+description: A passage in the manual or README that is wrong, unclear, or oddly worded
+labels: [documentation]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Page
+      description: URL or file of the page.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What is wrong or unclear
+      description: Quote the passage and say what tripped you up. Suggested wording is welcome.
+    validations:
+      required: true

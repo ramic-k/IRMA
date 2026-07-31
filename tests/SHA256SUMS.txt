@@ -1,0 +1,61 @@
+# SHA256 content-address manifest for the committed reference
+# artifacts (tapes, vendored phonon models, frozen cross-code references,
+# reference dumps).
+#
+# Each pinned test ("IRMA output == reference") is only as trustworthy as
+# its reference. Git already surfaces any change to these blobs as a reviewable
+# diff; this manifest adds an *active* assertion (test_reference_manifest.py)
+# so a silently re-gzipped, truncated, or swapped reference fails loudly with a
+# named hash mismatch instead of a mysterious downstream byte diff or an
+# inscrutable pin mismatch. It also documents the exact bytes behind the
+# README agreement figures.
+#
+# Format: "<sha256>  <path-relative-to-tests/>" (two spaces, `shasum -a 256`
+# compatible). To re-pin after an intentional reference change, regenerate with:
+#   cd tests && shasum -a 256 njoy_minitape_references/*.endf.gz \
+#       native_LEAPR_NJOY_ENDF_validation/leapr_decks/*.endf.gz \
+#       mode2_euphonic_n1_validation/{graphite,beryllium}/{phonopy.yaml,FORCE_CONSTANTS,irma_mode2_n1.input.template,euphonic_n1_reference.npz} \
+#       chopper_reference/pychop_reference.json
+#
+# NJOY mini reference tapes (strict byte-equality CI tests).
+924b194bd42974cafdcd93bd56bdbedcaa29453daae9c9fccd3b8998eb6b68ab  njoy_minitape_references/coldd_ortho.endf.gz
+3a5674a98f46ec5184293558e14f4135340698b7c60019b68b79ba5fb50a1d33  njoy_minitape_references/coldd_para.endf.gz
+6587f91dbeaedf0b225257905b417f0102b8e650942f54739a654db03f297222  njoy_minitape_references/coldh_skold.endf.gz
+6e7165b1c6457352d2f40657ab8c08dc01df4db36fceb612f24fb6c299de5b3b  njoy_minitape_references/ilog.endf.gz
+e8da068a99f89450eb6ae981b063d51ce081c15a941613bedfa7b8306bd9d506  njoy_minitape_references/isabt.endf.gz
+480c1040f268e7694d26a7b791ef738bee8b0f48adbfc98b47a0c5f386d10e4c  njoy_minitape_references/two_pass.endf.gz
+# Native LEAPR/NJOY full-grid reference tapes (slow non-CI validation harness).
+d1608cabfe51a7c6b5e720240136210844401e4dd18b0fac1b6787aa7b8d346f  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-013_Al_027.endf.gz
+7c6bb2d7dd56bbce92fcc80c95901118b2dcb7466425aa1b7fe63720339e5889  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-026_Fe_056.endf.gz
+056f77a90a6681c1931f4e76dbec1a98c20e9e98eb4be5889b067fb544ff8ca9  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-BeO.endf.gz
+8726a3280964a0f62961764f1f98a088dde54ddfb8983ac0dd2df63d4b7f8b2a  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-crystalline-graphite.endf.gz
+bccf112d30ab3350728af691e9a6612890c81fc8894076f818ef0417405bcb41  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-HinCH2.endf.gz
+ef45ee1c113a0bf29d51177ef5e73781bb101aba58f232b34be9313672a070aa  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-l-CH4.endf.gz
+b73bcdcbb24ae48bdf143d059e94b2dae00d9209a7f64ff7649075a97f1f7651  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-ortho-H.endf.gz
+e9db19288d3c647cba25edf3260064f240db1c31aae1f0d26cf9f2e6683f7a9f  native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-para-H.endf.gz
+# Vendored phonon models + frozen Euphonic references for the mode-2 exact
+# n=1 cross-code harness (validate_mode2_n1.py, slow non-CI). The graphite
+# phonopy.yaml/FORCE_CONSTANTS pair ALSO feeds the fast-CI noncubic pins
+# (test_noncubic_fast_ci.py): a silent model edit would otherwise surface as
+# an inscrutable pin mismatch there. The deck templates are pinned too: the
+# Euphonic generator and the comparator parse their grid/atom data, so they
+# are part of the frozen-reference contract (README: "cannot drift apart
+# silently").
+936439325e25f10ec8aa180476bcc4c5d48ed620f312b20da8ba49b4857a995d  mode2_euphonic_n1_validation/graphite/phonopy.yaml
+f1e4eb8b059676df4789489a0ba9fea4ee9b13e38ff6e24c23c894125252e133  mode2_euphonic_n1_validation/graphite/FORCE_CONSTANTS
+87bc65d237cfc8b16b859b2ef217b3d1d6d0b52d66acf8b2bc696d4827d5aead  mode2_euphonic_n1_validation/graphite/irma_mode2_n1.input.template
+29310acb89fb8c965ec4578d3b014e8f9c7ffcebe30d1ad0494026f977ec0a2d  mode2_euphonic_n1_validation/graphite/euphonic_n1_reference.npz
+485dd5e173d8646976f8559fa825533495b774def1933b2270258d2474e48bbb  mode2_euphonic_n1_validation/beryllium/phonopy.yaml
+492542e2174b74ef8aeadb7d45c77387949dca0c4d0af92edd35b0d65b55da07  mode2_euphonic_n1_validation/beryllium/FORCE_CONSTANTS
+fcfb64673673478e0fa608f9be778bcf2af7329b95fe01f71e3cdbea7ce18959  mode2_euphonic_n1_validation/beryllium/irma_mode2_n1.input.template
+8fcaff6a2dd188a812dfefd838eefc8f3c40e8aed1e0e1f4c2dc92bd667ec412  mode2_euphonic_n1_validation/beryllium/euphonic_n1_reference.npz
+# PyChop reference dump gating the chopper resolution model to <1.2%
+# (test_spectra_chopper_resolution.py).
+4e2801eba25397b85940dca0703be4d6706dacd2aef83a002f0fb7de593be987  chopper_reference/pychop_reference.json
+# IRMA-generated (NOT NJOY) frozen reference: a 20 K lat=1 ortho-H deck whose
+# beta grid stops just short of the asymmetric-law exp overflow ceiling
+# (beta_max*THERM/(k*T)/2 ~ 697 < ln(DBL_MAX) ~ 709.8). Generated at the
+# pre-ENG-4-fix tree; pins that the isym=1 overflow gate leaves every
+# non-overflowing cold-hydrogen tape byte-identical
+# (test_writer_coldh_overflow.py). Deck inline in the test file.
+941ed038c2f6ebc2deebac3868a242e8a989b1c11258aeba821d15587bbb6f12  data/coldh_20K_nearmiss.endf.gz
