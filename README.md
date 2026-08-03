@@ -132,22 +132,30 @@ separately.
 
 ### Install (released package)
 
-The recommended install is a fresh conda environment. The conda-forge
-package is all of IRMA: the core plus the dependencies of every extra
-(phonopy, scipy, PyYAML, ase), so the ENDF generator, the spectra
-forward model, the NCrystal exporter, and the MLIP phonon front end all
-work from one install:
+From PyPI, `pip install irma` is the core and the extras are opt-in:
 
 ```bash
-conda create -n irma -c conda-forge irma
+pip install "irma[phonopy,spectra,mlip]"   # everything
+pip install irma                           # core only
+```
+
+A conda-forge package is on the way, under the name **`irma-sqw`**:
+bioconda already ships an unrelated `irma` (the CDC influenza assembler),
+and the two channels are used together, so the conda package is named for
+the S(Q,ω) the engine computes. The import and the command stay `irma`.
+It installs all of IRMA, core plus the dependencies of every extra
+(phonopy, scipy, PyYAML, ase), so the ENDF generator, the spectra forward
+model, the NCrystal exporter, and the MLIP phonon front end all work from
+one install:
+
+```bash
+conda create -n irma -c conda-forge irma-sqw    # pending review, see #34407
 conda activate irma
 ```
 
-On PyPI the split below applies: `pip install irma` is the core, and
-the extras are opt-in (`pip install "irma[phonopy]"`, `"irma[spectra]"`,
-`"irma[mlip]"`). With either package manager, the pretrained potentials
-still get their own environments (`irma mlip env create <potential>`),
-and the C++ NCrystal plugins are still built separately (below).
+With either package manager, the pretrained potentials still get their
+own environments (`irma mlip env create <potential>`), and the C++
+NCrystal plugins are still built separately (below).
 
 ### Install from source
 
