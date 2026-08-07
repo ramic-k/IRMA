@@ -37,7 +37,7 @@ jobs:
   ruff-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -63,7 +63,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ !matrix.blocking }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -91,7 +91,7 @@ jobs:
     # path -- which would ship a broken `pip install irma`.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -110,7 +110,7 @@ jobs:
   build-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: pip install build twine
@@ -124,7 +124,7 @@ jobs:
     if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: pip install -r requirements-docs.txt
@@ -147,7 +147,7 @@ jobs:
       run:
         shell: bash -el {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: irma_ci
@@ -180,7 +180,7 @@ jobs:
       run:
         shell: bash -el {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: endftsl_ci
@@ -209,7 +209,7 @@ jobs:
     needs: [ruff-lint, pytest, bare-install, build-check, reference-gate, endftsl-reference-gate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: pip install build twine
