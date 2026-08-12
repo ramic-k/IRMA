@@ -148,8 +148,8 @@ def bundle_species(bundle_dir):
 # ---------------------------------------------------------------------------
 HELP = {
     "structure": (
-        "The crystal structure to build a phonon model (a model of the "
-        "material's atomic vibrations) for, in any format the ASE library "
+        "The crystal structure to build a phonon calculation (the material's "
+        "atomic vibrations) for, in any format the ASE library "
         "reads: CIF, VASP POSCAR, xyz with a cell, and others.\n\nThe "
         "structure is relaxed (its atomic positions settled into the "
         "potential's energy minimum) with the same potential before the "
@@ -160,7 +160,7 @@ HELP = {
         "the forces. All backends are CPU-only by design and wired to "
         "conservative forces (forces derived from an energy function).\n\n"
         "Quality and character notes are in the manual section 'MLIP "
-        "phonon models': nequip was the best all-around performer in the "
+        "phonon calculations': nequip was the best all-around performer in the "
         "validation campaign; grace has an academic-use license; mace-off "
         "is for organic molecules only; dpa3 cannot bind van-der-Waals "
         "layered crystals.\n\nA potential whose packages are not installed "
@@ -216,7 +216,7 @@ HELP = {
     "disordered": (
         "Declare a disordered or amorphous model: the box is treated as "
         "its own supercell, the mesh defaults to the Gamma point, and "
-        "emission switches to the DOS-driven classic path (incoherent "
+        "emission switches to DOS-driven classic input files (incoherent "
         "elastic scattering scaled by the total bound cross section). "
         "Never auto-detected: you must check this box yourself."),
     "snap_symmetry": (
@@ -273,7 +273,7 @@ HELP = {
         "IRMA inputs from it."),
     "targets": (
         "Which prefilled inputs to generate from the bundle:\n"
-        "  endf      one ready-to-run deck per principal scatterer (the "
+        "  endf      one ready-to-run input file per principal scatterer (the "
         "species an ENDF evaluation is written for)\n"
         "  spectra   an `irma spectra` YAML config\n"
         "  ncrystal  an exporter YAML for `irma ncrystal`\n\n"
@@ -307,31 +307,31 @@ HELP = {
         "safe as static constants. Those rows open as custom by "
         "themselves and ask you for the numbers.\n\n"
         "Picking an isotope changes the scattering constants but not the "
-        "masses in the phonon model: the row warns when the two disagree "
+        "masses in the phonon calculation: the row warns when the two disagree "
         "materially, because the emitted inputs keep pointing at this "
         "bundle's phonopy.yaml."),
     "temperature": (
         "Temperature in K for the emitted inputs.\n\nDefault 296."),
     "emit_inelastic_mode": (
         "ENDF target only. "
-        "Physics level of the emitted ENDF decks (--inelastic-mode).\n\n"
-        "  default: omit the flag; the CLI emits mode-2 decks.\n"
-        "  0: the classic isotropic path built from the bundle's "
+        "Physics level of the emitted ENDF input files (--inelastic-mode).\n\n"
+        "  default: omit the flag; the CLI emits mode-2 input files.\n"
+        "  0: the classic isotropic option built from the bundle's "
         "species-projected DOS (the principal spectrum on the classic "
         "cards, Card 6e partial spectra for the other species).\n"
-        "  1/2: phonopy-backed directional decks.\n\n"
+        "  1/2: directional input files computed from the phonopy calculation.\n\n"
         "Not applicable to disordered bundles: the CLI rejects an explicit "
-        "mode there, since they always use the DOS-driven classic path."),
+        "mode there, since they always use the DOS-driven classic option."),
     "emit_elastic_format": (
         "ENDF target only. Elastic output convention of the emitted ENDF "
-        "decks (--elastic-format).\n\n"
-        "  default: omit the flag; the CLI emits MEF decks.\n"
+        "input files (--elastic-format).\n\n"
+        "  default: omit the flag; the CLI emits MEF input files.\n"
         "  mef (mixed elastic format): both elastic components for every "
         "species.\n"
         "  sef (single-channel elastic format): the complete coherent "
         "component assigned to the designated-coherent (DC) atom.\n\n"
         "An EXPLICIT value, even 'mef', which names the default, is a "
-        "crystal-deck selector and is rejected for disordered bundles, so "
+        "crystal-input selector and is rejected for disordered bundles, so "
         "'default' and 'mef' are distinct choices here."),
     "material_id": (
         "NCrystal target only. NCrystal export material id (--material-id). Blank = the CLI "

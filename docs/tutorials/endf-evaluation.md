@@ -1,21 +1,24 @@
-# Tutorial: an ENDF evaluation from a phonopy model
+# Tutorial: an ENDF evaluation from a phonopy calculation
 
 This tutorial produces a production-quality thermal scattering
-evaluation for graphite: one committed deck in, one ENDF-6 tape out,
-in about a minute on a laptop. Everything it uses ships with the
+evaluation for graphite: one committed input file in, one ENDF-6 tape out,
+in about a minute on a laptop. (A tape is an ENDF output file, the
+historical name, and S(α,β) is the thermal scattering law in the
+dimensionless momentum and energy transfer.) Everything it uses ships with the
 repository, so the commands work from a fresh checkout with the
 phonopy extra installed (`pip install -e ".[phonopy]"`, see
 [Installation](../installation.md)).
 
-## The deck
+## The input file
 
-The input is `examples/tsl/graphite_mode2.input`, a complete deck for
-the highest-fidelity path: `iel=10` computes the coherent-elastic
+The input is `examples/tsl/graphite_mode2.input`, a complete input file for
+the highest-fidelity level: `iel=10` computes the coherent-elastic
 Bragg edges from the crystal structure, and `inelastic_mode=2`
 computes the exact coherent plus incoherent one-phonon
 $S(\alpha,\beta)$ with the anisotropic Debye-Waller factor, on top of
-the incoherent multiphonon background. Its first cards, with the
-deck's own annotations:
+the incoherent multiphonon background. Its first cards (cards are the numbered records of the input format;
+see the [input file reference](../input-reference.md)), with the
+file's own annotations:
 
 ```text
 20 /  $ run (from the repo root): python -m irma examples/tsl/graphite_mode2.input graphite_mode2.endf
@@ -34,17 +37,18 @@ deck's own annotations:
 ```
 
 Three cards carry the physics choices. Card 6b (`1 1 0 2`) selects the
-single-channel elastic format and `inelastic_mode=2`. Card 6f names
-the phonopy model, the reciprocal-space mesh (40x40x40, the production
+single-channel elastic format (SEF: one elastic component per tape; see
+[Scattering modes](../modes.md)) and `inelastic_mode=2`. Card 6f names
+the phonopy calculation, the reciprocal-space mesh (40x40x40, the production
 default), and the worker-process count. Card 6g sets the directional
 sampling: 10000 powder directions for the one-phonon term, 1000 for
 the multiphonon Debye-Waller average, and `auto_order=1`, which lets
 the engine raise the multiphonon order as far as the grid actually
-requires. The rest of the deck is the alpha and beta grids, written
+requires. The rest of the input file is the alpha and beta grids, written
 out explicitly here; the [automatic grid generator](../grids.md)
 builds the same grids from the phonon spectrum if you prefer not to
-carry them in the deck. Card-by-card definitions are in the
-[input deck reference](../input-reference.md).
+carry them in the file. Card-by-card definitions are in the
+[input file reference](../input-reference.md).
 
 ## Run it
 
@@ -53,6 +57,9 @@ From the repository root:
 ```bash
 python -m irma examples/tsl/graphite_mode2.input graphite_mode2.endf
 ```
+
+(`irma` and `python -m irma` are the same tool; the tutorials use
+whichever form is convenient.)
 
 The log names every physics decision as it is made. The lines worth
 reading:
@@ -64,7 +71,7 @@ multiphonon: auto-sizing order 1 -> 217 to converge the incoherent Poisson(2W) s
 Accumulating multiphonon background through order 217...
 ```
 
-The third line is the auto-sizing at work. The deck asked for one
+The third line is the auto-sizing at work. The input file asked for one
 phonon order (`nphon=1` on Card 3), but the alpha grid reaches
 Q = 98.2 1/Angstrom, and at that momentum transfer the Poisson sum
 over phonon orders needs 217 terms to converge. With `auto_order=1`
@@ -72,23 +79,24 @@ the engine computes that bound from the grid and the mean-squared
 displacements and raises the order itself; without it, a truncated
 order would silently underpopulate $S(\alpha,\beta)$ at high alpha.
 
-With the deck's eight worker processes the run takes 57 seconds of
+With the input file's eight worker processes the run takes 57 seconds of
 wall clock on a recent laptop (about 340 CPU-seconds across the
 workers). The result, `graphite_mode2.endf`, is a 2.7 MB ENDF-6 file
-carrying the MF1/MT451 header built from the deck's closing comment
-cards, the coherent-elastic Bragg edges in MF7/MT2, and the inelastic
+carrying the MF1/MT451 header built from the input file's closing
+comment cards (the trailing quoted lines, not shown in the excerpt
+above), the coherent-elastic Bragg edges in MF7/MT2, and the inelastic
 $S(\alpha,\beta)$ in MF7/MT4 at 296 K.
 
 ## The same run in the GUI
 
-`irma-gui` (or `python -m irma --gui`) edits and runs the same decks.
+`irma-gui` (or `python -m irma --gui`) edits and runs the same input files.
 Use **Import Input File** on the ENDF Evaluation tab to load
 `examples/tsl/graphite_mode2.input`: the Material part reveals the
-crystal-structure and phonopy sections exactly as the deck fills them,
+crystal-structure and phonopy sections exactly as the input file fills them,
 and the Run part streams the same log shown above. A fresh form leaves the
 material-identity fields (`ZA`, `MAT`, `AWR`, `sigma_free`, the lattice, the
-atom types) blank on purpose, so importing a deck is also the quickest way to
-a filled form.
+atom types) blank on purpose, so importing an input file is also the quickest
+way to a filled form.
 
 ![The Material part with iel=10 and inelastic mode 2 selected](../assets/gui/gui_material_iel10.png)
 
@@ -96,8 +104,8 @@ a filled form.
 
 ## Processing the tape with NJOY
 
-The tape is ready for NJOY THERMR and downstream processing. It is
-important to note that coherent `inelastic_mode=2` tapes such as this
+The tape is ready for NJOY THERMR and downstream processing. Coherent
+`inelastic_mode=2` tapes such as this
 one trigger a defect in stock NJOY2016 THERMR (the `cliq`
 liquid-extrapolation guard) that produces garbage cross sections above
 about 0.27 eV; apply the one-line patch described in
@@ -107,9 +115,9 @@ mode-1 tapes are unaffected.
 ## Where to go from here
 
 The [scattering modes](../modes.md) page maps the physics options this
-deck chose against the alternatives; the
+input file chose against the alternatives; the
 [validation record](../validation/graphite.md) shows this exact
 material checked against NJOY, Euphonic, OCLIMAX, and measurement; and
 the [structure-to-spectrum tutorial](structure-to-spectrum.md) starts
-one step earlier, from a bare crystal structure with no phonon model
-at all.
+one step earlier, from a bare crystal structure with no phonon
+calculation at all.

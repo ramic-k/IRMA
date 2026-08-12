@@ -8,31 +8,38 @@ makes it the control case for the Debye-Waller argument: where graphite's
 $W_c/W_{ab} \approx 6.6$ makes the isotropic approximation fail by orders
 of magnitude at high momentum transfer, beryllium's near-isotropic
 displacement tensor lets the isotropic and directional treatments stay
-together. The beryllium phonon model is a representative VASP/PAW PBE
+together. The beryllium phonon calculation is a representative VASP/PAW PBE
 calculation (4×4×3 supercell, finite-displacement force constants in
-phonopy) from the same workflow as the graphite model; it is a test case
-for the anisotropic methods, not a model optimized against measured
-spectra, so the results on this page are method demonstrations rather than
+phonopy) from the same workflow as the graphite calculation; it is a test
+case for the anisotropic methods, and, like every phonon calculation in
+this record, it is parameter-free, fitted to nothing, so the results on
+this page are method demonstrations rather than
 best-fit benchmarks. All comparisons are at 296 K.
 
-Throughout this page, **IRMA mode 2** is the phonopy-backed thermal
-scattering law S(α,β) with the exact coherent one-phonon term, **IRMA
+Throughout this page, **IRMA mode 2** is the thermal
+scattering law S(α,β) computed from the phonopy calculation with the
+exact coherent one-phonon term, **IRMA
 mode 1** is its incoherent-approximation counterpart, and **Euphonic
 n = 1** is the independent coherent one-phonon reference on the same
-phonon model. **OCLIMAX MAXO=1/100** are OCLIMAX runs truncated at
+phonon calculation. **OCLIMAX MAXO=1/100** are OCLIMAX runs truncated at
 multiphonon order 1 or 100; at MAXO=1 both the released code and the
 unreleased full-tensor Debye-Waller build appear, as for graphite.
 **ENDF/B-VIII.1 beryllium-metal** and **Be+Sd** are the released
-evaluations, built from phonon models different from the one used here.
+evaluations, built from phonon calculations different from the one used
+here.
 
 ---
 
 ## The coherent one-phonon term against Euphonic and OCLIMAX
 
-The comparison is set up exactly as for
+The classic kernels are verified on the reference set of the
+[methodology page](methodology.md) (graphite, iron, aluminum,
+polyethylene, and the fresh-tape materials); beryllium enters at the
+directional rungs of the ladder. The comparison is set up exactly as for
 [graphite](graphite.md#the-coherent-one-phonon-term-against-euphonic-and-oclimax):
-the coherent part of the n = 1 term on the same phonon model, OCLIMAX
-isolated by zeroing the incoherent cross sections in its material file, in
+the coherent part of the n = 1 term on the same phonon calculation, OCLIMAX
+keeping only the coherent part by zeroing the incoherent cross sections in
+its material file, in
 both the released and full-tensor Debye-Waller variants, and Euphonic
 evaluated at the IRMA (α, β) grid, with no regridding or broadening.
 
@@ -46,8 +53,8 @@ variants; each curve at the nearest energy of its own tabulated grid.*
 All four coherent curves stay together at every Q. This is the control side
 of the Debye-Waller argument: in nearly isotropic beryllium the first-order
 approximation costs nothing, the released and full-tensor variants
-coincide, and the graphite divergence is thereby pinned to the anisotropy
-rather than to any code's implementation of the coherent term. The
+coincide, and the graphite divergence therefore comes from the anisotropy
+rather than from any code's implementation of the coherent term. The
 shared-domain integral ratio against Euphonic is 1.0002, with a median
 difference of 0.005% in the energy integral J(Q) = ∫ S(Q,E) dE over
 Q ≤ 20 Å⁻¹; against OCLIMAX the coherent ratio is 0.99 with either
@@ -70,12 +77,13 @@ incoherent counterpart.*
 
 *The full beryllium mode-2 S(α,β) (symmetric form) at 296 K, compared
 with OCLIMAX (MAXO=100) and the ENDF/B-VIII.1 beryllium-metal and Be+Sd
-evaluations, both built from phonon models different from the one used
-here.*
+evaluations, both built from phonon calculations different from the one
+used here.*
 
-With the multiphonon order matched, the shared-window integrals of the
-symmetric tables agree to about 2% (R = 0.98), and the agreement holds
-within about 2% at all Q: with no strong anisotropy, no residual
+Both codes were run to the same multiphonon order, and the shared-window
+integrals of the
+symmetric tables agree to about 2% (R = 0.98). The agreement is also
+uniform: cut by cut, the two stay within about 2% at every Q, since with no strong anisotropy, no residual
 accumulates in the high-Q multiphonon tail as it does for graphite. The
 Be+Sd file contains narrow spikes near Q ≈ 0.5, 1.8, and 3 Å⁻¹ that
 neither the IRMA nor the OCLIMAX calculation contains; as for the graphite
@@ -107,8 +115,13 @@ the measured total is shown as points without error bars.
 ## Crystalline extinction
 
 Beryllium is also the verification case for the opt-in
-[crystalline extinction](../extinction.md) correction, ported from the
-CrysXT NCrystal plugin. The port was verified in two stages. At the kernel
+[crystalline extinction](../extinction.md) correction. Extinction is
+the reduction of Bragg intensity in a real crystallite: once a beam is
+strongly Bragg-scattered it is depleted before it can scatter again, so
+measured peaks fall below the ideal kinematic values (the
+[extinction page](../extinction.md) has the physics). The models are
+ported from CrysXT, the NCrystal extinction plugin of Kittelmann et
+al. (references on the extinction page). The port was verified in two stages. At the kernel
 level, IRMA reproduces CrysXT within rounding (0.000%) for nine reference
 cases spanning the five extinction models; the frozen cases are regression
 references, so the test requires neither NCrystal nor CrysXT at test time.
@@ -124,7 +137,10 @@ histogram rather than only the analytic kernels.
 crystalline extinction. The kinematic curves are from NCrystal and IRMA
 mode 0; the extinction-corrected curves use the Becker-Coppens `BC_mix`
 model in CrysXT and IRMA, for a specimen with crystallite size 0.855 μm,
-mosaic 170 rad⁻¹, and grain size 7.58 μm.*
+mosaic parameter 170 rad⁻¹ (the Becker-Coppens mosaic-distribution
+parameter, an inverse angular width), and grain size 7.58 μm. The
+parameters demonstrate the models; they were not fitted to the
+transmission data shown above.*
 
 For these specimen parameters, extinction reduces the kinematic Bragg
 intensity by up to about 20% at the lowest energies; the correction falls

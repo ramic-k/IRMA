@@ -53,20 +53,20 @@ nav:
       - Quickstart: quickstart.md
       - The GUI: gui.md
   - Tutorials:
-      - "ENDF evaluation from a phonopy model": tutorials/endf-evaluation.md
+      - "ENDF evaluation from a phonopy calculation": tutorials/endf-evaluation.md
       - "Structure to spectrum with a MLIP": tutorials/structure-to-spectrum.md
       - "A transport material for NCrystal": tutorials/deck-to-transport.md
   - User guide:
       - Scattering modes: modes.md
-      - Preparing a phonopy model: phonopy-input.md
-      - Neutron-scattering spectra: spectra.md
+      - Preparing a phonopy calculation: phonopy-input.md
+      - Neutron scattering spectra: spectra.md
       - DOS-based spectra (mode 0): spectra-mode0.md
       - Automatic grids: grids.md
-      - Input deck reference: input-reference.md
+      - Input file reference: input-reference.md
       - Crystalline extinction: extinction.md
       - NJOY interoperability: njoy.md
       - NCrystal data exporter: ncrystal-plugin.md
-      - MLIP phonon models: mlip.md
+      - MLIP phonon calculations: mlip.md
       - MLIP examples: mlip-examples.md
   - Validation:
       - Methodology: validation/methodology.md
