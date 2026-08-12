@@ -3,10 +3,14 @@
 IRMA describes a material's thermal response with three independent
 choices: which coherent-elastic treatment to use (`iel`), which elastic
 format to write (`elastic_mode`), and which inelastic engine to run
-(`inelastic_mode`). They live on different cards and combine freely, so it
+(`inelastic_mode`). S(α,β) is the thermal scattering law in the
+dimensionless momentum and energy transfer; the [theory page](theory.md)
+defines it and the conventions used here. The three selectors live on
+different cards (the numbered records of the LEAPR-style input file; see
+the [input file reference](input-reference.md)) and combine freely, so it
 helps to think of them as three independent axes rather than a single
 menu. This page describes each axis, shows how to read the three selectors
-off a deck, and gives guidance for picking the right combination for cubic
+off an input file, and gives guidance for picking the right combination for cubic
 versus noncubic and isotropic versus anisotropic materials.
 
 ## The three axes at a glance
@@ -17,10 +21,9 @@ versus noncubic and isotropic versus anisotropic materials.
 | `elastic_mode` | Card 6b, field 1 (`iel=10` only) | ENDF elastic format written | `1` = SEF (single-channel elastic format); `2` = MEF |
 | `inelastic_mode` | Card 6b, field 4 (`iel=10` only) | Inelastic S(α,β) engine | `0` legacy cubic; `1` directional incoherent; `2` coherent one-phonon |
 
-Two of the three axes exist only on the generalized path: `elastic_mode`
-and `inelastic_mode` are read from Card 6b, which is present only when
-`iel=10`. For the built-in materials (`iel=1`–`6`) and for `iel=0`, IRMA
-uses the classic LEAPR paths and the two Card 6b selectors do not apply.
+`elastic_mode` and `inelastic_mode` live on Card 6b, which is present only
+when `iel=10`. For the built-in materials (`iel=1`–`6`) and for `iel=0`,
+IRMA uses the classic kernels and the two Card 6b selectors do not apply.
 
 ## Axis 1 (`iel`): coherent-elastic treatment
 
@@ -33,8 +36,9 @@ handled.
 | `1`–`6` | Built-in coherent elastic | Graphite, Be, BeO, Al, Pb, Fe (in that order) |
 | `10` | Generalized | Bragg edges computed from the crystal structure you supply on Cards 6c–6d; works for any material |
 
-The built-in options reproduce the historical LEAPR `coher` lattices.
-`iel=10` is the recommended path for new evaluations: it computes Bragg
+The built-in options reproduce the crystal tables of LEAPR's historical
+`coher` routine.
+`iel=10` is recommended for new evaluations: it computes Bragg
 edges directly from your unit cell and unlocks the `elastic_mode` and
 `inelastic_mode` axes.
 
@@ -53,16 +57,21 @@ downstream codes will see.
 
 | `elastic_mode` | Name | What is written | Resulting `LTHR` |
 |----------------|------|-----------------|------------------|
-| `1` | SEF (single-channel elastic format) | The atom with the dominant elastic component gets coherent elastic; other atoms get incoherent elastic with redistribution | `1` (coherent) or `2` (incoherent), per atom |
+| `1` | SEF (single-channel elastic format) | One elastic component per atom, scaled to carry the total bound elastic scattering (mechanism below) | `1` (coherent) or `2` (incoherent), per atom |
 | `2` | MEF (Mixed Elastic Format) | Every atom gets both a coherent (per-atom Bragg edges) and an incoherent part | `3` (mixed) |
 
-For a single-atom material under SEF, the coherent-versus-incoherent cross
-sections decide which elastic component is written. For a polyatomic cell,
-SEF selects one designated-coherent (DC) atom, the one minimizing the
-incoherent contribution; that species' tape carries the coherent elastic,
-and the others carry incoherent elastic.
+For a single-atom material under SEF, the component with the larger bound
+cross section, coherent or incoherent, is kept and scaled to carry the
+total bound scattering cross section. For a polyatomic cell, SEF selects
+one designated-coherent (DC) atom, the one minimizing the incoherent
+contribution; that species' tape (ENDF output file) carries the coherent elastic, and the
+others carry incoherent elastic with a redistribution factor. The scaling
+has a physical consequence for coherent-kept materials: coherent elastic
+scattering does not exist below the first Bragg edge, so the SEF elastic
+cross section is zero there. MEF carries the incoherent component
+separately and does not have this gap.
 
-It is important to note that MEF needs downstream support:
+MEF needs downstream support:
 `elastic_mode=2` writes `LTHR=3`, so confirm that your transport and
 processing chain understands the mixed elastic format before choosing it.
 When in doubt, SEF (`elastic_mode=1`) is the conservative, widely
@@ -79,9 +88,9 @@ inelastic S(α,β) is built.
 | `1` | Directional incoherent approximation | Directional | Yes | No |
 | `2` | Exact coherent + incoherent one-phonon, incoherent multiphonon | Directional | Yes | No |
 
-`inelastic_mode=0` is the classic LEAPR-style path: an isotropic
+`inelastic_mode=0` is the classic LEAPR physics level: an isotropic
 Debye-Waller factor and a phonon expansion built from a scalar phonon
-density of states given on the deck, with no phonopy required.
+density of states given in the input file, with no phonopy required.
 `inelastic_mode=1` computes a directional Debye-Waller factor for the
 coherent elastic and an in-process noncubic S(α,β), using an
 incoherent-approximation one-phonon term plus incoherent-approximation
@@ -90,17 +99,17 @@ one-phonon term is exact (coherent plus incoherent) on top of the
 incoherent-approximation multiphonons.
 
 Even in mode 2, only the one-phonon term is coherent. The multiphonon
-orders (n ≥ 2) use the incoherent-approximation model (a
-`sigma_total`-scaled per-atom self kernel), so coherent interference is
-dropped in the tail. Runs record
+orders (n ≥ 2) use the incoherent-approximation model (a per-atom self
+kernel scaled by the atom's total scattering cross section), so coherent
+interference is dropped in the tail. Runs record
 `multiphonon_model = "incoherent_approximation"` in their metadata so the
 mode-2 product is not mistaken for fully coherent multiphonon scattering.
 
-It is important to note that modes 1 and 2 ignore the legacy DOS cards.
-`inelastic_mode=1/2` build MT4 and the Debye-Waller factors entirely from
-the phonopy model: the legacy continuous-DOS, translational, and
+Modes 1 and 2 ignore the legacy DOS cards.
+`inelastic_mode=1/2` build the inelastic section (MF7/MT4) and the Debye-Waller factors entirely from
+the phonopy calculation: the legacy continuous-DOS, translational, and
 oscillator detail cards (Cards 11–19) are not read, and Card 6e partial
-spectra are rejected (`nspec` must be `0`). The deck supplies only the
+spectra are rejected (`nspec` must be `0`). The input file supplies only the
 temperature cards; everything else comes from phonopy. The mixed-moderator
 (`nss>0`), cold-hydrogen (`ncold`), and Sköld (`nsk`) options are also
 unavailable with modes 1/2 and are rejected at parse time.
@@ -120,7 +129,7 @@ controls between Cards 6d and 7:
 These modes need the optional phonopy dependency:
 
 ```bash
-pip install -e ".[phonopy]"   # adds the noncubic inelastic paths
+pip install -e ".[phonopy]"   # + the noncubic inelastic modes (inelastic_mode=1/2)
 ```
 
 ## Choosing a combination
@@ -147,15 +156,16 @@ in-plane Debye-Waller terms differ by roughly a factor of 6.6
 the one-phonon S(α,β) at high Q relative to the exact directional powder
 average. IRMA's `inelastic_mode=2` performs the directional powder average
 exactly; running `inelastic_mode=0` (isotropic Debye-Waller) on the same
-phonon model reproduces the over-suppressed roll-off, isolating the cause.
+phonon calculation reproduces the over-suppressed roll-off; the
+Debye-Waller treatment is the only difference between the two runs.
 
 ![Directional vs isotropic Debye-Waller attenuation in the graphite one-phonon S(α,β) at E ≈ 2 meV](assets/validation/graphite/fig_graphite_dw_directional.png)
 
-The exact one-phonon treatment has been cross-checked against an
-independent code: IRMA's mode-2 one-phonon S(α,β) has been cross-validated
-against Euphonic (using the same phonon model) for graphite and Be,
-coherent component against coherent component, and the integrals of the
-symmetric S(α,β) agree to ratios of 1.00001 (graphite) and 1.0002 (Be).
+The exact one-phonon treatment is cross-validated against Euphonic, an
+independent code run on the same phonon calculation, for graphite, Be,
+and BeO: coherent component against coherent component, the integrals of
+the symmetric S(α,β) agree to ratios of 1.00001 (graphite), 1.0002 (Be),
+and 0.9998 (BeO).
 For strongly anisotropic crystals, prefer `inelastic_mode=2`; reserve
 `inelastic_mode=0` for cubic materials or for reproducing legacy isotropic
 evaluations.
@@ -202,7 +212,8 @@ Leaving `auto_order=0` honors the Card 3 `nphon` exactly. That is
 appropriate when you want full control, but make sure `nphon` (or
 `auto_order=1`) gives the tabulated S(α,β) genuine support over your
 requested beta grid. Energy transfers beyond the tabulated range are
-covered downstream by THERMR's short-collision-time extension.
+covered downstream by the short-collision-time extension of THERMR,
+NJOY's thermal processing module.
 
 ## Bragg-edge grouping (optional)
 
@@ -224,7 +235,7 @@ Above `threshold_eV`, the dense edge steps are merged into
 placement. The grouping preserves the cumulative S and the total cross
 section, so it shrinks the tape's edge list without changing the physics
 your transport code integrates. It is off by default; existing four-field
-Card 6b decks are unaffected.
+Card 6b input files are unaffected.
 
 Grouping merges only the edges above the threshold and keeps every
 sub-threshold edge raw, whereas the ungrouped writer applies NJOY's
@@ -234,7 +245,7 @@ therefore produce a larger tape than grouping off. Use the default 1 eV
 threshold unless the dense structure you want compressed actually sits
 below it.
 
-## Putting it together: a noncubic mode-2 deck
+## Putting it together: a noncubic mode-2 input file
 
 A minimal `iel=10` / `inelastic_mode=2` Card 5–6g block looks like this
 (graphite, exact one-phonon, auto-sized multiphonon order):
@@ -252,10 +263,11 @@ A minimal `iel=10` / `inelastic_mode=2` Card 5–6g block looks like this
 ```
 
 The numbers in this snippet are illustrative: the lattice constants, cross
-sections, and positions show the deck shape, not a validated evaluation.
-The production-ready deck is `examples/tsl/graphite_mode2.input`, a
-complete, runnable mode-2 deck at the recommended production sampling with
-auto-sized multiphonon order (see `examples/tsl/README.md` for the run
-command). The `tests/mode2_euphonic_n1_validation/*.template` decks are
+sections, and positions show the input file shape, not a validated
+evaluation.
+The production-ready input file is `examples/tsl/graphite_mode2.input`, a
+complete, runnable mode-2 input file at the recommended production sampling
+with auto-sized multiphonon order (see `examples/tsl/README.md` for the run
+command). The `tests/mode2_euphonic_n1_validation/*.template` files are
 the cross-code validation harness: they deliberately compute the
 one-phonon term only and are not production evaluations.

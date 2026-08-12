@@ -1,7 +1,8 @@
 # Crystalline extinction
 
 IRMA can apply an optional crystalline-extinction correction to the
-coherent-elastic Bragg edges of an `iel=10` evaluation: the MF7/MT2
+coherent-elastic Bragg edges of an `iel=10` (generalized-elastic)
+evaluation: the MF7/MT2
 cross section in which each family of reciprocal-lattice planes adds a
 step at its Bragg-edge energy. The correction is off by default, and
 when it is disabled the tape carries the ideal-crystal Bragg edges,
@@ -22,21 +23,25 @@ $$
 \sigma_{\rm coh}^{\rm el}(E) \;=\; \frac{1}{E}\sum_{2d \ge \lambda} \delta_{hkl}\, y_{hkl}(\lambda)
 $$
 
+with $\delta_{hkl}$ the kinematic edge strength of plane family $hkl$
+and $y_{hkl}$ its extinction factor.
+
 Extinction acts through two mechanisms. Both are described in the mosaic
 picture of a real crystal, which models a crystallite as a stack of
 small, slightly misoriented perfect blocks:
 
-- **Primary extinction** — multiple scattering within one perfect mosaic
+- **Primary extinction**: multiple scattering within one perfect mosaic
   block. Driven by the crystallite size `l`.
-- **Secondary extinction** — beam depletion from block to block across
-  the sample. Driven by the mosaic spread `g` and the grain size `L`.
+- **Secondary extinction**: beam depletion from block to block across
+  the specimen. Driven by the mosaic spread `g` and the grain size `L`.
 
-The dimensionless argument `x` grows with wavelength (`x ∝ λ²` and
+The dimensionless argument `x` (the extinction strength the model
+computes from `l`, `g`, `L`, and the wavelength) grows with wavelength (`x ∝ λ²` and
 higher powers), so extinction is strongest at long wavelengths (low
 energies) and dies out above ~0.1 eV. Above that cutoff `σ_ext = σ_kin`,
 so the high-energy edges are unchanged.
 
-It is important to note that extinction is a property of the sample, not
+Extinction is a property of the specimen, not
 of the material: `l`, `g`, and `L` describe a particular specimen. They
 come from a fit to a measured transmission (as in Xu 2025) or from
 measured microstructure (electron backscatter diffraction, EBSD), and
@@ -55,7 +60,8 @@ evaluation.
 
 ## Models
 
-Five models are available, ported from the NCrystal CrysXT plugin:
+Five models are available, ported from the NCrystal CrysXT plugin: two
+Sabine forms and three Becker-Coppens (BC) forms.
 
 | Model | Mechanisms | Parameters |
 |-------|----------|------------|
@@ -79,9 +85,12 @@ distribution, the assumed shape of the block-misorientation spread, is
 `Gauss`/`Lorentz`/`Fresnel` for Becker-Coppens and `rect`/`tri` for
 Sabine (defaults: `Gauss` and `rect`).
 
-## Enabling it: the deck card
+## Enabling it: the extinction card
 
-Add an optional `extinction` card as the last card of the `iel=10`
+Cards are the numbered records of the input file; the
+[input file reference](input-reference.md) shows the complete layout
+with the extinction card in place. Add the optional `extinction` card as
+the last card of the `iel=10`
 elastic block (after Cards 6d/6e, or Card 6g for `inelastic_mode=1/2`),
 before Card 7:
 
@@ -94,7 +103,7 @@ Example (`examples/tsl/be_iel10_extinction.input`):
 ```
 2.28660 2.28660 3.58330 90.0 90.0 120.0/   $ Card 6c: Be hcp cell
 4 9 8.93478 7.79 0.0018 2/                  $ Card 6d
-0.33333333 0.66666667 0.75  0.66666667 0.33333333 0.25/
+0.33333333 0.66666667 0.75  0.66666667 0.33333333 0.25/   $ Card 6d continued: the two fractional positions
 extinction BC_mix l=8550 g=170 L=75750 dist=Gauss rec=std rmse_tol=1e-3 /
 150 400 1/                                  $ Card 7
 ```
@@ -105,7 +114,7 @@ Fields:
 |-------|---------|---------|
 | `<model>` | one of the five models above (required) | — |
 | `l` | crystallite (block) size [Å], primary | `0` (off) |
-| `g` | mosaic spread [rad⁻¹], secondary | `0` (off) |
+| `g` | mosaic spread [rad⁻¹] (the Becker-Coppens mosaic-distribution parameter; it scales as the inverse of the mosaic angular spread), secondary | `0` (off) |
 | `L` | grain size [Å], secondary | `0` (off) |
 | `dist` | tilt distribution | `Gauss` (BC) / `rect` (Sabine) |
 | `rec` | BC recipe `std`/`cls` | `std` |
@@ -117,20 +126,22 @@ least one active mechanism, `l>0`, `g>0`, and `L>0` for
 a distribution valid for the model. The card works with every
 `inelastic_mode` (0, 1, 2) and with both elastic formats
 (`elastic_mode=1`/`2`), provided MF7/MT2 actually carries coherent
-Bragg edges to correct. MEF (`elastic_mode=2`) always does: extinction
+Bragg edges to correct. The mixed elastic format (MEF,
+`elastic_mode=2`) always does: extinction
 corrects the per-atom coherent Bragg edges and leaves the
-incoherent-elastic part untouched. SEF (`elastic_mode=1`) writes only
+incoherent-elastic part untouched. The single-channel elastic format
+(SEF, `elastic_mode=1`) writes only
 the dominant elastic component, and two SEF configurations route MF7/MT2
 to the *incoherent*-elastic builder, which never applies extinction: a
 single-atom material whose `sigma_coh <= sigma_inc` (Card 6d), and a
 polyatomic whose principal scatterer is not the designated-coherent
-atom. On such a deck IRMA rejects the `extinction` card at parse time
+atom. On such an input file IRMA rejects the `extinction` card at parse time
 ("extinction would be a silent no-op ...") instead of silently writing
 an uncorrected tape whose comments claim an extinction correction;
 switch to `elastic_mode=2` (MEF) so MF7/MT2 keeps a coherent-elastic
 part, or remove the card. The model and parameters are stamped into the
 MF1/MT451 comments, so the tape records that it is an
-extinction-corrected, sample-specific evaluation.
+extinction-corrected, specimen-specific evaluation.
 
 ## In the GUI
 
@@ -139,7 +150,7 @@ The *ENDF Evaluation ▸ Material* tab has a **Crystalline Extinction
 enable toggle (off by default), the model dropdown, and the
 `l`/`g`/`L`/distribution/recipe/`rmse_tol` fields. An ⓘ help glyph on
 every control (hover for a preview, click for the full text) explains
-the parameter and links the references. Importing a deck with an
+the parameter and links the references. Importing an input file with an
 `extinction` card populates the section automatically.
 
 ## Tape format (MF7/MT2)
@@ -156,17 +167,17 @@ table that gets read as a staircase anyway. No NJOY patch is needed.
 
 Extinction adds nodes only below ~0.1 eV; a typical run adds a few
 hundred points to the table (e.g. Be: ~2.5k vs ~1.7k). `rmse_tol` trades
-node count for fidelity (default `1e-3` ≈ 0.04 % RMSE on the
+node count for fidelity (default `1e-3` ≈ 0.04% RMSE on the
 reconstructed cross section).
 
 ## Validation
 
-The five models reproduce the CrysXT plugin to 0.000 % across nine
+The five models reproduce the CrysXT plugin to 0.000% across nine
 model/recipe/distribution cases. A frozen CrysXT capture is replayed by
 the CI gate `tests/test_extinction_crysxt_expected.py`, so any drift in
 the port is caught without needing NCrystal/CrysXT at test time. End to
 end, a real beryllium evaluation processed by NJOY THERMR reproduces
-the CrysXT coherent-elastic cross section to 0.07 % median (cell
+the CrysXT coherent-elastic cross section to 0.07% median (cell
 matched to the reference structure).
 
 The broader beryllium evaluation (its inelastic and cross-section

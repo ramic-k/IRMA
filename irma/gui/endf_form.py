@@ -48,19 +48,19 @@ _IEL_CHOICES = ["0 — None", "1 — Graphite (legacy)",
 STRUCTURE_FILL_TITLE = "Fill structure from phonopy.yaml"
 STRUCTURE_FILL_HELP = (
     "Prefills the iel=10 crystal structure -- the Lattice Parameters fields "
-    "and the whole 'Atom Types in Unit Cell' block -- from the phonopy model "
+    "and the whole 'Atom Types in Unit Cell' block -- from the phonopy calculation "
     "named above (Card 6f).\n\n"
     "The cell read is the phonopy PRIMITIVE cell, loaded through phonopy "
-    "itself. That is the cell the deck must describe: for inelastic_mode 1/2 "
-    "IRMA matches every Card 6d position against the phonopy primitive-cell "
-    "mesh and refuses the deck when they do not correspond.\n\n"
+    "itself. That is the cell the input file must describe: for inelastic_mode 1/2 "
+    "IRMA matches every Card 6d position against the phonopy primitive cell's "
+    "atom positions and refuses the input file when they do not correspond.\n\n"
     "Nothing happens until you press Apply in the preview: the button never "
-    "fires on its own, not when you pick a phonopy.yaml, not on deck import, "
+    "fires on its own, not when you pick a phonopy.yaml, not on input-file import, "
     "not on reset. Apply is all-or-nothing -- it replaces the lattice AND the "
     "whole atom block together, so phonopy positions can never end up beside "
     "a hand-typed lattice.\n\n"
     "Each species is filled as the NATURAL ELEMENT (A = 0) with "
-    "natural-abundance constants, because a phonon model names elements, not "
+    "natural-abundance constants, because a phonopy calculation names elements, not "
     "isotopes. Isotopic materials must be edited afterwards.")
 
 # Material-IDENTITY fields (ZA, MAT, AWR, sigma_free, the lattice, the Card 6d
@@ -71,22 +71,22 @@ STRUCTURE_FILL_HELP = (
 # stay prefilled: those encode what the validation campaign established.
 # One gray hint line per blanked group names the ways to fill it.
 _FILL_ROUTES = ("Import Input File (top of the Material part) or a committed "
-                "deck under examples/tsl/")
+                "input file under examples/tsl/")
 IDENTITY_HINT_SCATTERER = (
     "Blank on purpose — ZA, AWR and sigma_free describe YOUR material. Type "
-    "them in, press 'Fill AWR + sigma_free from ZA', or load a deck with "
+    "them in, press 'Fill AWR + sigma_free from ZA', or load an input file with "
     + _FILL_ROUTES + ".")
 IDENTITY_HINT_MAT = (
     "Blank on purpose — the MAT number labels YOUR evaluation. Assign one, or "
-    "load a deck with " + _FILL_ROUTES + ".")
+    "load an input file with " + _FILL_ROUTES + ".")
 IDENTITY_HINT_LATTICE = (
     "Blank on purpose — the unit cell describes YOUR material. Type it in, "
-    "press '" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or load a deck "
-    "with " + _FILL_ROUTES + ".")
+    "press '" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or load an "
+    "input file with " + _FILL_ROUTES + ".")
 IDENTITY_HINT_ATOMS = (
     "Blank on purpose — the atom types describe YOUR material. Type them in, "
-    "press '" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or load a deck "
-    "with " + _FILL_ROUTES + ".")
+    "press '" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or load an "
+    "input file with " + _FILL_ROUTES + ".")
 
 EXT_HELP = {
     "about": (
@@ -384,9 +384,9 @@ class EndfFormMixin:
                       "Phonopy.\n\n"
                       "For mixed materials, keep the full crystal in Card 6d, "
                       "but still generate one principal-scatterer MT4 section "
-                      "per deck. Card 5 chooses the principal scatterer; if "
+                      "per input file. Card 5 chooses the principal scatterer; if "
                       "you need more than one principal (for example Be and O "
-                      "in BeO), run separate decks.")
+                      "in BeO), run separate input files.")
         self._inelastic_section = nc_body.master
 
         # inelastic_mode selector
@@ -779,7 +779,7 @@ class EndfFormMixin:
             "MF7/MT2 option). The GUI enables it by default, which keeps "
             "tapes compact; uncheck the box to write every edge. Written as "
             "optional fields 5 and 6 on Card 6b: 'elastic_mode nat nspec "
-            "inelastic_mode [bins_per_decade] [threshold_eV]'; a deck "
+            "inelastic_mode [bins_per_decade] [threshold_eV]'; an input file "
             "without them (bins_per_decade 0) has grouping off.")
         grp_bpd_help = (
             "Reduces the number of coherent-elastic Bragg edges written to "
@@ -800,7 +800,7 @@ class EndfFormMixin:
             "raw edges existed; for example 20/decade over 1→5 eV keeps ~14 "
             "steps. Larger values are finer (more steps, closer to "
             "ungrouped); smaller values are coarser.\n\n"
-            "0 = OFF: keep every edge (the deck-field default; the GUI "
+            "0 = OFF: keep every edge (the input-file default; the GUI "
             "prefills 50 with the grouping checkbox ON). Edges at or below "
             "the threshold are always kept individually. The cumulative S, "
             "the total bound cross section, and the high-energy 1/E tail "
@@ -1048,8 +1048,8 @@ class EndfFormMixin:
         if not path:
             messagebox.showerror(
                 STRUCTURE_FILL_TITLE,
-                "No phonopy.yaml is selected.\n\nChoose the phonon model "
-                "file above (Card 6f) first; the structure is read from it.")
+                "No phonopy.yaml is selected.\n\nChoose the phonopy.yaml "
+                "above (Card 6f) first; the structure is read from it.")
             return
         if not os.path.isfile(path):
             messagebox.showerror(
@@ -1314,7 +1314,7 @@ class EndfFormMixin:
                       "(iel=1-6) it also scales the Bragg-edge cross "
                       "sections.\n\n"
                       "For inelastic_mode=1/2, IRMA still writes one "
-                      "principal-scatterer MT4 section per deck, even when "
+                      "principal-scatterer MT4 section per input file, even when "
                       "the crystal contains multiple atom types.")
         self.npr.pack(fill=tk.X, pady=2)
 
@@ -2590,8 +2590,8 @@ class EndfFormMixin:
                 + ". IRMA leaves these blank because they describe YOUR "
                 "material — fill them in (the 'Fill AWR + sigma_free from ZA' "
                 "button fills AWR and sigma_free once ZA is set), or load a "
-                "deck with Import Input File, e.g. one of the examples/tsl "
-                "decks.")
+                "input file with Import Input File, e.g. one of the examples/tsl "
+                "input files.")
 
         lines = []
         # Card 1
@@ -2650,7 +2650,7 @@ class EndfFormMixin:
                     raise ValueError(
                         "ncold/nsk together with a two-pass secondary "
                         "scatterer is not supported in the GUI — author "
-                        "that deck directly.")
+                        "that input file directly.")
             lines.append(f"{nss} {b7} {self.aws.get()} {self.sps.get()} "
                          f"{mss} /")
         else:
@@ -2672,7 +2672,7 @@ class EndfFormMixin:
                     "(Card 6c) in the Material part; empty: "
                     + ", ".join(blank_latt)
                     + ". Type them in, press '" + STRUCTURE_FILL_TITLE
-                    + "' (inelastic_mode 1/2), or load a deck with Import "
+                    + "' (inelastic_mode 1/2), or load an input file with Import "
                     "Input File.")
             atoms = self._parse_atoms()
             nat = len(atoms)
@@ -2681,7 +2681,7 @@ class EndfFormMixin:
                     "iel=10 (generalized) requires at least one atom type "
                     "(Card 6d) in the Material part. Type the rows in, press "
                     "'" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or "
-                    "load a deck with Import Input File.")
+                    "load an input file with Import Input File.")
             elastic_mode = self._parse_elastic_mode()
 
             # Card 6e partial spectra ride through import -> export verbatim;
