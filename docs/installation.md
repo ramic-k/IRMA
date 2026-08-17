@@ -24,7 +24,7 @@ From PyPI the extras are opt-in: `pip install irma` is the core, and `pip instal
 pip install "irma[phonopy,spectra,mlip]"
 ```
 
-A conda-forge package is on the way, under the name `irma-sqw`. bioconda already ships an unrelated `irma`, the CDC influenza assembler, and the two channels are routinely enabled together, so the conda package is named for the S(Q,ω) that underpins every IRMA calculation. Only the conda package name differs: the import and the command stay `irma`. That package is all of IRMA in one install, the core plus the dependencies of every extra (phonopy, scipy, PyYAML, ase), so the ENDF generator, the spectra forward model, the NCrystal exporter, and the MLIP phonon front end all work from it. Until the recipe is merged, the command below reports the package as missing; use pip in the meantime:
+On conda-forge the package is named `irma-sqw`. bioconda already ships an unrelated `irma`, the CDC influenza assembler, and the two channels are routinely enabled together, so the conda package is named for the S(Q,ω) that underpins every IRMA calculation. Only the conda package name differs: the import and the command stay `irma`. That package is all of IRMA in one install, the core plus the dependencies of every extra (phonopy, scipy, PyYAML, ase), so the ENDF generator, the spectra forward model, the NCrystal exporter, and the MLIP phonon front end all work from it:
 
 ```bash
 conda create -n irma -c conda-forge irma-sqw

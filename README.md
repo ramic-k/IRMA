@@ -150,17 +150,17 @@ pip install "irma[phonopy,spectra,mlip]"   # everything
 pip install irma                           # core only
 ```
 
-A conda-forge package is on the way, under the name **`irma-sqw`**:
-bioconda already ships an unrelated `irma` (the CDC influenza assembler),
-and the two channels are used together, so the conda package is named for
-the S(Q,ω) the engine computes. The import and the command stay `irma`.
-It installs all of IRMA, core plus the dependencies of every extra
-(phonopy, scipy, PyYAML, ase), so the ENDF generator, the spectra forward
-model, the NCrystal exporter, and the MLIP phonon front end all work from
-one install:
+On conda-forge the package is named **`irma-sqw`**: bioconda already
+ships an unrelated `irma` (the CDC influenza assembler), and the two
+channels are used together, so the conda package is named for the S(Q,ω)
+the engine computes. The import and the command stay `irma`. It installs
+all of IRMA, core plus the dependencies of every extra (phonopy, scipy,
+PyYAML, ase), so the ENDF generator, the spectra forward model, the
+NCrystal exporter, and the MLIP phonon front end all work from one
+install:
 
 ```bash
-conda create -n irma -c conda-forge irma-sqw    # pending review, see #34407
+conda create -n irma -c conda-forge irma-sqw
 conda activate irma
 ```
 
