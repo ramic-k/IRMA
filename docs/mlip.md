@@ -340,7 +340,17 @@ time of writing:
 The version windows reflect the upstream package metadata verified at
 the time of writing (July 2026); `env create` itself pins only the
 package names plus `ase>=3.23` and picks up whatever the upstreams
-currently publish. The two e3nn camps (`mace-torch` versus everything
+currently publish.
+
+One platform floor sits above all of these: **Intel (x86_64) Macs are
+effectively unsupported for the MLIP front end.** torch stopped
+shipping Intel-mac wheels at 2.2.2 (April 2024), so every potential
+that needs a newer torch fails to install there, and the torch that
+does install was built against NumPy 1.x, which breaks next to the
+NumPy 2 that current packages pull in. `env create` states this up
+front on such machines, and its NumPy fallback (below) can rescue
+`nequip`; for the rest, use Linux or an Apple-Silicon Mac. Everything
+else in IRMA works normally on Intel Macs. The two e3nn camps (`mace-torch` versus everything
 else that uses e3nn)
 were both demonstrated to break in live installs, in either direction;
 this is not a
@@ -355,9 +365,19 @@ irma mlip env remove mace
 
 `env create` builds a standard virtual environment (with `uv` when it is
 on PATH, otherwise the standard library's `venv` seeded from the running
-interpreter; **conda is never required or invoked**), installs a
-known-good requirement set, runs a backend-specific import smoke check,
-and registers the interpreter in the irma-mlip cache. On Debian-family
+interpreter; **conda is never required or invoked**), installs the
+curated requirement set (unpinned package names, resolved against the
+package index at install time), runs a backend-specific import smoke
+check plus a torch/NumPy interop probe, and registers the interpreter in
+the irma-mlip cache. With `uv` the environment is pinned to Python 3.12
+rather than inheriting the interpreter running IRMA: the potential
+packages lag new Python releases, and on the newest interpreter the
+resolver is forced onto bleeding-edge builds of torch. The probe
+catches the one failure an import cannot: a torch wheel built against
+NumPy 1.x sitting next to NumPy 2, which imports cleanly and then
+fails when a tensor first crosses to NumPy; when that signature is
+detected, `env create` reinstalls the environment's NumPy as `numpy<2`
+and re-verifies before registering anything. On Debian-family
 distributions the stdlib-`venv` fallback needs the `python3-venv`
 system package; installing `uv` sidesteps that. From then
 on, `--potential mace` transparently runs its force calls in that

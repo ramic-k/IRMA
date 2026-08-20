@@ -478,6 +478,39 @@ def _cached_nequip_artifact(zoo_id: str) -> str | None:
     return None
 
 
+# Bootstrap for the nequip-compile subprocess. Beyond the thread pin,
+# it guards a torch.export defect seen on bleeding-edge torch: when the
+# import chain sets the cuDNN conv TF32 flag through the new per-op API
+# while the RNN flag keeps its legacy value, export's own bookkeeping
+# calls a getter that RAISES on the mixed state ("cuDNN conv and cuDNN
+# RNN have different TF32 flags"). The compile runs --device cpu, so
+# TF32 is irrelevant to the result: the legacy setter writes both flags
+# consistently, and the getter shim returns the conv flag instead of
+# raising if something re-mixes them later in the run. UNVERIFIED
+# against a live CUDA torch as of 2026-08-19 (needs a machine with a
+# CUDA build); remove both once torch or nequip fixes the flag handling.
+_NEQUIP_COMPILE_BOOTSTRAP = """\
+import os
+import sys
+import torch
+torch.set_num_threads(1)
+try:
+    torch.backends.cudnn.allow_tf32 = False
+except Exception:
+    pass
+if hasattr(torch._C, "_get_cudnn_allow_tf32"):
+    _orig_get_tf32 = torch._C._get_cudnn_allow_tf32
+    def _tf32_no_raise():
+        try:
+            return _orig_get_tf32()
+        except RuntimeError:
+            return False
+    torch._C._get_cudnn_allow_tf32 = _tf32_no_raise
+from nequip.scripts.compile import main
+main()
+"""
+
+
 def _compile_nequip_model(zoo_id: str) -> str:
     """nequip-compile a model-zoo entry into the irma-mlip cache.
 
@@ -497,9 +530,7 @@ def _compile_nequip_model(zoo_id: str) -> str:
     # required extension kept, and always cleaned up; publication via
     # atomic os.replace so racers waste work but never corrupt
     tmp = out[:-len(ext)] + f".compiling-{os.getpid()}" + ext
-    cmd = [_sys.executable, "-c",
-           "import os; import torch; torch.set_num_threads(1); "
-           "import sys; from nequip.scripts.compile import main; main()",
+    cmd = [_sys.executable, "-c", _NEQUIP_COMPILE_BOOTSTRAP,
            f"{_NEQUIP_ZOO_PREFIX}{zoo_id}", tmp,
            "--mode", mode, "--device", "cpu", "--target", "ase"]
     # single-thread compile environment: the thread count is baked into
