@@ -3,6 +3,33 @@
 Notable changes to IRMA. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] — 2026-08-20
+
+Hardening of MLIP environment provisioning, from the first field
+reports. No physics or engine changes: evaluations are byte-identical
+to 1.0.0.
+
+- `irma mlip env create` now runs a torch/NumPy interop probe after
+  the import check, retries once with `numpy<2` when a torch wheel
+  built against NumPy 1.x is detected (Intel Macs: torch wheels
+  stopped at 2.2.2), and refuses to register an environment that
+  `pip check` reports inconsistent afterward.
+- Shared environments (mace/mace-off) import-check every sibling
+  before registering any of them.
+- Install failures keep the part of pip's output that names the
+  irreconcilable requirements; dispatch errors carry a one-sentence
+  hint for the known failure signatures.
+- With uv on PATH, potential environments are pinned to Python 3.12;
+  potential packages lag new interpreters. Intel Macs get an up-front
+  note about the platform.
+- The nequip-compile bootstrap guards a torch.export crash on
+  bleeding-edge torch (mixed cuDNN TF32 flags); verified against
+  torch 2.13 (CUDA build).
+- Windows: the provisioned environment's interpreter path now points
+  at `Scripts\python.exe`.
+- GUI help and manual updated to match, including the platform
+  support note.
+
 ## [1.0.0] — 2026-08-03
 
 Initial public release. IRMA turns one phonon calculation into three
