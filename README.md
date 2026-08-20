@@ -485,7 +485,7 @@ IRMA is registered in DOE CODE under DOI
 in published work:
 
 > K. Ramic, *IRMA — (In)elastic Representation of Materials As S(α,β)
-> evaluations*, version 1.0.0, Oak Ridge National Laboratory (2026).
+> evaluations*, Oak Ridge National Laboratory (2026).
 > DOI: 10.11578/dc.20260803.1
 
 `CITATION.cff` carries the same metadata in machine-readable form, which is
