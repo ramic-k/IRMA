@@ -343,10 +343,13 @@ HELP = {
         "the packages conflict with this environment (e.g. mace's "
         "e3nn==0.4.4 pin) or are simply not installed.\n\n'Create' builds "
         "a standard virtual environment (uv or python -m venv, never "
-        "conda), installs the known-good packages, verifies the import, "
-        "and registers it; builds with that potential then use it "
-        "automatically. 'Remove' unregisters and deletes a provisioned "
-        "environment."),
+        "conda; with uv the environment is pinned to Python 3.12, since "
+        "the potential packages lag new interpreters), installs the "
+        "potential's packages at whatever versions the package index "
+        "currently serves, verifies the import plus a torch/NumPy "
+        "compatibility probe, and registers the environment; builds with "
+        "that potential then use it automatically. 'Remove' unregisters "
+        "and deletes a provisioned environment."),
 }
 
 
