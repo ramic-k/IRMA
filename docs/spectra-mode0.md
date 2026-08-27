@@ -1,18 +1,19 @@
 # DOS-based spectra (mode 0)
 
-The neutron-scattering forward model (`irma.spectra`) turns a phonon model into
+The neutron scattering forward model (`irma.spectra`) turns a phonon calculation into
 an instrument-resolved 1-D inelastic neutron scattering (INS) spectrum or a
 2-D `S(Q,E)` powder map. Its `inelastic_mode` selects how the inelastic
 scattering is computed:
 
 | Mode | Inelastic engine | Debye-Waller | Needs |
 |------|------------------|--------------|-------|
-| `0` | **DOS** incoherent-approximation phonon expansion | isotropic (scalar λ per element) | a phonon **DOS** (file or phonopy) |
+| `0` | **DOS** incoherent-approximation phonon expansion | isotropic (one scalar Debye-Waller factor per element) | a phonon **DOS** (file or phonopy) |
 | `1` | phonopy eigenvectors, incoherent approximation | anisotropic (per-atom tensors) | `phonopy.yaml` + mesh |
 | `2` | phonopy eigenvectors, coherent one-phonon + multiphonon | anisotropic | `phonopy.yaml` + mesh |
 
 Mode 0 is the lightweight end of the range. It runs the same
-incoherent-approximation phonon expansion LEAPR uses, straight from a phonon
+incoherent-approximation phonon expansion LEAPR (NJOY's standard thermal
+scattering law module) uses, straight from a phonon
 density of states (DOS), with no eigenvectors and without the mode-1/2
 engine. It is the right choice when the material is hydrogen-rich,
 incoherent, or disordered, where the incoherent approximation is already
@@ -21,7 +22,7 @@ whether from molecular dynamics (via the velocity autocorrelation function),
 from a measurement, or from a quick calculation; or when you want a fast
 survey before committing to a full mode-1/2 run. It does not capture
 coherent inelastic scattering (phonon dispersion); use mode 2 for that. The
-modeling level is the same as OCLIMAX `TASK=0`, but driven by IRMA's own
+modeling level is the same as OCLIMAX's DOS-based mode (`TASK=0`), but driven by IRMA's own
 LEAPR kernel and wired into the full instrument, resolution, and elastic
 forward model.
 
@@ -36,8 +37,11 @@ e^{-2W_d(Q)}\,[\text{expansion of }\rho_d],\qquad
 \alpha_d=\frac{C_E\,Q^2}{A_d\,k_BT},
 $$
 
-with $N=\sum_d m_d$ the atoms per cell. The $1/N$ makes the absolute scale
-per represented atom, the same normalization as `inelastic_mode` 1 and 2 (the
+with $C_E$ the α-conversion constant ($\hbar^2/2m_n$), $A_d$ the atomic
+weight ratio, $m_d$ the multiplicity, and $N=\sum_d m_d$ the atoms per
+cell. The $1/N$ makes the absolute scale
+per represented atom (per atom of the cell included in the calculation),
+the same normalization as `inelastic_mode` 1 and 2 (the
 eigenvector engine also normalizes per represented atom), so a mode-0 and a
 mode-1/2 spectrum are directly comparable. Hydrogen is never blended away
 into a single effective spectrum, and a neutron-weighted generalized DOS
@@ -53,7 +57,7 @@ into a single effective spectrum, and a neutron-weighted generalized DOS
   anisotropic DOS tensor, normalized to one phonon per atom. You still give
   the scattering data (`awr`, `sigma_bound_b`, …) per element.
 
-## The elastic line (optional, iel=10 analogue)
+## The elastic line (optional)
 
 Give a unit cell and mode 0 builds an elastic line from the same Debye-Waller
 factors the inelastic part uses. The coherent component is a set of Bragg peaks
@@ -125,7 +129,7 @@ input**, gates everything:
 Fill the per-element scattering data (σ_bound, awr, b_coh, σ_inc) in the table.
 For the coherent-elastic line, set *elastic kind* to include coherent and fill
 the material *lattice* and each element's *positions* (flat `x y z x y z …`, the
-same format as the ENDF deck; the triplet count must equal *mult*).
+same format as the ENDF input file; the triplet count must equal *mult*).
 
 ![The Neutron Scattering Experiments tab in DOS-files (mode 0) form: the per-element table with the DOS file column, and the lattice row that enables the coherent-elastic Bragg peaks (the committed graphite example)](assets/gui/gui_ns_dosfiles_mode0.png)
 

@@ -1,17 +1,17 @@
 # Tutorial: a transport material for NCrystal
 
-This tutorial bakes IRMA's graphite mode-2 physics into an NCrystal
-material and then watches NCrystal scatter with it. The export takes
+This tutorial writes IRMA's graphite mode-2 physics into an NCrystal
+material and then checks the material through NCrystal's own interface. The export takes
 75 seconds; the verification takes seconds. Two installations are
 involved: IRMA with the phonopy extra for the export itself, and an
 NCrystal installation with the in-repo `ncrystal_plugin_IRMA` built
 against it for the verification (the build commands are in the
-README's [NCrystal plugins](../installation.md#ncrystal-plugins-built-separately)
-section).
+[NCrystal plugins section of the installation
+page](../installation.md#ncrystal-plugins-built-separately)).
 
 ## The export configuration
 
-The exporter reads a YAML configuration naming the phonon model and
+The exporter reads a YAML configuration naming the phonon calculation and
 the export settings. Save this as `graphite_export.yaml` in the
 repository root; the material section is the same graphite the
 [ENDF tutorial](endf-evaluation.md) evaluated, and the export section
@@ -32,14 +32,14 @@ export:
   multiphonon_num_directions: 1000
   multiphonon_max_order: auto
   jobs: 8
-  gain_side: scaled_sym
+  gain_side: scaled_sym   # store the energy-loss half; NCrystal rebuilds the gain side
   elastic: true
 ```
 
 No grid appears here because the automatic grid is the default: IRMA
 builds the same converged alpha and beta grids the ENDF evaluator
 uses, from the same shared code, so the exported physics and a tape
-from the same model never drift apart. The
+from the same calculation never drift apart. The
 [NCrystal data exporter](../ncrystal-plugin.md) page documents every
 field.
 
@@ -52,14 +52,17 @@ python -m irma.ncrystal graphite_export.yaml -o out/
 Seventy-five seconds later, `out/` holds two files:
 
 ```text
-graphite__C.irmapack    4.3 MB   the baked physics
+graphite__C.irmapack    4.3 MB   the exported physics
 graphite.ncmat          438 B    the loadable material
 ```
 
-The data file carries the mode-2 $S(\alpha,\beta)$ half-table and the
-anisotropic Debye-Waller elastic tensors for 296 K, with provenance.
+The data file carries the mode-2 $S(\alpha,\beta)$ half-table (the
+energy-loss half; NCrystal reconstructs the gain side by detailed
+balance at run time) and the
+anisotropic Debye-Waller elastic tensors for 296 K, with the `meta.*`
+record of the IRMA version and run settings.
 The NCMAT file is small because it delegates: the crystal cell comes
-from the phonopy model, the `@DYNINFO` block is a placeholder, and the
+from the phonopy calculation, the `@DYNINFO` block is a placeholder, and the
 `@CUSTOM_IRMA` section points NCrystal's plugin at the data file:
 
 ```text
@@ -72,12 +75,27 @@ NCMAT v5
   C 0 0 0.5
   C 0.333333333333 0.666666666667 0
   C 0.666666666667 0.333333333333 0.5
+@DYNINFO
+  element C
+  fraction 1
+  type vdosdebye
+  debye_temp 1037.8
+@CUSTOM_IRMA
+  pack <absolute path to>/out/graphite__C.irmapack
 ```
+
+(The cell here comes from the phonopy calculation, so its constants
+differ in the last digits from the rounded values of the ENDF
+tutorial's input file; that is expected. The `@CUSTOM_IRMA` section
+records the data file by the absolute path the exporter wrote, so keep
+the pair where the export put them, or re-run the export at the new
+location.)
 
 ## Verify it inside NCrystal
 
-In the environment where the plugin is installed, NCrystal's own
-plugin test comes first:
+In the Python environment where you built the plugin
+(`pip install --no-build-isolation ./ncrystal_plugin_IRMA`), NCrystal's
+own plugin test comes first:
 
 ```bash
 ncrystal-pluginmanager --test IRMA
@@ -105,13 +123,14 @@ E =  100.0 meV   sigma_scatter =    4.801 barn/atom
 ```
 
 That is IRMA's coherent one-phonon plus anisotropic-Debye-Waller
-physics answering through NCrystal's standard interface. It is
-important to note that the `;temp=296K` in the load string must name a
-temperature the export actually baked: the data files are strictly
+physics answering through NCrystal's standard interface. The values are
+deterministic for a given export: yours should match to the printed
+digits, and a larger deviation means a version or input mismatch. The `;temp=296K` in the load string must name a
+temperature the export actually wrote: the data files are strictly
 per-temperature, and the plugin treats a mismatch as a hard error
 rather than a silent interpolation (the
 [exporter page](../ncrystal-plugin.md) has the details). To cover several temperatures, run the exporter once
-per temperature; each run bakes its own data file.
+per temperature; each run writes its own data file.
 
 ## Use it in a transport code
 
@@ -127,6 +146,6 @@ spectrometer compared against measurement.
 
 The NCrystal plugin tab is this tutorial as a form: the material and
 export sections mirror the YAML, the scatterer row fills itself from
-the phonopy model, and the Log column streams the same export log.
+the phonopy calculation, and the Log column streams the same export log.
 
 ![The NCrystal plugin tab staged with this tutorial's export](../assets/gui/gui_ncrystal_export.png)

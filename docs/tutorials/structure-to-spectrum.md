@@ -1,25 +1,32 @@
 # Tutorial: from a crystal structure to a predicted spectrum
 
 This tutorial starts with nothing but a crystal structure file and
-ends with a predicted VISION spectrum, plus ready-to-edit inputs for
+ends with a predicted spectrum for the VISION spectrometer at the
+Spallation Neutron Source, plus ready-to-edit inputs for
 the other two IRMA outputs. A pretrained machine-learned interatomic
 potential stands in for the first-principles calculation, so no DFT
-and no phonon model are needed up front. The material is the committed
+and no phonon calculation are needed up front. The material is the committed
 rocksalt MgO cell, `examples/mlip/MgO.cif`; after a one-time
 environment build, the whole chain runs in under a minute. You need
 the mlip and spectra extras
 (`pip install -e ".[mlip,spectra]"`, see
 [Installation](../installation.md)).
 
-Any structure file that ASE can recognize from its name works in place
+Any structure file that ASE (the Atomic Simulation Environment, the
+library IRMA uses to read structures) can recognize from its name works
+in place
 of the CIF here; the naming rule (and its one failure mode) is spelled
-out at the top of [MLIP phonon models](../mlip.md).
+out at the top of [MLIP phonon calculations](../mlip.md).
 
 ## One-time setup: the potential's environment
 
 The pretrained potentials are never installed with IRMA, because their
 package stacks conflict with each other. Instead, each potential gets
 its own Python environment, built once:
+
+The tutorial uses nequip, the potential that performed best in the
+[validation snapshot](../mlip.md#validation-snapshot); any of the nine
+works the same way.
 
 ```bash
 irma mlip env create nequip
@@ -39,7 +46,7 @@ and takes a few minutes. From then on, every `irma mlip` command
 detects the registered environment and runs nequip in it; nothing else
 needs activating.
 
-## Build the phonon model
+## Build the phonon calculation
 
 ```bash
 irma mlip build examples/mlip/MgO.cif -o mgo_bundle --potential nequip
@@ -57,14 +64,17 @@ irma mlip build examples/mlip/MgO.cif -o mgo_bundle --potential nequip
 
 The build relaxes the structure with the potential, chooses a
 supercell, and runs the phonopy finite-displacement workflow with the
-potential supplying the forces. Rocksalt symmetry reduces MgO to two
+potential supplying the forces. (The committed cell is already at
+nequip's minimum, so the relaxation converges in zero steps; your own
+structure will usually take tens of steps.) Rocksalt symmetry reduces MgO to two
 displacements, so this build finishes in 19 seconds on a laptop; lower
 symmetry means more displacements and proportionally more time. The
-bundle directory now holds the phonon model (`phonopy.yaml`), the
-relaxed cell (`structure_relaxed.vasp`), a provenance manifest, and
+bundle directory now holds the phonon calculation (`phonopy.yaml`), the
+relaxed cell (`structure_relaxed.vasp`), the build manifest, and
 the phonon density of states as both data (`dos.dat`) and a plot
 (`dos.png`). Look at `dos.png` before going further: a sensible DOS
-with no imaginary modes is the cheapest sanity check the bundle
+with no imaginary modes (imaginary modes plot as intensity at negative
+frequencies) is the cheapest sanity check the bundle
 offers, and the [MLIP examples](../mlip-examples.md) page shows what
 healthy and unhealthy ones look like.
 
@@ -75,13 +85,14 @@ irma mlip emit mgo_bundle --to endf,spectra,ncrystal --mat Mg=45 --mat O=46
 ```
 
 The `--mat` values are the ENDF material numbers the two evaluations
-will carry; they are yours to choose. The command prefills one deck
+will carry; they are yours to choose (any positive integer works for
+in-house use; libraries assign them by convention). The command prefills one input file
 per principal scatterer (`endf_Mg.input`, `endf_O.input`), a spectra
 configuration (`spectra.yaml`), and an NCrystal export configuration
 (`ncrystal.yaml`), and it prints the exact commands that run each one.
-The prefilled files carry the production settings, a campaign-density
-phonopy mesh (24x24x24 for this cell) and the full validation-campaign
-sampling, so running them unedited gives production quality, not a
+The prefilled files carry the production settings: the same mesh
+density the validation campaign used (24x24x24 for this cell) and the
+full campaign sampling, so running them unedited gives production quality, not a
 quick approximation. The command also warns about anything it had to
 assume:
 
@@ -90,12 +101,13 @@ assume:
   O: natural element (za=8000); select an isotope with --nuclide O=<A>-O to take its identity AND its constants
 ```
 
-A phonopy model names elements, not isotopes, so each species is
+A phonopy calculation names elements, not isotopes, so each species is
 emitted as the natural element with that element's natural-abundance
 scattering constants. If your material is isotopically enriched, or
 you are evaluating a specific isotope, say so with `--nuclide`: it
 takes the ENDF identity and the constants from the same isotope
-entry, so the two cannot disagree.
+entry, so the two cannot disagree (for example `--nuclide Mg=26-Mg`
+for magnesium-26).
 
 ## Run the spectrum
 
@@ -113,6 +125,24 @@ E_meV,total@45deg,total@135deg
 1,3.4521343e-05,3.4512376e-05
 ```
 
+Plot the two bank columns to see the spectrum; with matplotlib:
+
+```python
+import numpy as np, matplotlib.pyplot as plt
+E, b45, b135 = np.genfromtxt("spectrum.csv", delimiter=",", skip_header=2).T
+plt.plot(E, b45, label="45 deg"); plt.plot(E, b135, label="135 deg")
+plt.xlabel("Energy transfer [meV]"); plt.legend(); plt.show()
+```
+
+![The MgO VISION spectrum this tutorial produces: both detector banks](../assets/mlip/tutorial_mgo_vision.png)
+
+Three features stand out, and your plot should show all of them: an
+acoustic peak near 35 meV, the strongest optical peak near 51 meV, and
+a high-energy optical peak near 79 meV, with the one-phonon spectrum
+ending just above 80 meV (the small intensity beyond it is multiphonon
+scattering). The 135° bank sits higher than the 45° bank because its
+kinematics reach larger momentum transfer.
+
 The [spectra](../spectra.md) page documents everything the
 configuration can change: instrument geometry, resolution,
 temperature, energy grid, and the DOS-based mode 0 that needs no
@@ -120,7 +150,7 @@ eigenvectors at all.
 
 ## The other two outputs
 
-The emitted decks run exactly like the
+The emitted input files run exactly like the
 [ENDF tutorial](endf-evaluation.md): `irma mgo_bundle/endf_Mg.input
 endf_Mg.endf` produced a 5.0 MB tape in 198 seconds here, the log
 noting that the prefilled multiphonon order 100 already exceeded the

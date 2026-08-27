@@ -454,3 +454,250 @@ def test_requirement_set_is_not_advertised_as_vetted():
     assert "known-good" not in text.lower()
     assert "UNPINNED" in envs.create_env.__doc__ \
         or "unpinned" in envs.create_env.__doc__.lower()
+
+
+# ---------------------------------------------------------------------------
+# provisioning guards (2026-08: colleague-reported field failures)
+
+
+def test_install_failure_detail_keeps_pips_conflict_section():
+    """pip puts 'The conflict is caused by:' on STDOUT and only the final
+    ERROR lines on stderr; taking stderr alone loses the diagnosis."""
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        stdout=("Collecting mattersim\n"
+                "The conflict is caused by:\n"
+                "    mattersim 1.2.5 depends on torch>=2.2.0\n"
+                "    torchvision 0.17.2 depends on torch==2.2.2\n"),
+        stderr=("ERROR: Cannot install mattersim==1.2.5\n"
+                "ERROR: ResolutionImpossible: for help visit ...\n"))
+    detail = envs._install_failure_detail(result)
+    assert "conflict is caused by" in detail.lower()
+    assert "torch>=2.2.0" in detail
+    assert "ResolutionImpossible" in detail
+
+    # without a conflict section, stderr passes through as before
+    plain = SimpleNamespace(stdout="Collecting foo\n", stderr="ERROR: boom\n")
+    assert envs._install_failure_detail(plain) == "ERROR: boom"
+    # and stdout is the fallback when stderr is empty
+    quiet = SimpleNamespace(stdout="something odd\n", stderr="")
+    assert envs._install_failure_detail(quiet) == "something odd"
+
+
+def test_error_hint_covers_the_two_field_signatures():
+    hint = envs._error_hint("RuntimeError: ... _ARRAY_API not found ...")
+    assert hint and "numpy<2" in hint
+    hint = envs._error_hint(
+        "RuntimeError: PyTorch is checking whether allow_tf32 ... "
+        "cuDNN conv and cuDNN RNN have different TF32 flags")
+    assert hint and envs._ENV_PYTHON in hint
+    assert envs._error_hint("ValueError: unrelated") is None
+
+
+def test_raise_appends_hint_for_known_signatures():
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(interpreter="/env/bin/python")
+    reply = {"ok": False, "kind": "runtime",
+             "error": "RuntimeError: Numpy is not available"}
+    with pytest.raises(RuntimeError, match="hint: .*numpy<2"):
+        envs._ServerHandle._raise(fake, reply, "canonicalize nequip")
+    # unknown errors stay untouched
+    reply = {"ok": False, "kind": "runtime", "error": "RuntimeError: boom"}
+    with pytest.raises(RuntimeError) as exc:
+        envs._ServerHandle._raise(fake, reply, "canonicalize nequip")
+    assert "hint:" not in str(exc.value)
+
+
+def test_uv_dry_run_pins_the_env_python(monkeypatch):
+    monkeypatch.setattr(envs, "_find_uv", lambda: "uv")
+    lines = []
+    envs.create_env("mace", progress=lines.append, dry_run=True)
+    create = next(ln for ln in lines if "create venv" in ln)
+    assert f"--python {envs._ENV_PYTHON}" in create
+    assert sys.executable not in create
+
+
+def test_intel_mac_preflight_gates_on_platform(monkeypatch):
+    monkeypatch.setattr(envs, "_find_uv", lambda: None)
+    monkeypatch.setattr(envs, "_intel_mac", lambda: True)
+    lines = []
+    envs.create_env("mace", progress=lines.append, dry_run=True)
+    assert any("Intel (x86_64) Mac" in ln for ln in lines)
+
+    monkeypatch.setattr(envs, "_intel_mac", lambda: False)
+    lines = []
+    envs.create_env("mace", progress=lines.append, dry_run=True)
+    assert not any("Intel (x86_64) Mac" in ln for ln in lines)
+
+
+def test_probe_and_bootstrap_sources_compile():
+    compile(envs._RUNTIME_PROBE, "<probe>", "exec")
+    assert "from_numpy" in envs._RUNTIME_PROBE
+    from irma.mlip import calculators
+    compile(calculators._NEQUIP_COMPILE_BOOTSTRAP, "<bootstrap>", "exec")
+    assert "allow_tf32" in calculators._NEQUIP_COMPILE_BOOTSTRAP
+    assert "main()" in calculators._NEQUIP_COMPILE_BOOTSTRAP
+
+
+def test_numpy_abi_breakage_triggers_one_numpy2_retry(tmp_path, monkeypatch):
+    """The provisioning sequence on a machine whose torch wheel is built
+    against NumPy 1.x (Intel mac): import check passes, the probe fails
+    with the ABI signature, numpy<2 goes in, and the re-probe passes."""
+    monkeypatch.setattr(envs, "_find_uv", lambda: None)
+    root = envs.env_root("nequip")
+    python = envs._env_python(root)
+    calls = []
+    state = {"probe_runs": 0}
+
+    def fake_run(cmd, capture_output=True, text=True):
+        from types import SimpleNamespace
+
+        calls.append(cmd)
+        if cmd[1:3] == ["-m", "venv"]:
+            os.makedirs(os.path.dirname(python), exist_ok=True)
+            with open(python, "w") as fh:
+                fh.write("#!/bin/sh\n")
+            os.chmod(python, 0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:2] == [python, "-c"] and cmd[2] == envs._RUNTIME_PROBE:
+            state["probe_runs"] += 1
+            if state["probe_runs"] == 1:
+                return SimpleNamespace(
+                    returncode=1, stdout="",
+                    stderr="UserWarning: Failed to initialize NumPy: "
+                           "_ARRAY_API not found")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(envs.subprocess, "run", fake_run)
+    lines = []
+    result = envs.create_env("nequip", progress=lines.append)
+    assert result == python
+    assert envs.registered_interpreter("nequip") == python
+    assert state["probe_runs"] == 2
+    fixes = [c for c in calls if "numpy<2" in c]
+    assert len(fixes) == 1 and fixes[0][:3] == [python, "-m", "pip"]
+    assert any("ABI mismatch" in ln for ln in lines)
+    # the remediated env must also survive pip check before registering
+    assert [python, "-m", "pip", "check"] in calls
+
+
+def test_probe_failure_without_the_signature_does_not_register(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(envs, "_find_uv", lambda: None)
+    root = envs.env_root("nequip")
+    python = envs._env_python(root)
+
+    def fake_run(cmd, capture_output=True, text=True):
+        from types import SimpleNamespace
+
+        if cmd[1:3] == ["-m", "venv"]:
+            os.makedirs(os.path.dirname(python), exist_ok=True)
+            with open(python, "w") as fh:
+                fh.write("#!/bin/sh\n")
+            os.chmod(python, 0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:2] == [python, "-c"] and cmd[2] == envs._RUNTIME_PROBE:
+            return SimpleNamespace(returncode=1, stdout="",
+                                   stderr="Segmentation fault")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(envs.subprocess, "run", fake_run)
+    with pytest.raises(envs.MlipEnvError, match="runtime *probe|probe"):
+        envs.create_env("nequip", progress=lambda *_: None)
+    assert envs.registered_interpreter("nequip") is None
+
+
+def test_remediation_refuses_a_pip_check_failure(tmp_path, monkeypatch):
+    """A stack that pins numpy>=2 cannot coexist with a NumPy-1-ABI
+    torch: remediation must refuse to register, not paper over it."""
+    monkeypatch.setattr(envs, "_find_uv", lambda: None)
+    root = envs.env_root("mattersim")
+    python = envs._env_python(root)
+    state = {"probe_runs": 0}
+
+    def fake_run(cmd, capture_output=True, text=True):
+        from types import SimpleNamespace
+
+        if cmd[1:3] == ["-m", "venv"]:
+            os.makedirs(os.path.dirname(python), exist_ok=True)
+            with open(python, "w") as fh:
+                fh.write("#!/bin/sh\n")
+            os.chmod(python, 0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:2] == [python, "-c"] and cmd[2] == envs._RUNTIME_PROBE:
+            state["probe_runs"] += 1
+            if state["probe_runs"] == 1:
+                return SimpleNamespace(returncode=1, stdout="",
+                                       stderr="_ARRAY_API not found")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd == [python, "-m", "pip", "check"]:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="mattersim 1.2.5 has requirement numpy>=2.0.0, "
+                       "but you have numpy 1.26.4.",
+                stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(envs.subprocess, "run", fake_run)
+    with pytest.raises(envs.MlipEnvError, match="inconsistent"):
+        envs.create_env("mattersim", progress=lambda *_: None)
+    assert envs.registered_interpreter("mattersim") is None
+
+
+def test_shared_sibling_is_verified_before_any_registration(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(envs, "_find_uv", lambda: None)
+    root = envs.env_root("mace")
+    python = envs._env_python(root)
+    sib_check = envs._IMPORT_CHECKS["mace-off"]
+    state = {"sibling_ok": True}
+
+    def fake_run(cmd, capture_output=True, text=True):
+        from types import SimpleNamespace
+
+        if cmd[1:3] == ["-m", "venv"]:
+            os.makedirs(os.path.dirname(python), exist_ok=True)
+            with open(python, "w") as fh:
+                fh.write("#!/bin/sh\n")
+            os.chmod(python, 0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:2] == [python, "-c"] and cmd[2] == sib_check \
+                and not state["sibling_ok"]:
+            return SimpleNamespace(returncode=1, stdout="",
+                                   stderr="ImportError: no mace_off")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(envs.subprocess, "run", fake_run)
+    result = envs.create_env("mace", progress=lambda *_: None)
+    assert result == python
+    assert envs.registered_interpreter("mace") == python
+    assert envs.registered_interpreter("mace-off") == python
+
+    # broken sibling: nothing registers, not even the requested one
+    envs.unregister_interpreter("mace")
+    envs.unregister_interpreter("mace-off")
+    import shutil as _shutil
+    _shutil.rmtree(root)
+    state["sibling_ok"] = False
+    with pytest.raises(envs.MlipEnvError, match="sibling mace-off"):
+        envs.create_env("mace", progress=lambda *_: None)
+    assert envs.registered_interpreter("mace") is None
+    assert envs.registered_interpreter("mace-off") is None
+
+
+def test_conflict_section_head_survives_a_long_candidate_walk():
+    from types import SimpleNamespace
+
+    walk = "\n".join(f"    candidate torch=={i}" for i in range(200))
+    result = SimpleNamespace(
+        stdout=("The conflict is caused by:\n"
+                "    mattersim 1.2.5 depends on torch>=2.2.0\n" + walk),
+        stderr="ERROR: ResolutionImpossible\n")
+    detail = envs._install_failure_detail(result)
+    assert "conflict is caused by" in detail.lower()
+    assert "torch>=2.2.0" in detail          # the decisive head line
+    assert "truncated" in detail             # the walk was cut, visibly
+    assert "ResolutionImpossible" in detail

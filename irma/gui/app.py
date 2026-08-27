@@ -99,7 +99,7 @@ class IrmaApp(EndfFormMixin):
         self.top_notebook.add(endf_page, text="ENDF Evaluation")
         self._page_header(
             endf_page,
-            "Build a thermal-scattering-law deck and generate an ENDF-6 TSL "
+            "Build a thermal scattering law input file and generate an ENDF-6 TSL "
             "file: the inelastic law S(α,β) (MF7/MT4) plus coherent + "
             "incoherent elastic (MF7/MT2), for neutron-transport codes "
             "(NJOY/THERMR, OpenMC, MCNP).")
@@ -111,7 +111,7 @@ class IrmaApp(EndfFormMixin):
         self._page_header(
             ns_page,
             "Forward-model an inelastic-neutron-scattering spectrum or S(Q,E) "
-            "map from a phonon model with instrument resolution (VISION "
+            "map from a phonon calculation with instrument resolution (VISION "
             "indirect, or direct-geometry chopper) — produces 1-D spectra and "
             "2-D S(Q,E) maps to compare against measured INS data.")
         from irma.gui.ns_panel import NSPanel
@@ -137,7 +137,7 @@ class IrmaApp(EndfFormMixin):
         self.top_notebook.add(mlip_page, text="MLIP phonon models")
         self._page_header(
             mlip_page,
-            "Build a phonon model for a crystal from a pretrained "
+            "Build a phonon calculation for a crystal from a pretrained "
             "machine-learned interatomic potential (no DFT needed): relax, "
             "compute finite-displacement force constants, inspect the DOS "
             "— then "

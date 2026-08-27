@@ -19,7 +19,7 @@ From the IRMA source directory, pick the form that covers your workflows:
 ```bash
 pip install -e .              # core (classic LEAPR paths, iel=0-6 and iel=10 mode 0)
 pip install -e ".[phonopy]"   # + the noncubic inelastic paths (inelastic_mode=1/2)
-pip install -e ".[spectra]"   # + the neutron-scattering forward model (irma spectra)
+pip install -e ".[spectra]"   # + the neutron scattering forward model (irma spectra)
 pip install -e ".[mlip]"      # + the MLIP phonon front end (irma mlip)
 ```
 
@@ -48,12 +48,12 @@ If you need help installing or configuring the dependencies:
 | endf-parserpy | [github.com/IAEA-NDS/endf-parserpy](https://github.com/IAEA-NDS/endf-parserpy) |
 | phonopy | [phonopy.github.io/phonopy/install.html](https://phonopy.github.io/phonopy/install.html) |
 
-For the noncubic modes (`iel=10` with `inelastic_mode=1/2`), the deck also
+For the noncubic modes (`iel=10` with `inelastic_mode=1/2`), the input file also
 needs the phonopy control cards (`Card 6f` and `Card 6g`):
 
 - use `nspec=0` and omit Card `6e`
 - keep the full crystal in Card `6d`, even for mixed materials
-- keep one principal scatterer per deck; Card `5` chooses which atom gets the
+- keep one principal scatterer per input file; Card `5` chooses which atom gets the
   exported MT4 law
 - if you need separate mixed-material tapes for different principals
   (for example Be and O in BeO), run IRMA once per principal
@@ -93,7 +93,7 @@ Or using the installed entry point:
 irma input_file output_file
 ```
 
-With the `[spectra]` extra installed, the neutron-scattering forward model
+With the `[spectra]` extra installed, the neutron scattering forward model
 is available as a subcommand:
 
 ```bash
@@ -111,7 +111,7 @@ irma mlip --help
 
 | Capability | Linux | macOS | Windows |
 | --- | --- | --- | --- |
-| ENDF/TSL evaluation (classic paths, `iel` 0-6/10 with `inelastic_mode=0`) | yes | yes | yes |
+| ENDF/TSL evaluation (the classic kernels, `iel` 0-6/10 with `inelastic_mode=0`) | yes | yes | yes |
 | Noncubic `inelastic_mode=1/2`, spectra forward model, NCrystal export | yes | yes | untested* |
 | GUI | yes | yes | untested** |
 | C++ NCrystal plugins (build) | yes (CI-gated) | yes | untested |
