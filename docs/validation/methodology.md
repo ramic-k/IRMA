@@ -22,10 +22,10 @@ several kinds of evidence, each strongest in a different regime.
 
 | Reference or test | Purpose | Material(s) | Principal result |
 | --- | --- | --- | --- |
-| Published ENDF/B-VIII.1 tapes | kernel verification | C, Fe, Al, H/CH₂ | ≤ 7×10⁻⁵ |
+| Published ENDF/B-VIII.1 tapes (ENDF data files; "tape" is the historical name) | kernel verification | C, Fe, Al, H/CH₂ | ≤ 7×10⁻⁵ |
 | Fresh NJOY2016.78 tapes | kernel verification | l-CH₄, o/p-H₂, BeO (and o/p-D₂ in CI, see below) | exact |
-| Euphonic, coherent n = 1 | independent-code verification | C, Be, BeO | R = 1.00001, 1.0002, 0.9998 |
-| OCLIMAX, coherent n = 1 | Debye-Waller treatment isolation | C, Be, BeO | C: 1.9 released, 1.02 full-tensor; Be, BeO: 0.99 either |
+| Euphonic, coherent n = 1 (one-phonon) | independent-code verification | C, Be, BeO | R = 1.00001, 1.0002, 0.9998 |
+| OCLIMAX, coherent n = 1 | Debye-Waller treatment comparison | C, Be, BeO | C: 1.9 released, 1.02 full-tensor (two OCLIMAX builds; see below); Be, BeO: 0.99 either |
 | OCLIMAX, full S(α,β) | independent-code verification | C, Be, BeO | R = 0.96, 0.98, 0.99 |
 | ENDF/B-VIII.1 evaluations | processed-output comparison | C, Be, BeO | cross-section overlays |
 | CrysXT extinction | model-port verification | Be | 0.000%; 0.07% median |
@@ -37,38 +37,41 @@ several kinds of evidence, each strongest in a different regime.
 IRMA is a Python reimplementation and generalization of the LEAPR module of
 NJOY2016, so the first and tightest test is to reproduce the reference
 tapes: the published ENDF/B-VIII.1 files, and fresh NJOY2016.78 runs of the
-same decks. Eight evaluations test the classic components:
+same decks. Eight evaluations test the classic kernels:
 
 | Material | Components | Elastic | N_T | Reference | Agreement |
 | --- | --- | --- | --- | --- | --- |
-| Graphite | C | `iel=1` | 10 | published tape | 3.4×10⁻⁵ |
-| Fe (bcc) | C | `iel=6` | 6 | published tape | 6.9×10⁻⁵ |
-| Al (fcc) | C | `iel=4` | 6 | published tape | 6.2×10⁻⁵ |
-| H in CH₂ | C + free-gas C | incoh. | 15 | published tape | 2.0×10⁻⁵ |
-| liquid CH₄ | C+T+D | - | 1 | NJOY2016.78 | exact |
-| ortho-H₂ | C+T+D+Y+S | - | 7 | NJOY2016.78 | exact |
-| para-H₂ | C+T+D+Y+S | - | 7 | NJOY2016.78 | exact |
-| BeO | C, 2P | `iel=3` | 8 | NJOY2016.78 | exact |
+| Graphite | CE | `iel=1` | 10 | published tape | 3.4×10⁻⁵ |
+| Fe (bcc) | CE | `iel=6` | 6 | published tape | 6.9×10⁻⁵ |
+| Al (fcc) | CE | `iel=4` | 6 | published tape | 6.2×10⁻⁵ |
+| H in CH₂ | CE + free-gas carbon secondary | incoh. | 15 | published tape | 2.0×10⁻⁵ |
+| liquid CH₄ | CE+T+D | - | 1 | NJOY2016.78 | exact |
+| ortho-H₂ | CE+T+D+YK+SK | - | 7 | NJOY2016.78 | exact |
+| para-H₂ | CE+T+D+YK+SK | - | 7 | NJOY2016.78 | exact |
+| BeO | CE, 2P | `iel=3` | 8 | NJOY2016.78 | exact |
 
-Components: C = continuous phonon expansion, T = translational (free gas or
-diffusion), D = discrete oscillators, Y = Young-Koppel cold H₂, S = Sköld,
-2P = two-pass secondary scatterer. N_T is the number of temperatures
-compared. The cold ortho- and para-deuterium kernels are gated the
+Components: CE = continuous phonon expansion, T = translational (free gas or
+diffusion), D = discrete oscillators, YK = Young-Koppel cold H₂, SK = Sköld,
+2P = two-pass secondary scatterer; `iel` is the built-in
+coherent-elastic option of the classic kernels. N_T is the number of
+temperatures compared. The cold ortho- and para-deuterium kernels are gated the
 same way in CI: two miniature decks (`tests/test_coldd_minitape.py`)
 reproduce vendored unmodified-NJOY2016.78 tapes byte-identically in MF7. Against the published ENDF/B-VIII.1 graphite, bcc iron, fcc
 aluminum, and H-in-polyethylene files, the maximum relative difference in
-physically significant values of S(α,β) is below 7×10⁻⁵, and the
+physically significant values of S(α,β) (values above 10⁻³ of the
+table maximum, the reference set's significance threshold) is below
+7×10⁻⁵, and the
 αβ-integrated ratios are within 2×10⁻⁵ of unity. The published cold-hydrogen
 tapes were produced with the CAB-modified NJOY-H2D2 rather than standard
-LEAPR, so reference tapes for the three liquids were generated from the
-supplied decks with unmodified NJOY2016.78; IRMA reproduces them exactly, at
+LEAPR, so reference tapes for liquid methane and ortho- and para-hydrogen were
+generated from the supplied input files with unmodified NJOY2016.78; IRMA reproduces them exactly, at
 the precision of every tabulated S value and effective temperature. The BeO
 case, taken from the NJOY test suite, also agrees exactly and verifies the
 two-pass mixed-moderator treatment. The published tapes name their
 generating codes in their own MF1/MT451 headers: NJOY LEAPR for graphite,
 FLASSH for H in CH2, and no code for Al and Fe, so the comparison targets
 are the released files rather than any single generating program. The
-decks, IRMA inputs, and reference tapes live in
+LEAPR input files, IRMA inputs, and reference tapes live in
 `tests/native_LEAPR_NJOY_ENDF_validation/`.
 
 Reproducing a reference tape to floating-point precision proves that the
@@ -76,16 +79,17 @@ phonon expansion, the Debye-Waller treatment, and the ENDF formatting are
 identical to the reference implementation, rather than merely close to it.
 That makes every later, looser comparison interpretable: a discrepancy must
 come from the new physics under test, not from a hidden change in the
-classic path.
+classic kernels.
 
 ### NJOY defects found during verification
 
-The comparisons also exposed four defects in NJOY2016, reported upstream:
-THERMR's low-α extrapolation guard tests the wrong variable and can inflate
-the cross section it reconstructs from a coherent S(α,β) by orders of
-magnitude (issue 399), THERMR does not honor lin-lin (INT=2) interpolation
-through its cross-section reconstruction, the `discre` early-exit logic can
-omit the final discrete-oscillator convolution (issue 402), and the `pb4`
+The comparisons also exposed four defects in NJOY2016, reported
+upstream. In THERMR (NJOY's thermal cross-section module), the low-α
+extrapolation guard tests the wrong variable and can inflate the
+reconstructed cross section by orders of magnitude (issue 399), and
+lin-lin (INT=2) interpolation is not honored through the cross-section
+reconstruction. In LEAPR, the `discre` early-exit logic can omit the
+final discrete-oscillator convolution (issue 402), and the `pb4`
 coherent-elastic path contains a separate error (issue 403). The two THERMR
 defects are fixed by local source patches, and that corrected THERMR is
 used for all NJOY processing in the validation record. See
@@ -110,24 +114,27 @@ R_{AB} \;=\; \frac{\int_{\mathcal{D}} \bar S_A\,d\alpha\,d\beta}
 $$
 
 with IRMA as A and the comparison code as B, and no extrapolation. The
-ratio is an (α, β)-space normalization metric, not an integral over Q and
-E, for which the Jacobian would differ. Two rules keep the metric honest:
+ratio is a normalization metric in (α, β) space; it is not the same
+number as a Q-E integral, whose Jacobian differs. Two rules keep the metric honest:
 
 - **Same components on both sides.** The two integrals always contain the
   same physical components. The Euphonic ratio compares coherent n = 1
-  scattering from both codes. The OCLIMAX coherent n = 1 ratio isolates
-  the coherent part on both sides: the incoherent cross sections are
+  scattering from both codes. The OCLIMAX coherent n = 1 ratio keeps
+  only the coherent part on both sides: the incoherent cross sections are
   zeroed in the OCLIMAX material file (`.oclimax`), and the IRMA side is
-  the coherent component of the same mode-2 run. A
+  the coherent component of the same mode-2 run (mode 2 is the exact
+  coherent one-phonon treatment; the [graphite page](graphite.md)
+  defines the mode labels used throughout the record). A
   total-IRMA/coherent-Euphonic ratio is never reported.
-- **Same phonon model on both sides.** The metric is used only between
-  calculations that start from the same phonon model, where any deviation
-  isolates implementation and convention differences between the codes.
+- **Same phonon calculation on both sides.** The metric is used only between
+  calculations that start from the same phonon calculation, where any
+  deviation reflects only implementation and convention differences
+  between the codes.
   It is not applied to the released ENDF/B-VIII.1 files: they were built
-  from different phonon models, and over the full window the integral
+  from different phonon calculations, and over the full window the integral
   measures only the overall normalization, which every properly
   normalized S(α,β) matches to nearly the same value anyway (the BeO
-  evaluation still integrates to within 0.1% of IRMA mode 2). Model
+  evaluation still integrates to within 0.1% of IRMA mode 2). Those
   differences appear in the pointwise structure and in the processed
   cross sections instead.
 
@@ -144,7 +151,7 @@ compares different physics and is never done.
 
 ### Broadened metrics for stochastic powder sampling
 
-The phonopy-backed modes compute powder averages by sampling discrete
+Modes 1 and 2 compute powder averages by sampling discrete
 directions on a sphere: the validation campaign used 10000 coherent and 1000
 incoherent/multiphonon directions (Card 6g `10000 1000 1`; production
 defaults are lower, the campaign added headroom). Discrete sampling puts
@@ -162,7 +169,7 @@ noisy, confirm the direction count before suspecting the physics.
 The classic-kernel reproductions are protected by byte-level regression
 gates: the generated tape must match a frozen reference exactly (or to the
 documented ≤ 7×10⁻⁵ tolerance). These gates are intentionally unforgiving so
-that any change to the classic path, even a harmless-looking refactor, is
+that any change to the classic kernels, even a harmless-looking refactor, is
 caught before it ships. The checks live in the LEAPR and Euphonic harnesses
 under `tests/`.
 
@@ -179,15 +186,15 @@ released-OCLIMAX-to-mode-2 ratio is about 0.48 at Q = 20 Å⁻¹ and
 2.3×10⁻⁷ at Q = 50 Å⁻¹. An unreleased OCLIMAX build provided by its
 author, identical except for a full-tensor treatment of the coherent
 powder average, moves those ratios to 1.19 and 0.34 and the graphite
-coherent integral ratio from 1.9 to 1.02, which pins the divergence to the
-Debye-Waller treatment alone.
+coherent integral ratio from 1.9 to 1.02; the Debye-Waller treatment is
+the only difference between the two builds.
 
-This is not a bug in either code. It is important to note that a
+This is not a bug in either code. A
 code-to-code "disagreement" is a physics observation until proven
 otherwise: label both curves with their Debye-Waller convention before
 drawing conclusions. The full-tensor build enters only the coherent
 one-phonon comparison; every other OCLIMAX result in the validation record
-uses the released code. The [graphite page](graphite.md) isolates the
+uses the released code. The [graphite page](graphite.md) shows the
 effect, and nearly isotropic [beryllium](beryllium.md) is the control
 where the same curves stay together.
 
@@ -227,12 +234,13 @@ figure.
 The single most important rule in the validation record is that **every
 curve is labeled with what it includes**. Two curves that look comparable
 can encode different physics (a different Debye-Waller convention, a
-different set of scattering components, a different phonon model), and an
+different set of scattering components, a different phonon calculation), and an
 unlabeled plot invites exactly the wrong conclusion. In practice:
 
 - **Name the source and the physics on every curve**: "IRMA mode 2",
   "Euphonic n = 1 (coherent)", "OCLIMAX MAXO=1", "ENDF/B-VIII.1
-  graphite+Sd", and so on.
+  graphite+Sd" (+Sd: the structure-dependent, coherent-interference
+  variant), and so on.
 - **State the scattering components.** An inelastic-plus-absorption total
   is not a measured total above a Bragg cutoff; say so on the plot.
 - **State the Debye-Waller convention** whenever an anisotropic crystal is
@@ -245,9 +253,10 @@ unlabeled plot invites exactly the wrong conclusion. In practice:
   ratio 0.930), while the measured numerical effects (a −0.33% grid effect
   and a +0.10% processing effect on the same thermal integral) are far
   smaller. The offset therefore lies in the physical inputs: it could come
-  from the phonon model, from the measured sample, or from the transmission
+  from the phonon calculation, from the measured specimen, or from the
+  transmission
   measurement itself, and this single comparison cannot tell which. State
-  that, rather than assigning a culprit the evidence cannot localize.
+  that, rather than assigning a culprit the evidence cannot support.
 
 The end-to-end example that puts all of this together is the
 [graphite validation page](graphite.md).

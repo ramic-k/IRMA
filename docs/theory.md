@@ -8,7 +8,7 @@ IRMA is a Python reimplementation and generalization of the LEAPR module of
 NJOY2016: the classic phonon-expansion kernels are reproduced faithfully
 (validated against published NJOY tapes), and on top of them IRMA adds a
 generalized coherent-elastic (Bragg-edge) treatment for any crystal and an
-exact one-phonon inelastic path for noncubic crystals, driven by phonopy
+exact one-phonon inelastic treatment for noncubic crystals, driven by phonopy
 eigenvectors. If you already know LEAPR, the first half of the page is
 familiar ground and the noncubic sections are the new material.
 
@@ -35,6 +35,8 @@ ENDF-6 format other codes expect. The recurring terms, in plain words:
 | **Debye-Waller factor** | the thermal-vibration damping of scattering, `e^{-2W}` |
 | **ENDF-6 / MF7** | the standard nuclear-data file format; File 7 holds thermal scattering data (MT2 elastic, MT4 inelastic) |
 | **LEAPR** | the NJOY2016 module IRMA reimplements and generalizes |
+| **Tape** | the historical name for an ENDF-format data file, used throughout |
+| **THERMR** | the NJOY module that turns the S(α,β) table into cross sections downstream |
 
 ## `S(α,β)`: conventions
 
@@ -69,13 +71,15 @@ with `β = E/kT`, `α` as above, and `σ_b` the bound scattering cross section o
 the scatterer. The factor `4π` converts the internal per-steradian
 differential `S(Q,E)` into the angle-integrated normalization of `S(α,β)`.
 The programs that process the tape recover the up-scatter side through
-detailed balance; Card 4 `isabt` selects whether `S(α,−β)` is also written.
+detailed balance; Card 4 `isabt` (cards are the numbered records of the
+input file; see the [input file reference](input-reference.md)) selects
+whether `S(α,−β)` is also written.
 
 The grids themselves may be supplied either at the actual temperature or at
 the LEAPR reference temperature `T_0 = 0.0253 eV` (≈ 293.6 K), chosen by
 Card 7 `lat`. With `lat = 1` the α and β grids are interpreted as given at
 `T_0`, and the kernels rescale every grid value internally by `T_0/kT` before
-evaluation; with `lat = 0` the grids are at the deck temperature. The choice
+evaluation; with `lat = 0` the grids are at the actual temperature. The choice
 only changes how the grid numbers map to physical `Q` and `E`. The underlying
 physics is identical.
 
@@ -113,7 +117,8 @@ of a moderator.
 
 **Translational.** Materials such as liquids have a diffusive or free-gas
 center-of-mass mode that is not in the bound phonon spectrum. `trans` builds a
-diffusion (`twt c tbeta`, Card 13) or free-gas table (`stable`) and convolves
+diffusion (`twt c tbeta`, Card 13) or free-gas table (the `stable`
+routine) and convolves
 it with the bound `S(α,β)` (the part built from the phonon spectrum). `c = 0`
 selects the free-gas limit; a nonzero diffusion constant gives the
 Egelstaff-Schofield diffusion model.
@@ -136,17 +141,17 @@ factor (Cards 17–18) feeds the intramolecular structure.
 prescription (Card 5 `nsk = 2`): `skold_approx` rescales `α` by a static
 structure factor `S(κ)` (Cards 17–18) and blends the coherent piece in with
 weight `cfrac` (Card 19). Of the pair-correlation options only Sköld modifies
-the stored table; Vineyard is recorded but does not alter `S(α,β)`.
+the stored table; Vineyard (an alternative pair-correlation prescription)
+is accepted for compatibility but does not alter `S(α,β)`.
 
 These kernels are reproduced, not reinvented. They match published
-ENDF/B-VIII.1 reference tapes to 7e-5 or better, and several material
-families (liquid methane, ortho-/para-hydrogen and -deuterium, BeO)
-bit-for-bit against
-freshly generated NJOY2016 tapes. A handful of deliberate, documented
-divergences from NJOY exist (noted inline in `irma/core/kernels.py`); none
-affect the validated expected decks. Treat the classic path as a faithful
-LEAPR; the [validation methodology](validation/methodology.md) page has the
-details.
+ENDF/B-VIII.1 reference tapes to 7e-5, and freshly generated NJOY2016
+tapes exactly for several material families (liquid methane,
+ortho-/para-hydrogen and -deuterium, BeO). A handful of deliberate,
+documented divergences from NJOY exist (noted inline in
+`irma/core/kernels.py`); none affect the validated comparisons. Treat the
+classic kernels as a faithful LEAPR; the
+[validation methodology](validation/methodology.md) page has the details.
 
 ## Generalized coherent elastic (Bragg edges)
 
@@ -206,7 +211,7 @@ with structure-factor-weighted placement. The merge is mass-conserving:
 cumulative `S` and the total cross section are preserved. It is off by
 default.
 
-## The noncubic inelastic path
+## The noncubic inelastic engine
 
 Cubic crystals have an isotropic Debye-Waller factor, so the legacy
 scalar-DOS expansion (`inelastic_mode = 0`) is adequate. Anisotropic crystals
@@ -224,9 +229,10 @@ term `S^{(1)}_coh(Q,E)` is the crystal amplitude sum: atom contributions
 `b_coh (Q·e) e^{iQ·r}` (with `b_coh` the atom's coherent scattering length
 and `r` its position in the cell) are summed over the cell and only then
 squared, so interference between sites is exact; IRMA also records the
-diagonal (self) and interference pieces separately. This is the `(UV)` term
-of Squires §3.7. The incoherent term `S^{(1)}_inc(Q,E)` is the exact per-atom
-self term, the `(UV0)` term of Squires §3.9, weighted by `σ_inc`. The
+diagonal (self) and interference pieces separately. This is Squires' `(UV)` term (§3.7), his label for the coherent
+one-phonon contribution. The incoherent term `S^{(1)}_inc(Q,E)` is the exact per-atom
+self term, Squires' `(UV0)` label (§3.9) for the incoherent one-phonon
+contribution, weighted by `σ_inc`. The
 incoherent-approximation term `S^{(1)}_approx(Q,E)` is the same self kernel
 scaled with the total cross section `σ_tot` instead of `σ_inc`; it is the
 practical `n = 1` partner of the multiphonon background.
@@ -256,7 +262,8 @@ Euphonic's `golden` powder method. The direction count is Card 6g `ndir`
 (production default `10000`, the validation-campaign sampling). The coherent
 one-phonon term is validated against Euphonic, coherent component against
 coherent component: the integrals, compared in the symmetric convention,
-agree to ratios of 1.00001 (graphite) and 1.0002 (beryllium).
+agree to ratios of 1.00001 (graphite), 1.0002 (beryllium), and 0.9998
+(BeO).
 
 ### Multiphonon via self-convolution on a work grid
 
@@ -290,18 +297,19 @@ $$
 
 the directional mean-square displacement, evaluated per powder direction
 before averaging, *not* the orientation-averaged scalar `\mathrm{Tr}(U_d)/3`.
-This distinction is the whole point of the noncubic path.
+This distinction is the whole point of the noncubic modes.
 
-It is important to note that replacing the tensor with its trace-averaged
+Replacing the tensor with its trace-averaged
 scalar applies one suppression to every direction, and for a strongly
 anisotropic crystal the exact directional factor and the isotropic one
 diverge at high `Q`. In graphite (`W_c/W_ab ≈ 6.6`, the ratio of
-out-of-plane to in-plane Debye-Waller exponents) the isotropically-averaged
+out-of-plane to in-plane Debye-Waller exponents) the isotropically averaged
 one-phonon `S` is suppressed by a factor of about 2 at `Q = 20 1/Å` and about
 4×10⁶ at `Q = 50 1/Å` relative to IRMA's exact directional powder average,
 for the constant-energy cut at E ≈ 2 meV (the figure below). This is not a
 numerical artifact: IRMA's own `inelastic_mode = 0` (isotropic Debye-Waller)
-reproduces the isotropic roll-off, which isolates the cause. Use
+reproduces the isotropic roll-off; the Debye-Waller treatment is the only
+difference between the two runs. Use
 `inelastic_mode = 2` for anisotropic crystals.
 
 ![Directional vs isotropic Debye-Waller attenuation in the graphite one-phonon
@@ -319,7 +327,7 @@ S at E ≈ 2 meV: the computed curves on top, isotropic-to-directional ratios be
 - **Generalized elastic algorithm**: T. Kittelmann et al., *Comput. Phys.
   Commun.* **267** (2021) 108082; K. Ramic et al., *NIM-A* **1027** (2022)
   166227.
-- **Phonon model**: A. Togo, "First-principles Phonon Calculations with
+- **Phonopy**: A. Togo, "First-principles Phonon Calculations with
   Phonopy and Phono3py", *J. Phys. Soc. Jpn.* **92** (2023) 012001.
 - **One-phonon scattering theory**: G. L. Squires, *Introduction to the Theory
   of Thermal Neutron Scattering* (§3.7, §3.9, §3.10).

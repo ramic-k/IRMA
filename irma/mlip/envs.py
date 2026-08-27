@@ -73,6 +73,112 @@ _IMPORT_CHECKS = {
     "grace": "from tensorpotential.calculator import grace_fm",
 }
 
+# Python series for auto-provisioned potential envs (uv path only: the
+# stdlib venv module can only clone the running interpreter). Potential
+# packages chronically lag new interpreters, and a host on the newest
+# Python forces the env onto whatever bleeding-edge torch has wheels
+# there, which is where the breakage lives (a 3.14 host resolved the
+# newest torch, whose export path died compiling nequip's zoo model).
+# The env's interpreter is invisible to the user; the force-server
+# protocol is JSON over stdio, so the outer process and the env may run
+# different Python versions.
+_ENV_PYTHON = "3.12"
+
+# Functional probe run in the fresh env AFTER the import check. The
+# import check alone is too weak: a torch wheel built against NumPy 1.x
+# imports fine next to NumPy 2.x (the failure is a warning, not an
+# exception) and then dies at force time. The probe turns that warning
+# into an error and exercises the tensor<->array round-trip that the
+# force server actually needs. Envs without torch (grace) pass
+# trivially.
+_RUNTIME_PROBE = """\
+import warnings
+warnings.filterwarnings("error", message="Failed to initialize NumPy")
+import numpy as np
+try:
+    import torch
+except ImportError:
+    torch = None
+if torch is not None:
+    # explicit raises, not assert: PYTHONOPTIMIZE strips asserts and
+    # would let a one-directional failure through the gate
+    t = torch.from_numpy(np.ones(3))
+    if float(t.sum()) != 3.0:
+        raise SystemExit("numpy->tensor round trip produced wrong data")
+    if t.numpy().shape != (3,):
+        raise SystemExit("tensor->numpy conversion failed")
+"""
+
+# Signatures of a torch wheel built against NumPy 1.x running next to
+# NumPy 2.x. Seen in the wild on Intel macs, where torch wheels stopped
+# at 2.2.2 (NumPy-1 ABI) while the resolver installs a current NumPy.
+_NUMPY_ABI_SIGNATURES = (
+    "_ARRAY_API not found",
+    "Failed to initialize NumPy",
+    "compiled using NumPy 1.x",
+    "Numpy is not available",
+)
+
+
+def _numpy_abi_break(text: str) -> bool:
+    return any(sig in text for sig in _NUMPY_ABI_SIGNATURES)
+
+
+def _error_hint(text: str) -> str | None:
+    """One actionable sentence for known failure signatures, or None."""
+    if _numpy_abi_break(text):
+        return ("the potential env's torch was built against NumPy 1.x "
+                "but NumPy >= 2 sits next to it; recreate the env "
+                "(irma mlip env remove <potential>; irma mlip env create "
+                "<potential>) — creation detects this breakage and pins "
+                "numpy<2 automatically")
+    if "TF32" in text and "cuDNN" in text:
+        return ("known torch.export defect with mixed cuDNN TF32 flags "
+                "on bleeding-edge torch; recreate the env with uv "
+                "installed so it is provisioned on the pinned Python "
+                f"{_ENV_PYTHON} series with a mature torch")
+    return None
+
+
+def _install_failure_detail(result) -> str:
+    """Failure text for a provisioning step, keeping pip's diagnosis.
+
+    pip writes its final ERROR lines to stderr but the useful part, the
+    "The conflict is caused by:" section naming the impossible pins, to
+    stdout. Taking stderr alone (the old behavior) discards exactly the
+    lines that say which requirement cannot be satisfied on this
+    platform.
+    """
+    err = (result.stderr or "").strip()
+    out = (result.stdout or "").strip()
+    marker = "conflict is caused by"
+    pos = out.lower().find(marker)
+    if pos >= 0:
+        # The section's HEAD names the irreconcilable requirements; a
+        # long candidate walk follows. Budget the section from its start
+        # (a plain tail slice could cut the marker and the named pins,
+        # keeping only candidate noise) and append the stderr tail.
+        start = out.rfind("\n", 0, pos) + 1
+        section = out[start:].strip()
+        if len(section) > 1600:
+            section = section[:1600] + "\n[... resolver output truncated]"
+        return (section + "\n" + err[-400:]).strip()
+    return (err or out)[-2000:]
+
+
+def _intel_mac() -> bool:
+    import platform
+    return platform.system() == "Darwin" and platform.machine() == "x86_64"
+
+
+_INTEL_MAC_NOTE = (
+    "  note: this is an Intel (x86_64) Mac. torch stopped shipping\n"
+    "  Intel-mac wheels at 2.2.2 (April 2024), so most potentials can\n"
+    "  no longer install or run here at current versions; nequip may\n"
+    "  work via the automatic numpy<2 fallback. For the MLIP front end\n"
+    "  prefer Linux or an Apple-Silicon Mac. Everything else in IRMA\n"
+    "  works normally on this machine.")
+
 
 class MlipEnvError(RuntimeError):
     """Environment provisioning or dispatch failed."""
@@ -330,6 +436,11 @@ class _ServerHandle:
         kind = reply.get("kind", "runtime")
         message = (f"[{self.interpreter}] {what}: "
                    f"{reply.get('error', 'unknown error')}")
+        # Known failure signatures get one actionable sentence on top of
+        # the raw error, which is otherwise a bare torch traceback tail.
+        hint = _error_hint(message)
+        if hint:
+            message += f"\n  hint: {hint}"
         if kind == "dependency":
             raise MlipDependencyError(message)
         if kind == "value":
@@ -488,20 +599,28 @@ def env_root(potential: str) -> str:
 
 
 def _env_python(root: str) -> str:
-    return os.path.join(root, "Scripts" if os.name == "nt" else "bin",
-                        "python")
+    # Windows venvs create Scripts\python.exe; the extensionless name
+    # exists only on POSIX (registration validates with os.path.isfile,
+    # which no CreateProcess .exe magic rescues).
+    if os.name == "nt":
+        return os.path.join(root, "Scripts", "python.exe")
+    return os.path.join(root, "bin", "python")
 
 
 def create_env(potential: str, *, progress=print,
                dry_run=False) -> str | None:
     """Provision and register a dedicated environment for a potential.
 
-    Uses `uv venv` when uv is on PATH (fast), else `python -m venv` seeded
-    from the running interpreter. Installs the curated requirement set
-    with pip — UNPINNED names resolved against the configured package
-    index at install time, so the resulting env tracks current releases
-    and is not a reproducible, vetted set (see ENV_REQUIREMENTS) —
-    sanity-imports the backend package, and registers the interpreter for
+    Uses `uv venv` when uv is on PATH (fast, and pins the env to the
+    Python series in _ENV_PYTHON — potential packages lag new
+    interpreters), else `python -m venv` seeded from the running
+    interpreter (the venv module cannot do otherwise). Installs the
+    curated requirement set with pip — UNPINNED names resolved against
+    the configured package index at install time, so the resulting env
+    tracks current releases and is not a reproducible, vetted set (see
+    ENV_REQUIREMENTS) — sanity-imports the backend package, runs a
+    torch/NumPy interop probe (retrying once with numpy<2 when the
+    NumPy-1-ABI breakage is detected), and registers the interpreter for
     the potential (and its shared siblings, e.g. mace and mace-off share
     one mace-torch env). Returns the interpreter path, or None for
     dry_run.
@@ -517,15 +636,30 @@ def create_env(potential: str, *, progress=print,
     python = _env_python(root)
     uv = _find_uv()
 
+    if _intel_mac():
+        progress(_INTEL_MAC_NOTE)
+
     if uv:
-        steps = [([uv, "venv", "--python", sys.executable, root],
+        steps = [([uv, "venv", "--python", _ENV_PYTHON, root],
                   "create venv (uv)"),
                  ([uv, "pip", "install", "--python", python, *requirements],
                   "install requirements (uv)")]
+        numpy_fix = [uv, "pip", "install", "--python", python, "numpy<2"]
+        pip_check = [uv, "pip", "check", "--python", python]
     else:
+        if sys.version_info[:2] > tuple(
+                int(part) for part in _ENV_PYTHON.split(".")):
+            progress(
+                f"  note: this env will run Python "
+                f"{sys.version_info.major}.{sys.version_info.minor} (the "
+                f"interpreter running IRMA); potential packages often "
+                f"lack wheels there. Installing uv lets this command pin "
+                f"the env to Python {_ENV_PYTHON} instead.")
         steps = [([sys.executable, "-m", "venv", root], "create venv"),
                  ([python, "-m", "pip", "install", *requirements],
                   "install requirements")]
+        numpy_fix = [python, "-m", "pip", "install", "numpy<2"]
+        pip_check = [python, "-m", "pip", "check"]
 
     if dry_run:
         for cmd, label in steps:
@@ -540,26 +674,89 @@ def create_env(potential: str, *, progress=print,
         progress(f"  {label} ...")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            tail = (result.stderr or result.stdout or "").strip()
             raise MlipEnvError(
                 f"{label} failed (exit {result.returncode}):\n"
-                f"{tail[-2000:]}")
+                f"{_install_failure_detail(result)}")
 
     check = _IMPORT_CHECKS.get(potential,
                                f"import {_PACKAGES[potential][1]}")
+    failure = _verify_env(python, check, progress)
+    if failure is not None and _numpy_abi_break(failure):
+        # A torch wheel built against NumPy 1.x next to NumPy 2.x: the
+        # coherent pair on such platforms is that torch with numpy<2.
+        progress("  torch/NumPy ABI mismatch detected; retrying with "
+                 "numpy<2 ...")
+        result = subprocess.run(numpy_fix, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise MlipEnvError(
+                f"numpy<2 remediation failed (exit {result.returncode}):\n"
+                f"{_install_failure_detail(result)}")
+        failure = _verify_env(python, check, progress)
+        if failure is None:
+            # The remediation installed numpy separately, which pip
+            # documents may break an already-installed package's declared
+            # requirement (a stack that pins numpy>=2 cannot coexist with
+            # this platform's torch). Refuse to register a knowingly
+            # inconsistent environment.
+            progress("  pip check after remediation ...")
+            result = subprocess.run(pip_check, capture_output=True,
+                                    text=True)
+            if result.returncode != 0:
+                raise MlipEnvError(
+                    "numpy<2 remediation leaves the environment "
+                    "inconsistent (this platform's torch requires "
+                    "NumPy 1.x, which another installed package "
+                    "excludes); the environment was NOT registered:\n"
+                    f"{_install_failure_detail(result)}")
+    if failure is not None:
+        raise MlipEnvError(failure)
+
+    siblings = _SHARED_ENVS.get(potential, (potential,))
+    for sibling in siblings:
+        # A shared env serves every sibling (mace and mace-off ride one
+        # mace-torch install), so each sibling's entry point must import
+        # before ANY of them is registered.
+        if sibling != potential:
+            sib_check = _IMPORT_CHECKS.get(
+                sibling, f"import {_PACKAGES[sibling][1]}")
+            progress(f"  verifying `{sib_check}` ...")
+            result = subprocess.run([python, "-c", sib_check],
+                                    capture_output=True, text=True)
+            if result.returncode != 0:
+                raise MlipEnvError(
+                    f"the provisioned env fails the import check of its "
+                    f"shared sibling {sibling} ({sib_check}); nothing "
+                    f"was registered:\n"
+                    f"{(result.stderr or '').strip()[-2000:]}")
+    for sibling in siblings:
+        register_interpreter(sibling, python)
+        progress(f"  registered {sibling} -> {python}")
+    return python
+
+
+def _verify_env(python: str, check: str, progress) -> str | None:
+    """Import check + runtime probe in the env; failure text or None.
+
+    The import check gates on the calculator entry point being present;
+    the probe gates on torch actually working with the installed NumPy,
+    which an import alone does not prove (the ABI failure is a warning
+    at import time and an error only when a tensor crosses to NumPy).
+    """
     progress(f"  verifying `{check}` ...")
     result = subprocess.run([python, "-c", check],
                             capture_output=True, text=True)
     if result.returncode != 0:
-        raise MlipEnvError(
-            f"the provisioned env fails its import check ({check}); the "
-            f"environment was NOT registered:\n"
-            f"{(result.stderr or '').strip()[-2000:]}")
-
-    for sibling in _SHARED_ENVS.get(potential, (potential,)):
-        register_interpreter(sibling, python)
-        progress(f"  registered {sibling} -> {python}")
-    return python
+        return (f"the provisioned env fails its import check ({check}); "
+                f"the environment was NOT registered:\n"
+                f"{(result.stderr or '').strip()[-2000:]}")
+    progress("  probing torch/NumPy interop ...")
+    result = subprocess.run([python, "-c", _RUNTIME_PROBE],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return (f"the provisioned env fails the torch/NumPy runtime "
+                f"probe; the environment was NOT registered:\n"
+                f"{(result.stderr or '').strip()[-2000:]}")
+    return None
 
 
 def remove_env(potential: str, *, progress=print) -> bool:

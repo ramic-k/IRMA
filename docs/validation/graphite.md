@@ -6,33 +6,36 @@ axis is about 6.6 times the in-plane value), it has a published
 ENDF/B-VIII.1 evaluation to overlay, it has a classic measured total cross
 section (Steyerl) below the first Bragg edge, and it can be driven through
 every one of IRMA's inelastic modes and both instrument geometries. The
-phonon model behind every directional result on this page is the published
-density-functional model of IG-110-type graphite: VASP with PAW potentials
+phonon calculation behind every directional result on this page is the published
+density-functional calculation of IG-110-type graphite: VASP with PAW potentials
 and the PBE functional, a 900 eV plane-wave cutoff, a 3×3×4 Monkhorst-Pack
 mesh, and force constants from the finite-displacement method on a 6×6×1
 (144-atom) supercell in phonopy. The page follows the validation ladder:
 kernel verification against NJOY LEAPR, the one-phonon term against
 independent codes, the full thermal scattering law S(α,β) and the processed
 cross sections against OCLIMAX and the released evaluation, the measured
-total cross section, and finally the same phonon model driven end to end
+total cross section, and finally the same phonon calculation driven end to end
 against measured VISION and ARCS spectra.
 
 #### How to read the curve labels
 
 Every figure on this page draws on the same set of calculations, so the
-curve labels are defined once here. **IRMA mode 2** is the phonopy-backed
-S(α,β) with the exact coherent one-phonon term. **IRMA mode 1** is its
+curve labels are defined once here. **IRMA mode 2** is the
+S(α,β) computed from the phonopy calculation with the exact coherent
+one-phonon term. **IRMA mode 1** is its
 incoherent-approximation counterpart: the same directional Debye-Waller
 tensor, but no interference. **IRMA mode 0** is the legacy isotropic
 kernel. **Euphonic n = 1** is the independent coherent one-phonon reference
-on the same phonon model. **OCLIMAX MAXO=1/223** are OCLIMAX runs truncated
+on the same phonon calculation. **OCLIMAX MAXO=1/223** are OCLIMAX runs truncated
 at multiphonon order 1 or order-matched at 223; at MAXO=1 two variants
 appear, the released code, whose coherent powder average uses a first-order
 Debye-Waller approximation, and an unreleased full-tensor build provided by
 the OCLIMAX author. **ENDF/B-VIII.1 graphite+Sd** is the released
-evaluation, generated with FLASSH from a different phonon model. In terms
-of the scattering components included, an evaluation with the distinct
-effect (the +Sd of the name) is the counterpart of mode 2: its one-phonon
+evaluation, generated with FLASSH from a different phonon calculation;
++Sd marks the structure-dependent ("distinct") contribution, the
+coherent one-phonon interference. In terms
+of the scattering components included, an evaluation with Sd is the
+counterpart of mode 2: its one-phonon
 term carries both the coherent and the incoherent contribution. Evaluations
 without it correspond to mode 1, with the one-phonon term in the incoherent
 approximation.
@@ -41,13 +44,14 @@ approximation.
 
 ## Kernel verification against NJOY LEAPR
 
-The classic path is verified first: IRMA reproduces the published
-ENDF/B-VIII.1 graphite tape (`iel=1`, the continuous phonon expansion) to a
+The classic kernels are verified first: IRMA reproduces the published
+ENDF/B-VIII.1 graphite tape (built-in graphite elastic, `iel=1`, with
+the continuous-phonon-expansion inelastic part) to a
 maximum relative difference of 3.4×10⁻⁵ in physically significant values of
-S(α,β), across all ten tabulated temperatures. The decks and reference
+S(α,β), across all ten tabulated temperatures. The input files and reference
 tapes live in `tests/native_LEAPR_NJOY_ENDF_validation/`, and the
 [methodology page](methodology.md) gives the full reference set. Runnable
-graphite decks, in classic and generalized-elastic variants, are in
+graphite input files, in classic and generalized-elastic variants, are in
 `examples/tsl/`.
 
 ---
@@ -55,11 +59,11 @@ graphite decks, in classic and generalized-elastic variants, are in
 ## The coherent one-phonon term against Euphonic and OCLIMAX
 
 The directional kernels have no LEAPR equivalent, so they are compared with
-independent calculations that start from the same phonon model, restricted
+independent calculations that start from the same phonon calculation, restricted
 to the one-phonon (n = 1) term on a 40³ phonon mesh. The compared quantity
 is the coherent part of that term, the piece all three codes compute.
 Euphonic computes only that part; IRMA computes the coherent and incoherent
-parts of its S(α,β) separately and exposes the components; OCLIMAX isolates
+parts of its S(α,β) separately and exposes the components; OCLIMAX keeps only
 the coherent part when the incoherent cross sections in its material file
 (`.oclimax`) are set to zero. Two OCLIMAX variants enter the comparison:
 the released code, whose coherent powder average uses a first-order,
@@ -142,8 +146,9 @@ Bottom: each result divided by mode 2 after Gaussian smoothing in Q with
 σ = 1 Å⁻¹.*
 
 Against mode 2, the released OCLIMAX is suppressed to approximately 0.48 at
-Q = 20 Å⁻¹ and 2.3×10⁻⁷ at Q = 50 Å⁻¹, directional-to-first-order
-factors of about 2.1 and 4.4×10⁶; the full-tensor variant's ratios at the
+Q = 20 Å⁻¹ and 2.3×10⁻⁷ at Q = 50 Å⁻¹; that is, the
+directional-to-first-order ratio is about 2.1 at the first point and
+4.4×10⁶ at the second. The full-tensor variant's ratios at the
 same points are 1.19 and 0.34. IRMA mode 0 shows the same qualitative
 roll-off at a different magnitude, as expected: its Debye-Waller factor is
 fully isotropic, while the released OCLIMAX retains a first-order
@@ -158,10 +163,11 @@ in the integral of the full S(α,β) below.
 ## The full S(α,β) against OCLIMAX and the released evaluation
 
 OCLIMAX also provides the complete inelastic S(α,β), one-phonon plus all
-multiphonon orders. With the multiphonon order matched (MAXO=223), the
+multiphonon orders. Both codes were run to the same multiphonon order
+(MAXO=223), and the
 shared-window integrals of the symmetric-form S(α,β) agree to about 4%
 (R = 0.96). The order is converged: rerunning the OCLIMAX references at the
-auto-sized orders of the corresponding IRMA evaluations (217 here;
+auto-sized orders the IRMA evaluations themselves chose (217 here;
 104 and 102 for [beryllium](beryllium.md) and
 [BeO](beryllium-oxide.md)) leaves every plotted cut and quoted ratio
 in the validation record unchanged.
@@ -170,7 +176,7 @@ in the validation record unchanged.
 
 *Graphite full mode-2 S(α,β) (symmetric form) at 296 K, compared with
 OCLIMAX (MAXO=223) and the ENDF/B-VIII.1 graphite+Sd evaluation, which was
-generated with FLASSH from a different phonon model.*
+generated with FLASSH from a different phonon calculation.*
 
 Three features of the plotted curves deserve comment. First, the evaluated
 graphite+Sd file is tabulated from a minimum α of 3.1×10⁻³, so at these
@@ -190,8 +196,8 @@ in the high-Q multiphonon tail. Three observations support this
 attribution. The Q < 4 Å⁻¹ band contributes only about 0.1% of the
 integral, so the visible low-Q structure is not the source. Mode 1, which
 drops the coherent one-phonon term but keeps the tensor, gives nearly the
-same integral ratio as mode 2 (0.951 versus 0.958), so neither is the
-coherent term. And mode 0, which uses an isotropic factor as OCLIMAX does,
+same integral ratio as mode 2 (0.951 versus 0.958), so the residual
+does not come from the coherent term. And mode 0, which uses an isotropic factor as OCLIMAX does,
 lands on the opposite side of the OCLIMAX integral from the directional
 modes.
 
@@ -257,7 +263,7 @@ at 296 and 500 K: IRMA mode 2 against the ENDF/B-VIII.1 graphite+Sd
 evaluation, with the Steyerl measurement at 296 K (EXFOR 21016002).*
 
 The natural-carbon absorption cross section (isotope-weighted C-12 and
-C-13, taken from the SCALE-distributed ENDF files) is added to every curve
+C-13, taken from the ENDF files distributed with the SCALE code system) is added to every curve
 for comparison with the transmission-derived measurement; it is not
 calculated by IRMA. Below the (002) Bragg cutoff at 1.82 meV, coherent
 elastic scattering is absent, so the measurement tests the sum of the
@@ -266,11 +272,11 @@ total to the eight Steyerl points below the cutoff is 0.930: the
 calculation runs about 7% below the measurement. The numerical effects
 quantified above (a −0.33% grid effect and a +0.10% processing effect on
 the same thermal integral) are far smaller, so the offset lies in the
-physical inputs: it could come from the phonon model, from the measured
-sample, or from the transmission measurement itself, and this single
+physical inputs: it could come from the phonon calculation, from the measured
+specimen, or from the transmission measurement itself, and this single
 comparison cannot tell which.
 
-It is important to note that this comparison holds only below the Bragg
+This comparison holds only below the Bragg
 cutoff. Above 1.82 meV the measurement contains coherent Bragg scattering,
 which an inelastic-plus-absorption curve does not; comparing the two across
 that edge mixes scattering components and gives a meaningless ratio.
@@ -279,13 +285,14 @@ that edge mixes scattering components and gives a meaningless ratio.
 
 ## End to end against measured spectra: VISION and ARCS
 
-The same graphite phonon model drives the
+The same graphite phonon calculation drives the
 [instrument forward model](../spectra.md) and is overlaid on measurements of
-IG-110 nuclear graphite on the indirect-geometry VISION and direct-geometry
-ARCS spectrometers at the Spallation Neutron Source. These comparisons test
+IG-110 nuclear graphite on the indirect-geometry VISION spectrometer and
+of G347A nuclear graphite on the direct-geometry ARCS spectrometer, both
+at the Spallation Neutron Source. These comparisons test
 peak positions, spectral shape, and their temperature or momentum
 dependence; they do not test absolute intensity, so each comparison carries
-a fitted intensity normalization, stated at its figure.
+a stated normalization, given at its figure.
 
 ### VISION
 
@@ -310,12 +317,12 @@ curve is therefore scaled once, by the ratio of the measured to its own
 calculated 30–220 meV integral; absolute scattering is tested separately by
 the cross-section comparisons above.
 
-The calculated spectra reproduce the measured bands at 58, 78, 105, 147,
-and 175 meV. The band positions are a parameter-free prediction of the
-phonon model, and near 175 meV they agree to about 1 meV, better than one
+The calculated spectra reproduce the measured peaks at 58, 78, 105, 147,
+and 175 meV. The peak positions are a parameter-free prediction of the
+phonon calculation, and near 175 meV they agree to about 1 meV, better than one
 percent. The calculated peaks are slightly broader than the measured ones;
 since the calculated widths are set mainly by the response function, this
-points to the chosen response rather than to the phonon model. The
+points to the chosen response rather than to the phonon calculation. The
 difference between the two calculated curves is the coherent one-phonon
 term: mode 2 follows the measurement more closely, most visibly at low
 energies in the 135° bank, where mode 1 puts intensity in the wrong places;
@@ -327,9 +334,10 @@ includes the multiphonon part but not the background.
 
 ### ARCS
 
-The mode-2 powder maps are compared with ARCS data from the same material
-at 300 K and incident energies of 300, 215, 130, and 30 meV, reduced with
-Mantid into 0.25° polar-angle groups with the k_i/k_f factor applied. The
+The mode-2 powder maps are compared with the ARCS data of G347A nuclear
+graphite at 300 K and incident energies of 300, 215, 130, and 30 meV, reduced with
+Mantid (the neutron data-reduction framework) into 0.25° polar-angle
+groups with the k_i/k_f factor applied. The
 resolution model uses the recorded chopper state: the ARCS-700-1.5-AST
 package at 600 and 540 Hz for E_i = 300 and 215 meV, and the
 ARCS-100-1.5-AST package at 600 and 300 Hz for E_i = 130 and 30 meV.
@@ -371,8 +379,8 @@ incident energy, consistent with moderator emission-time and
 chopper-phasing delays that the nominal time-to-energy conversion does not
 include. The McStas simulations below, which model the moderator and
 choppers, reproduce the shift at +0.3 to +2.3 meV. On the energy-loss side,
-the 58 and 78 meV bands and, when kinematically accessible, the optical
-band near 175 meV follow the measurement. On the energy-gain side the model
+the 58 and 78 meV peaks and, when kinematically accessible, the optical
+peak near 175 meV follow the measurement. On the energy-gain side the model
 generates intensity through Bose annihilation, but the measured intensity
 is larger: the calculated-to-measured gain-side area ratios are 0.33, 0.29,
 0.63, and 0.85 for E_i = 30, 130, 215, and 300 meV. Because each curve was
@@ -384,7 +392,7 @@ which the McStas comparison examines next.
 ### ARCS through McStas: the transport application
 
 The mode-2 evaluation was also tested after export to the companion
-[NCrystal plugin](../ncrystal-plugin.md). A 300 K material-data file
+[NCrystal plugin](../ncrystal-plugin.md). A 300 K material data file
 (produced with 4000 coherent and 1000 incoherent/multiphonon directions,
 predating the 10000/1000 campaign sampling) was loaded into an ARCS McStas
 model. The graphite plate was represented by its measured dimensions,
@@ -394,7 +402,7 @@ the sample environment present in the measurement (the aluminum cryostat,
 sample holder, and sample stick). The stock-NCrystal comparison curve uses
 the phonon spectrum behind the ENDF/B-VIII.0 crystalline-graphite
 evaluation (carried into ENDF/B-VIII.1 as the non-Sd variant), so it
-differs from the phonon model in the IRMA material-data files. These
+differs from the phonon calculation in the IRMA material data files. These
 comparisons are qualitative; no intensity χ² was calculated.
 
 ![Measured and simulated ARCS maps: experiment, IRMA analytic, McStas stock NCrystal, McStas IRMA plugin](../assets/validation/graphite/fig_mcstas_maps.png)
@@ -421,7 +429,7 @@ magnitude or the relative normalization of the three models.
 calculation (blue), McStas with stock NCrystal graphite (red), and McStas
 with the IRMA plugin (green). Every curve is independently normalized to
 its own elastic peak. The E_i = 30 meV panel adds McStas with the IRMA
-mode-1 material-data file (purple dash-dotted).*
+mode-1 material data file (purple dash-dotted).*
 
 Because the McStas simulations model the moderator pulse and choppers, they
 reproduce the measured elastic line better than the analytic Gaussian: most
@@ -432,11 +440,11 @@ the deficit identified in the cuts above; because of the independent
 normalization, their difference is not an additive estimate of multiple
 scattering or other beamline contributions. The E_i = 30 meV panel adds a
 same-model test of the coherent one-phonon term in transport: a mode-1
-material-data file exported on the same grids and run with identical
+material data file exported on the same grids and run with identical
 beamline settings, so only the physics mode differs. Both IRMA modes
 produce the measured feature near 16 meV; stock NCrystal places its
-counterpart near 20 meV, so the position is set by the phonon model rather
-than by the scattering treatment. With the phonon model fixed, the coherent
+counterpart near 20 meV, so the position is set by the phonon calculation rather
+than by the scattering treatment. With the phonon calculation fixed, the coherent
 one-phonon treatment improves the shape: mode 2 follows the measured
 continuum up to the feature and comes closest to its intensity, while
 mode 1 dips below the data just before it.
@@ -459,21 +467,21 @@ graphite-scattering feature.
 
 ## What the graphite suite establishes
 
-The classic kernel reproduces the published tape to 3.4×10⁻⁵ across ten
+The classic kernels reproduce the published tape to 3.4×10⁻⁵ across ten
 temperatures. The directional one-phonon term agrees with Euphonic to a
 shared-domain integral ratio of 1.00001 (coherent component against
 coherent component), and the high-Q suppression in isotropic codes is
 attributed to the isotropic Debye-Waller approximation, an attribution
 supported by a controlled mode-0 comparison. The full mode-2 S(α,β) tracks
-order-matched OCLIMAX to 4%, with the residual localized to the anisotropic
-Debye-Waller convention in the high-Q multiphonon tail. The processed cross
+order-matched OCLIMAX to 4%, with the residual in the high-Q multiphonon
+tail, where the Debye-Waller conventions differ. The processed cross
 sections track OCLIMAX to about 3% at the inelastic minimum, the processing
 chain is closed to 0.05% median against corrected THERMR, and the numerics
 are converged well below the 7% offset against the Steyerl total, an offset
 that lies in the physical inputs and that this comparison alone cannot
-localize further. Finally, the same phonon model, driven through the
+narrow further. Finally, the same phonon calculation, driven through the
 forward model and through McStas transport, reproduces the measured VISION
-band positions to about 1 meV and the measured ARCS map morphology,
+peak positions to about 1 meV and the measured ARCS map morphology,
 with the coherent one-phonon treatment (mode 2) measurably closer to the
 data than the incoherent approximation in backscattering and in the
 transport cuts.

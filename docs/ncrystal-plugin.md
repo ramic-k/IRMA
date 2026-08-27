@@ -1,20 +1,28 @@
 # NCrystal data exporter
 
-IRMA can export a mode-2 calculation as per-temperature `.irmapack` files
-that the **NCrystal IRMA plugin** samples at runtime. The plugin gives
-NCrystal a powder thermal-scattering model that is better than its stock
+IRMA can export a mode-2 calculation (the exact coherent one-phonon
+treatment with directional Debye-Waller factors; see
+[Scattering modes](modes.md)) as per-temperature `.irmapack` files
+that the **NCrystal IRMA plugin** samples at runtime. NCrystal is the
+thermal neutron scattering library that Monte Carlo codes such as
+McStas and OpenMC use for materials; the plugin gives
+it a powder thermal-scattering model that is better than its stock
 treatment in two concrete ways: an anisotropic-Debye-Waller Bragg-elastic
 line, where NCrystal's core model uses a single scalar mean-squared
 displacement (MSD), and a coherent one-phonon inelastic kernel, where
-NCrystal's built-in inelastic model is the isotropic `vdos2sab`. IRMA is
+NCrystal's built-in inelastic model is its isotropic `vdos2sab`
+construction (a DOS-driven S(α,β)). IRMA is
 the single producer of that physics and the reference for it; NCrystal only
 samples the result, and no part of IRMA runs at NCrystal runtime.
 
 The exporter is the `irma.ncrystal` module, and it reimplements no physics:
-the thermal scattering law `S(α,β)` it writes is exactly what the mode-2
-engine (`run_noncubic_standalone_sab`) returns, the same engine output that
-feeds an NJOY tape. The exporter calls that engine once per principal
-scatterer, converts conventions, and serializes the result.
+the thermal scattering law `S(α,β)` it writes (α, β: the dimensionless
+momentum and energy transfer; see [Theory](theory.md)) is exactly what
+the mode-2 engine (`run_noncubic_standalone_sab`) returns, the same
+engine output that feeds the ENDF tape NJOY processes. The exporter
+calls that engine once per principal scatterer (the atom species an
+evaluation is written for), converts conventions, and serializes the
+result.
 
 ## What it exports
 
@@ -35,7 +43,7 @@ Each data file holds, at the configured temperature:
 - the whole-crystal elastic line (anisotropic-DW Bragg edges + the per-site
   incoherent Debye-Waller), carried by exactly one data file (see
   [Polyatomic materials](#polyatomic-materials-beo) below);
-- provenance metadata pinning the IRMA build and run parameters that
+- a record of the IRMA version and run settings that
   produced it, so the plugin's CI can regenerate and compare against the
   mode-2 tape.
 
@@ -51,8 +59,8 @@ versioned, so an any-temperature extension stays open.
 
 ## The YAML config
 
-The config reuses IRMA's standard `material` block (the same phonon model +
-per-species neutron data the ENDF and spectra sides name) and adds an `export`
+The config reuses IRMA's standard `material` block (the same phonon calculation +
+per-species neutron data the ENDF and spectra workflows name) and adds an `export`
 section. A complete graphite example, ready to copy:
 
 ```yaml
@@ -74,14 +82,14 @@ export:
 
 ### `material` section
 
-The `material` section names the phonon model
-([Preparing a phonopy model](phonopy-input.md) covers producing one
+The `material` section names the phonon calculation
+([Preparing a phonopy calculation](phonopy-input.md) covers producing one
 from your own force calculation) and the per-species scattering
-data, identical to the [spectra](spectra.md) and ENDF sides:
+data, identical to the [spectra](spectra.md) and ENDF workflows:
 
 | Key | Meaning |
 |-----|---------|
-| `phonopy_yaml` | Path to the phonopy model (eigenvectors come from here; mode 2 needs it). |
+| `phonopy_yaml` | Path to the phonopy calculation (eigenvectors come from here; mode 2 needs it). |
 | `born` | Optional BORN file for the non-analytical correction (polar crystals). |
 | `mesh` | Phonon mesh, e.g. `[40, 40, 40]`. |
 | `temperature_K` | The single temperature this data is exported at (default `296.0`). |
@@ -121,7 +129,7 @@ Every field, with its default read from `irma/ncrystal/config.py`:
 | `site_groups` | `null` | Explicit per-file site-index grouping (e.g. `[[0,1],[2,3]]`). Omit and the exporter groups sites by species. |
 | `alpha_grid` | `null` | Explicit `α` grid (ENDF dimensionless, `lat=1` → 0.0253 eV reference). Provide together with `beta_grid` for the **explicit** grid mode. |
 | `beta_grid` | `null` | Explicit `β` grid (downscatter, starts at 0). Provide together with `alpha_grid`. |
-| `lat` | `1` | `S(α,β)` grid convention flag (`lat=1` → α,β referenced to 0.0253 eV). |
+| `lat` | `1` | `S(α,β)` grid convention flag. `lat=1`: the grid values are referenced to the fixed thermal kT = 0.0253 eV instead of the actual temperature. |
 | `freq_max_eV` | `null` (auto) | **Automatic** grid: the maximum phonon frequency [eV] that sets the β span. Omit / `null` → estimated from the phonopy mesh. |
 | `n_lower`,`n_phonon`,`n_upper` | `15`,`300`,`80` | **Automatic** grid: β-grid point counts, log low-β tail, linear phonon region, log high-β tail. `n_upper=80` keeps the high-β tail fine enough to bake an accurate high-energy `S(α,β)` (≈20 suffices for thermal-only work; check convergence for your energy range and adjust up or down). |
 | `beta_max_eV` | `5.0` | **Automatic** grid: the upper β-tail cap [eV]. |
@@ -157,7 +165,7 @@ python -m irma.ncrystal graphite_export.yaml -o out/
 For graphite this writes, into `out/`:
 
 - **`graphite__C.irmapack`**: the exported NCrystal data (mode-2 `S(α,β)`
-  half-table + anisotropic-DW elastic tensors + provenance);
+  half-table + anisotropic-DW elastic tensors + the `meta.*` record);
 - **`graphite.ncmat`**, a complete, loadable material: the phonopy primitive
   cell (`@CELL` + `@ATOMPOSITIONS` + a placeholder `@DYNINFO`) followed by the
   `@CUSTOM_IRMA` section referencing the data file(s):
@@ -191,7 +199,7 @@ The exporter writes the structure from the same phonopy cell the data was
 built from, so the per-site Debye-Waller tensors match the material's atom
 sites exactly (the plugin pairs them by fractional position, tolerance
 1e-6). A stock stdlib NCMAT for the same compound usually has a different
-origin and will not match. The placeholder `@DYNINFO` (a Debye VDOS
+crystallographic origin and will not match. The placeholder `@DYNINFO` (a Debye VDOS
 back-derived from the phonopy MSD) only lets NCrystal construct the
 crystal; the plugin overrides the inelastic component with the exported
 `S(α,β)` and, on the coherent-bearing data file, the coherent/incoherent
@@ -304,7 +312,7 @@ temperature against each data file's export temperature and throws
 `BadInput` when they differ by more than a tight tolerance
 (~`1e-3 + 1e-5·T` K): it samples the precomputed table and does not
 interpolate across temperatures, so a mismatched request would silently be
-the wrong physics. It is important to note that omitting `;temp=` is not
+the wrong physics. Omitting `;temp=` is not
 neutral: NCrystal then defaults to 293.15 K, which is a hard error against
 any data file not exported at that temperature.
 
@@ -324,8 +332,8 @@ species' mode-2 `S(α,β)`, and summing the files sums the per-species
 inelastic kernels with no ambiguity. The `principal-xs-weighted` coherent
 partition splits the total coherent cross section exactly, with no
 double-counting: each pairwise one-phonon interference term is shared
-between its two participants as `w_p/(w_p+w_o)` by bound coherent cross
-section, so the per-species partials sum back to the exact total for any
+between its two participants as `w_p/(w_p+w_o)` (the bound coherent
+cross sections of the principal and the other species), so the per-species partials sum back to the exact total for any
 number of site groups.
 
 The elastic line is different. The coherent Bragg structure factor
@@ -352,7 +360,7 @@ against an IRMA tape:
   stores only the downscatter (`β ≥ 0`) side as `S_scaled = S_downscatter ·
   e^{−β/2}`; NCrystal reconstructs the full table (including the energy-gain
   side) by detailed balance. This halves the table size and matches the
-  validated `Be → tape34` path.
+  validated beryllium cross-section chain.
 - **Bound-XS normalization.** IRMA's internal `S_asym = (4π·kT/σ_b)·S` divides
   the bound cross section out; the exporter rescales the table to the data
   file's advertised `bound_xs_barn` so NCrystal's `SABScatter` reproduces the
@@ -375,7 +383,8 @@ and NCrystal returns identical component cross sections from the original
 and round-tripped files, so serialization is lossless.
 
 The consequential check compares the two programs that process the same
-stored `S(α,β)` table: the NCrystal plugin and corrected NJOY THERMR each
+stored `S(α,β)` table: the NCrystal plugin and corrected NJOY THERMR (stock THERMR plus the
+two patches of the [NJOY interoperability](njoy.md) page) each
 reconstruct cross sections from it. With the ENDF evaluation's 399×497 grid
 supplied explicitly to the exporter, the two routes carry the same table
 (relative L2 difference 1.3×10⁻⁷ after the header's bound-cross-section
@@ -392,11 +401,10 @@ interpolation and quadrature rules rather than the stored data.
 
 The spread is a discretization sensitivity, not a fixed disagreement:
 feeding the same physics tabulated on denser grids through the same
-NCrystal kernel machinery moves the 10 μeV–25 meV ratio to the exact
-result from 0.84 on the coarse dQ = 0.25 Å⁻¹ grid, through 0.93 on the
+NCrystal kernel machinery moves the 10 μeV–25 meV ratio of NCrystal's
+integral to the exact one (1 is perfect agreement) from 0.84 on the coarse dQ = 0.25 Å⁻¹ grid, through 0.93 on the
 automatic and dQ = 0.05 grids, to 0.98 at dQ = 0.01 and 0.99 at
-dQ = 0.005. Grids denser than THERMR can process stably pose no difficulty
-for NCrystal, so an export intended for transport can simply use a denser
+dQ = 0.005. NCrystal handles grids denser than THERMR can stably process, so an export intended for transport can simply use a denser
 table than the ENDF file; the exporter accepts explicit grids (see
 [the grid options](#two-ways-to-set-the-s-grid)).
 
@@ -408,7 +416,7 @@ graphite file against measured maps and cuts, is on the
 
 - [Scattering modes](modes.md): what `inelastic_mode = 2` computes (coherent
   one-phonon + anisotropic Debye-Waller).
-- [Neutron-scattering spectra](spectra.md): the `irma.spectra` forward model,
+- [Neutron scattering spectra](spectra.md): the `irma.spectra` forward model,
   which shares the `material` config block used here.
 - [NJOY interoperability](njoy.md): the other program that processes IRMA's
   mode-2 `S(α,β)`, via an ENDF MF7 tape.

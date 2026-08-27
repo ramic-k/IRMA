@@ -16,17 +16,58 @@ self-shielded, ACE-format thermal data. The usual module order is:
 
 | Module | Role for a thermal scattering evaluation |
 | --- | --- |
-| RECONR | Reconstruct the pointwise cross sections for the principal scatterer's neutron sublibrary and write a clean PENDF tape. |
+| RECONR | Reconstruct the pointwise cross sections for the principal scatterer's neutron sublibrary and write a clean PENDF (pointwise-ENDF) tape. |
 | BROADR | Doppler-broaden those cross sections to the evaluation temperature. |
 | THERMR | Read IRMA's MF7 (MT2 coherent/incoherent elastic, MT4 inelastic), reconstruct the secondary energy–angle distributions, and add the thermal cross sections to the PENDF tape. |
-| ACER | Format the result as an ACE thermal (`mt = 0`/`itype` thermal) file for transport codes. |
+| ACER | Format the result as an ACE-format thermal file for transport codes such as MCNP. |
 
 THERMR is the module that actually processes the tabulated S(α,β), so
 it is where the two patches below matter.
 
-One unit convention trips people up when reading results back: NJOY's
-tape34-style cross-section output reports incident neutron energies in
-MeV, not eV, while the deck and IRMA's own grids work in eV or units of
+### A minimal processing run
+
+The stream below is the one the validation record ran for the nickel
+evaluations (RECONR, BROADR, THERMR at 299.15 K); adapt the four
+material-specific values for your own tape. NJOY reads its input on
+stdin and exchanges data through numbered files named `tape<NN>`:
+here `tape20` is the IRMA thermal tape, `tape21` the base neutron
+evaluation for the same nuclide (here Ni-58), `tape23` the broadened
+pointwise file, and `tape31` the thermal output.
+
+```text
+reconr
+21 22 /
+'pendf for Ni' /
+2825 1 /              -- the base evaluation's MAT number
+0.001 /               -- reconstruction tolerance
+'Ni58 base' /
+0 /
+broadr
+21 22 23 /
+2825 1 /
+0.001 /
+299.15 /              -- the evaluation temperature of the IRMA tape
+0 /
+thermr
+20 23 31 /
+59 2825 32 1 2 1 0 1 250 1 /   -- 59 = the IRMA tape's MAT, 2825 = the base MAT,
+                               -- 32 angle bins, 1 temperature, iin=2 (read S(a,b)),
+                               -- icoh=1 (elastic from tape), natom=1, MT250 output
+299.15 /
+0.001 5.0 /           -- tolerance and maximum energy [eV]
+stop
+```
+
+Run it with the njoy executable's working directory holding the tapes
+(`njoy < input`). For an ACE file for Monte Carlo codes, an `acer`
+module follows the same pattern; the NJOY manual documents its cards.
+The quickstart's graphite tape processes the same way with its own MAT
+(30), a carbon base evaluation, and 296 K.
+
+One unit convention trips people up when reading results back: NJOY
+refers to its numbered I/O files as tapes, and its tape34-style
+cross-section output reports incident neutron energies in
+MeV, not eV, while the input file and IRMA's own grids work in eV or units of
 `kT`. Keep the conversion in mind when you compare a processed
 inelastic cross section against an IRMA-internal curve.
 
@@ -38,7 +79,7 @@ either ~`1e91`-barn nonsense in the inelastic cross section above
 roughly `0.27 eV`, or a multi-hour stall, regardless of how the beta
 grid is spaced. The bug is in stock `thermr.f90`, not in the IRMA
 tape: THERMR trips on the shape of a coherent S(α,β), so emitting a
-uniform energy grid does not cure it. It is important to note that a
+uniform energy grid does not cure it. A
 correct tape is no protection here; apply the one-line two-axis guard
 fix below before trusting a coherent mode-2 tape through NJOY. Most
 materials, and all `inelastic_mode = 0/1` tapes, are unaffected.
@@ -53,7 +94,8 @@ s = sab(1,1) + log(alpha(1)/a)/2 - cliq*b**2/a
 cliq = (sab(1,1) - sab(1,2)) * alpha(1) / beta(2)**2
 ```
 
-The activation guard tests for decay along alpha only:
+In `thermr.f90`'s notation `sab(iα, iβ)` is the tabulated S(α,β),
+α-index first. The activation guard tests for decay along alpha only:
 
 ```fortran
 if (sab(1,1).gt.sab(2,1)) then       ! cited at two sites in thermr.f90
@@ -74,7 +116,7 @@ why upstream never saw it.
 | `inelastic_mode = 0` (classic) | clean | clean (byte-identical) |
 | `inelastic_mode = 1` (incoherent approx.) | clean | clean (byte-identical) |
 | `inelastic_mode = 2`, weakly coherent | usually clean | clean |
-| `inelastic_mode = 2`, strongly coherent (e.g. graphite) | ~`1e91` b above ~`0.27 eV`, or a multi-hour stall | clean (mode-1 tape34 byte-identical pre/post patch) |
+| `inelastic_mode = 2`, strongly coherent (e.g. graphite) | ~`1e91` b above ~`0.27 eV`, or a multi-hour stall | clean (and the patch is regression-clean: a mode-1 tape34 is byte-identical before and after it) |
 
 ### The one-line two-axis guard fix
 
@@ -105,9 +147,10 @@ ever sidestepped a separate, older log-tail stall; it was never the fix
 for the cliq garbage.)
 
 Transfers that fall beyond the tabulated S(α,β) are handled downstream
-by THERMR's short-collision-time (SCT) extension, which is driven by the
-tape's effective temperature; you do not need to extend the IRMA grid to
-cover them.
+by THERMR's short-collision-time (SCT) extension, driven by the tape's
+effective temperature (a spectrum-weighted temperature written on the
+tape for exactly this purpose); you do not need to extend the IRMA grid
+to cover them.
 
 ## THERMR ignores the MF7/MT4 interpolation flag (lin-lin tapes)
 
@@ -134,22 +177,26 @@ what the [validation record](validation/methodology.md) means by
 
 ## Known deliberate divergences from NJOY's LEAPR
 
-IRMA reproduces NJOY2016 LEAPR byte-for-byte on the expected validation
-set, but eight NJOY behaviors are deliberately handled differently. Seven
+IRMA reproduces NJOY2016 LEAPR byte-for-byte on the validation set of
+reference tapes (the golden set under `tests/`), but eight NJOY
+behaviors are deliberately handled differently. Seven
 are bugs, placeholders, or numerical hazards in NJOY itself that IRMA does
 *not* reproduce; the eighth is an NJOY quirk that IRMA deliberately *does*
 reproduce for byte parity. Each carries a `DELIBERATE NJOY DIVERGENCE`
 comment at the code site (ten sites in all, because the last entry is
-tagged in each of its three implementations).
+tagged in each of its three implementations). The list is a
+maintainer-level record: the variable and routine names follow NJOY's
+own source, and each entry names its consequence for users.
 
-* **Discrete-oscillator delta lines (`twt = 0` decks).** NJOY's `discre`
+* **Discrete-oscillator delta lines (`twt = 0` input files).** NJOY's `discre`
   reuses its `idone` flag for both the line loop and the inner
   grid-search (`leapr.f90:1549-1585`), so it adds only the *first*
   in-range negative delta line and then stops. IRMA convolves **every**
   in-range line, the physically complete treatment. Consequence: a
-  `twt = 0` deck with discrete oscillators (Einstein-solid hydrides and
+  `twt = 0` input file with discrete oscillators (Einstein-solid hydrides and
   similar) will not match an NJOY tape at the delta-line betas; expect
-  large local ratios there. Decks with `twt > 0` (all the expected decks)
+  large local ratios there. Input files with `twt > 0` (all the
+  validation-set input files)
   never enter this path and remain byte-faithful.
 * **`iel = 5` (lead) coherent elastic.** NJOY ships `pb4 = 1.0` barn (a
   placeholder, not the physical `sigma_coh(Pb) = 11.115` b), so NJOY
@@ -157,7 +204,7 @@ tagged in each of its three implementations).
   uses the physical constant (`irma/core/crystal.py`). An IRMA Pb tape
   therefore deliberately disagrees with NJOY's by that factor.
 * **SCT effective temperature accumulated across the α grid (`discre`).**
-  NJOY initialises the short-collision-time effective-temperature ratio
+  NJOY initializes the short-collision-time effective-temperature ratio
   once before the α loop (`leapr.f90:1401`) and adds the oscillator
   contributions for every α without ever resetting it
   (`leapr.f90:1494`), so its `T_eff/T` grows linearly with the α
@@ -167,7 +214,7 @@ tagged in each of its three implementations).
   answer. That is a latent NJOY bug: `T_eff/T` is a property of the
   phonon spectrum, not of the grid position. IRMA resets the ratio for
   every α. Affects only SCT tails reached through discrete oscillators;
-  the expected decks have no SCT-tail exposure and match NJOY to ~1e-4
+  the validation-set input files have no SCT-tail exposure and match NJOY to ~1e-4
   either way.
 * **ln-S sentinel for zero-S points (ENDF writer).** NJOY's `endout`
   writes the ln-S sentinel −999 in the first-temperature TAB1 and the
@@ -191,7 +238,8 @@ tagged in each of its three implementations).
   re-clamps the combined convolution-plus-self term below 1e-30, so a
   self term landing in (1e-75, 1e-30), reached only at high α where the
   Debye-Waller weight `α·f0 ≳ 70`, is zeroed where NJOY keeps it.
-  All expected decks reproduce their NJOY references to ~1e-4 with the
+  All validation-set input files reproduce their NJOY references to ~1e-4
+  with the
   clamp active.
 * **Overflow guard in the discrete-oscillator Bessel factors
   (`bfact`).** NJOY has no guard on exponential arguments above 709:
@@ -237,12 +285,13 @@ deliberately does not reproduce: the short-collision-time extrapolation
 beyond the tabulated grid, the full secondary energy–angle
 reconstruction, and the final ACE-format output.
 
-It is important to note that a table converted from an external code
+A table converted from an external code
 (for example an OCLIMAX `S(Q, E)` map) can agree with the mimic yet
 diverge in real THERMR through the short-collision-time extrapolation.
-When you process such a table through NJOY, work from `thermr_mimic`
-for the comparison on the table's own grid, and from a composite or
-uniformly resampled tape for the actual THERMR run.
+When you process such a table through NJOY, compare with `thermr_mimic`
+on the table's own grid; for the real THERMR run, first rebuild the
+tape for THERMR, either uniformly resampled or composited into a full
+evaluation whose grid THERMR handles.
 
 ## THERMR `calcem` cosine-clamping warnings
 
@@ -257,9 +306,9 @@ benign.
 
 ## See also
 
-- [Automatic grids](grids.md) — the structure of IRMA's automatic
+- [Automatic grids](grids.md): the structure of IRMA's automatic
   alpha/beta grids and how to override them.
-- [Scattering modes](modes.md) — what `inelastic_mode = 0/1/2` produce,
+- [Scattering modes](modes.md): what `inelastic_mode = 0/1/2` produce,
   including the coherent `mode-2` structure referenced here.
-- [Input deck reference](input-reference.md) — the full Card 7–9
+- [Input file reference](input-reference.md): the full Card 7–9
   grid-card specification.

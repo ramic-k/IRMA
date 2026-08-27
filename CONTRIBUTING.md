@@ -34,18 +34,18 @@ the `mlip_real` marker and only run when you opt in with
 
 - `tests/native_LEAPR_NJOY_ENDF_validation/` — IRMA must reproduce the
   committed native LEAPR/NJOY reference tapes (7e-5 or better inelastic, exact
-  elastic structure). Run after touching the classic path, the writer, or
+  elastic structure). Run after touching the classic kernels, the writer, or
   anything in the ENDF output chain.
 - `tests/mode2_euphonic_n1_validation/` — the mode-2 exact one-phonon
   S(α,β) vs the committed Euphonic reference. Run after touching the noncubic
   engine. Regenerating the frozen reference requires `euphonic` and is only
-  needed if the vendored phonon models change.
+  needed if the vendored phonon calculations change.
 
 ## Refactoring policy
 
 Behavior-preserving changes to the physics chain are verified by
-byte-identical output: build a baseline of representative decks covering
-every affected code path (see the validation README for deck patterns —
+byte-identical output: build a baseline of representative input files covering
+every affected code path (see the validation README for input-file patterns —
 classic, negative-temperature reuse, secondary scatterer, single-channel (SEF) / mixed (MEF) / grouped elastic, modes 1/2 with multiphonon and SCT), produce tapes before and
 after, and `cmp` them. Single-process runs (`ncpu=1`) are deterministic and
 byte-stable; use them for baselines.

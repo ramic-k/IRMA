@@ -1,11 +1,15 @@
-# Preparing a phonopy model
+# Preparing a phonopy calculation
 
-All three IRMA outputs take the same phonon-model input: a
-`phonopy.yaml`, named on Card 6f of an ENDF deck, in the
+All three IRMA outputs take the same phonon input: a
+`phonopy.yaml`, named on Card 6f of an ENDF input file (cards are the
+numbered records of the input format; see the
+[input file reference](input-reference.md)), in the
 `material.phonopy_yaml` field of a spectra configuration, and in the
 same field of an NCrystal export configuration. The
-[MLIP front end](mlip.md) writes one for you inside every bundle. This
-page is for the other route: you have run your own force-constant
+[MLIP front end](mlip.md) writes one for you inside every bundle from a
+pretrained machine-learned potential, with no force calculation of your
+own; if you have none, that page is your route. This
+page is for the other one: you have run your own force-constant
 calculation (DFT, AIMD, a classical potential, or a machine-learned
 potential outside `irma mlip`) and need to package it so IRMA can read
 it.
@@ -16,7 +20,7 @@ IRMA loads the `phonopy.yaml` for the cells and symmetry, then looks
 for force constants in a fixed order: embedded in the yaml itself
 first, and otherwise in a file sitting next to the yaml, trying
 `force_constants.hdf5`, then `FORCE_CONSTANTS`, then `FORCE_SETS`.
-Nothing found is an error, and the working directory is never
+Finding none of them is an error, and the working directory is never
 consulted; only the yaml's own directory is searched. The simplest
 arrangement is therefore a single self-contained file with the force
 constants embedded, and phonopy will produce exactly that.
@@ -38,14 +42,15 @@ The `--include-fc` flag is the important one for IRMA: phonopy saves a
 `--include-all`) that file carries the force constants inside it.
 Point IRMA at it and you are done. The same chain works for the other
 calculators phonopy supports; pass the calculator flag you used at the
-`-d` step to the `-f` step as well.
+`-d` step to the `-f` step as well (for example `phonopy --qe -d ...`
+then `phonopy --qe -f ...` for Quantum ESPRESSO).
 
 Any calculator interface will do. phonopy keeps the cell in the
-*calculator's* native length unit — bohr for `qe`, `abinit`, `elk`,
-`siesta`, `wien2k`, `DFTB+`, `TURBOMOLE`, `fleur`, `abacus` and `qlm`,
+*calculator's* native length unit (bohr for `qe`, `abinit`, `elk`,
+`siesta`, `wien2k`, `DFTB+`, `TURBOMOLE`, `fleur`, `abacus` and `qlm`;
 Ångström for `vasp`, `lammps`, `castep`, `aims`, `crystal`, `pwmat`,
-`cp2k` — and converts frequencies with a factor that is likewise
-calculator-specific. IRMA reads both from the model and applies them at
+`cp2k`) and converts frequencies with a factor that is likewise
+calculator-specific. IRMA reads both from the phonopy.yaml and applies them at
 load, so the interface you used changes nothing about the result. There
 is nothing to convert by hand, and no reason to prefer one interface
 over another on units grounds.
@@ -68,16 +73,17 @@ parameterized by a `BORN` file: the dielectric tensor and the Born
 effective charges. IRMA honors NAC two ways. If the `phonopy.yaml`
 already embeds the NAC parameters (a phonopy run with `--include-all`,
 or `--nac` workflows that save them), IRMA applies them. On an ENDF
-deck, Card 6f's `use_born=1` additionally names a `BORN` file
+input file, Card 6f's `use_born=1` additionally names a `BORN` file
 explicitly, and an unreadable file is an error rather than a silent
-fallback. It is important to note that a `BORN` file merely sitting in
+fallback. A `BORN` file merely sitting in
 the working directory is never picked up on its own; the correction is
 applied only through one of those two explicit routes.
 
-## Checking the model before production
+## Checking the calculation before production
 
-Whichever route produced the model, look at the phonon density of
-states before spending compute on an evaluation: imaginary modes or a
+Whichever route produced the calculation, look at the phonon density of
+states before spending compute on an evaluation (phonopy's own `-p`
+plotting flag draws it, or plot the `total_dos.dat` it writes): imaginary modes or a
 cut-off spectrum mean the force-constant calculation needs attention,
 not the IRMA settings. The [scattering modes](modes.md) page covers
 the mesh-convergence question, and the

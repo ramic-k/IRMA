@@ -1,6 +1,7 @@
-# Neutron-scattering spectra (`irma spectra`)
+# Neutron scattering spectra (`irma spectra`)
 
-An ENDF tape tells a transport code how a material scatters; it does not tell
+An ENDF tape (a nuclear data file; "tape" is the historical name) tells
+a transport code such as MCNP or OpenMC how a material scatters; it does not tell
 *you* what your instrument will measure. IRMA's forward model closes that gap.
 It takes the same phonon physics the ENDF side evaluates and turns it into the
 quantities an instrument records, an instrument-resolved 1-D inelastic neutron
@@ -8,18 +9,21 @@ scattering (INS) spectrum or a dense 2-D `S(Q,E)` powder map, with no ENDF
 tape involved. The calculation computes a powder `S(Q,E)`, projects it onto
 the instrument's kinematic locus (the path through `(Q,E)` the geometry can
 reach: fixed final energy for indirect geometry, fixed incident energy for
-direct), convolves it with an energy-resolution model, and adds a tape-free
+direct), convolves it with an energy-resolution model, and adds an
 elastic line built from the same Debye-Waller factors as the inelastic part.
-Use it to preview an experiment before beam time, to compare a phonon model
+Use it to preview an experiment before beam time, to compare a phonon
+calculation
 against measured data, or to sanity-check an evaluation by looking at it the
 way a beamline would.
 
-The physics level is the same `inelastic_mode` you know from the ENDF side:
+The physics level is the same `inelastic_mode` as on the ENDF side (see
+[Scattering modes](modes.md)):
 mode `0` builds `S(Q,E)` straight from a phonon density of states (DOS), with
 no eigenvectors (see [DOS-based spectra (mode 0)](spectra-mode0.md) for that
-whole workflow), while modes `1` and `2` run the phonopy-backed engine (the
+whole workflow), while modes `1` and `2` run the noncubic engine (the
 incoherent approximation, or the exact coherent one-phonon term) on a
-`phonopy.yaml` plus force constants. The model covers VISION, generic
+`phonopy.yaml` plus force constants ([Preparing a phonopy
+calculation](phonopy-input.md) covers producing one). The model covers VISION, generic
 indirect, and direct (chopper) geometries, with an automatic chopper
 resolution model validated against PyChop. Install the extra first:
 `pip install -e ".[spectra]"` (plus `[phonopy]` for modes 1/2).
@@ -36,7 +40,7 @@ cd examples/spectra
 python -m irma spectra run graphite_mode2_vision.yaml -o graphite_vision.csv
 ```
 
-and the same phonon model becomes a direct-geometry ARCS `S(Q,E)` map, with
+and the same phonon calculation becomes a direct-geometry ARCS `S(Q,E)` map, with
 the chopper resolution computed automatically and the map masked to the
 detector coverage:
 
@@ -110,8 +114,8 @@ Direct geometry requires `--e-max` strictly below `Ei` (a neutron cannot lose
 its full incident energy and still reach the detector). Since the `--e-max`
 default is 250 meV, `--ei 250` needs an explicit `--e-max` or a higher `Ei`.
 `--resolution-model chopper` auto-computes the energy resolution for any
-supported PyChop instrument (ARCS, SEQUOIA, MAPS, MARI, MERLIN, HYSPEC; CNCS,
-LET). `--kinematic-factor` multiplies by `kf/ki` for a count-rate spectrum.
+of the eight supported direct-geometry instruments (ARCS, SEQUOIA, MAPS,
+MARI, MERLIN, HYSPEC, CNCS, LET). `--kinematic-factor` multiplies by `kf/ki` for a count-rate spectrum.
 
 ### `run`: execute a config file
 
@@ -137,7 +141,8 @@ With `physics.elastic: true` (the default) the map carries the same elastic
 model as the 1-D spectra: the per-Q elastic cross section appears as a ridge
 at `E = 0` (the Bragg peaks plus the incoherent Debye-Waller line, smeared
 over the map's `--dq-map` Q bin) and is broadened by the energy-resolution
-model like every other feature. It is important to note that the two products
+model like every other feature. A subtlety for absolute-intensity
+comparisons only: the two products
 deliberately differ in how they normalize the elastic line when the energy
 axis starts at 0 (`e_min = 0`, the default). The 1-D spectra renormalize the
 visible half-peak so that its integral equals the full per-Q elastic area;
@@ -151,13 +156,13 @@ agree.
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--inelastic-mode {0,1,2}` | 0 = DOS + isotropic Debye-Waller; 1 = incoherent approximation; 2 = exact coherent 1-phonon + incoherent multiphonon | 1 |
-| `--scatterer` | `SYMBOL,sigma_bound_b,awr[,b_coh_fm[,sigma_inc_b]]` plus mode-0 `key=value` tokens (`dos=`, `unit=`, `mult=`, `pos=`). Repeatable. | — |
+| `--inelastic-mode {0,1,2}` | 0 = DOS + isotropic Debye-Waller; 1 = incoherent approximation; 2 = exact coherent 1-phonon + incoherent multiphonon | 2 |
+| `--scatterer` | `SYMBOL,sigma_bound_b,awr[,b_coh_fm[,sigma_inc_b]]`: bound cross section [b], atomic weight ratio (mass over neutron mass), coherent scattering length [fm], incoherent cross section [b]; IRMA's built-in nuclear-data table supplies all four for any element (the GUI and `irma mlip emit` fill them automatically). Mode-0 `key=value` tokens (`dos=`, `unit=`, `mult=`, `pos=`) append. Repeatable. | — |
 | `--mesh NX NY NZ` | phonon q-mesh | `40 40 40` |
 | `--temperature` | sample temperature (K) | 296 |
 | `--de` / `--e-min` / `--e-max` | energy grid step / start / end (meV); negative `e-min` adds the energy-gain side | 0.5 / 0 / 250 |
 | `--dq` | `S(Q,E)` Q-support spacing (1/Å) | 0.05 |
-| `--max-phonon-order` | multiphonon order; `auto` sizes to convergence in every mode (mode 0 derives it from the DOS Debye-Waller lambda) | auto |
+| `--max-phonon-order` | multiphonon order; `auto` sizes to convergence in every mode (mode 0 derives it from the DOS's Debye-Waller integral) | auto |
 | `--directions` / `--mp-directions` | modes 1/2 coherent / multiphonon powder-average directions | 10000 / 1000 |
 | `--elastic {on,off}` / `--elastic-kind {both,coherent,incoherent}` | elastic line | on / both |
 | `--gain-side {direct,detailed_balance}` | energy-gain (E<0) evaluation: explicit Bose factors vs detailed-balance mirror | direct |
@@ -170,7 +175,7 @@ agree.
 A config file is a mapping of four sections: `material`, `physics`, `grid`,
 `instrument`. All keys below are optional except `material.scatterers` (and
 `material.phonopy_yaml` for modes 1/2;
-[Preparing a phonopy model](phonopy-input.md) covers how to make one
+[Preparing a phonopy calculation](phonopy-input.md) covers how to make one
 from your own force calculation). The GUI writes these files, or you
 can write them by hand in YAML, TOML, or JSON.
 
@@ -178,7 +183,7 @@ can write them by hand in YAML, TOML, or JSON.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `phonopy_yaml` | str | — | phonopy model; required for modes 1/2 and mode-0 `dos_source: phonopy` |
+| `phonopy_yaml` | str | — | phonopy calculation; required for modes 1/2 and mode-0 `dos_source: phonopy` |
 | `force_constants` / `force_sets` / `born` | str | discovered | explicit FC / FORCE_SETS / BORN (NAC) files |
 | `mesh` | `[nx,ny,nz]` | `[40,40,40]` | phonon q-mesh |
 | `temperature_K` | float | 296 | sample temperature |
@@ -199,10 +204,10 @@ Each **scatterer** entry: `symbol`, `sigma_bound_b`, `awr`, optional `b_coh_fm`,
 | `n_directions` / `multiphonon_directions` | 10000 / 1000 | powder-average directions (modes 1/2) |
 | `jobs` | null (all cores) | worker processes |
 | `elastic` / `elastic_kind` | true / `both` | elastic line on/off and channel (`both`/`coherent`/`incoherent`) |
-| `elastic_from_tape` | — | build the elastic line from an ENDF MF7/MT2 tape instead of from the phonon model |
-| `incoherent_elastic_mode` | `isotropic` | Debye-Waller treatment of the incoherent elastic line: `isotropic` (trace/3 scalar W′ per species, the ENDF-convention form) or `directional` (powder-averaged anisotropic `⟨exp(-Q² û·U·û)⟩` per atom; modes 1/2 only; needs the engine's displacement tensors). Same option name as the NCrystal export. |
+| `elastic_from_tape` | — | build the elastic line from an ENDF tape's elastic section (MF7/MT2) instead of from the phonon calculation |
+| `incoherent_elastic_mode` | `isotropic` | Debye-Waller treatment of the incoherent elastic line: `isotropic` (one scalar Debye-Waller parameter per species, the trace/3 W′ the ENDF convention stores) or `directional` (powder-averaged anisotropic `⟨exp(-Q² û·U·û)⟩` per atom; modes 1/2 only; needs the engine's displacement tensors). Same option name as the NCrystal export. |
 | `include_energy_gain` | true | add the energy-gain (E<0) side |
-| `gain_side` | `direct` | energy-gain evaluation: `direct` computes E<0 with explicit Bose occupation factors (phonon-annihilation weights `n(ω)`, no mirror) for ALL modes, mode 0 sums every order in closed form, modes 1/2 deposit annihilation lines at `-ħω` plus the negative half of the signed multiphonon ladder (the loss/ENDF outputs stay bit-identical); or `detailed_balance` (mirror the loss side). The two agree to the sub-bin `O(dE/kT)` level, with `direct` the more accurate (it uses each line's true energy, not the loss bin center) |
+| `gain_side` | `direct` | energy-gain (E<0) evaluation. `direct` computes the gain side with explicit Bose occupation factors in every mode (the energy-loss output is unchanged); `detailed_balance` mirrors the loss side instead. The two agree to sub-bin level, with `direct` the more accurate: it uses each line's true energy, not the loss bin center |
 | `kinematic_kf_ki` | false | multiply by `kf/ki` (count-rate spectrum) |
 
 ### `grid`
@@ -222,7 +227,7 @@ Each **scatterer** entry: `symbol`, `sigma_bound_b`, `awr`, optional `b_coh_fm`,
 | `angles_deg` | preset | detector angles (deg) |
 | `q_cuts` | — | constant-\|Q\| cuts (1/Å); honored whenever supplied, alongside the angle/bank spectra |
 | `bank_halfwidth_deg` | 5 | detector-bank angular half-width |
-| `sigma_coeffs` | preset | resolution width polynomial `c0,c1,c2` (meV) |
+| `sigma_coeffs` | preset | resolution width polynomial σ(E) = c0 + c1·|E| + c2·E² (meV) |
 | `resolution_shape` / `resolution_model` | gaussian / poly | line shape; `poly` or `chopper` |
 | `chopper_spec` | — | `{instrument, package, frequency}` for `resolution_model: chopper` |
 | `combine` | mean | combine detector banks by `mean` or `sum` |
@@ -258,7 +263,7 @@ The forward model computes a single-scattering, powder-averaged `S(Q,E)` and
 convolves it with an energy-width resolution model: it supplies the
 calculated single-scattering counterpart of a measured spectrum, and it
 models nothing else about the measurement. That scope keeps it fast and makes
-its output a clean expression of the phonon model, but it also means several
+its output a clean expression of the phonon calculation, but it also means several
 real measurement effects are deliberately absent. Read any comparison against
 measured data with them in mind.
 
@@ -301,7 +306,7 @@ self-shielding, or absolute intensities), model the instrument with a
 Monte Carlo package such as McStas or McVINE, using IRMA (or an NCrystal or
 ENDF kernel built from the same physics) as the sample scattering kernel.
 IRMA's forward model is the right tool for previewing features and for
-comparing a phonon model to data on an equal footing; a Monte Carlo
+comparing a phonon calculation to data on an equal footing; a Monte Carlo
 instrument model is the right tool for reproducing a measured spectrum in
 full. The graphite validation in this project pairs the two exactly this
 way: IRMA for the phonon physics, a McStas virtual experiment for the

@@ -1,7 +1,9 @@
-# MLIP phonon models
+# MLIP phonon calculations
 
-`irma mlip` builds a phonon model from a pretrained machine-learned
-interatomic potential (MLIP) for any ASE-readable crystal within the
+`irma mlip` builds a phonon calculation from a pretrained machine-learned
+interatomic potential (MLIP) for any crystal that ASE (the Atomic
+Simulation Environment, the library IRMA uses to read structures) can
+read, within the
 chosen potential's element coverage. It needs no DFT calculation and no
 force-constant file: a structure file and a choice of potential are
 enough. The result is a self-contained **bundle** that feeds all three
@@ -21,10 +23,12 @@ the contents are valid. Rename the file (adding `.vasp` is enough) and
 the build proceeds.
 
 The approach, pretrained universal interatomic potentials standing in
-for DFT in a phonopy finite-displacement workflow, follows ORNL's
+for DFT in a phonopy finite-displacement workflow (phonopy is the
+standard phonon package; forces on displaced supercells give the force
+constants), follows ORNL's
 INSPIRED (Han, Savici, Li & Cheng, *Comput. Phys. Commun.* **304**,
-109288 (2024), MIT), whose machine-learned-potential tab pioneered it
-for INS spectra. IRMA's front end generalizes the approach to all three
+109288 (2024), MIT), which pioneered it in its GUI
+for inelastic neutron scattering (INS) spectra. IRMA's front end generalizes the approach to all three
 IRMA outputs and inherits several of its conventions (the default
 mesh-density rule, the per-potential dtype usage).
 
@@ -41,6 +45,9 @@ irma mlip build MgO.cif -o mgo_bundle --potential nequip
 irma mlip validate mgo_bundle
 irma mlip emit mgo_bundle --to endf,spectra,ncrystal --mat 'Mg=44' --mat 'O=48'
 ```
+
+Each `--mat` assigns the ENDF material number, the integer that labels
+that species' evaluation in a library; it is yours to choose.
 
 One property of the potential is not negotiable: its forces must be
 conservative, that is, exact gradients of a potential energy surface,
@@ -60,6 +67,10 @@ prediction.
 | `--potential` | default model | training data (level) | license | note |
 |---|---|---|---|---|
 | `nequip` | `mir-group/NequIP-OAM-L:0.1` | OMat24 + sAlex + MPtrj (PBE/PBE+U) | MIT / CC-BY-4.0 | best all-around in our validation |
+
+The training-data column names each dataset and, in parentheses, the
+DFT flavor behind it (PBE, PBE+U, r2SCAN: exchange-correlation
+functionals; a potential inherits its reference's systematic offsets).
 | `grace` | `GRACE-2L-OAM` | OMat24 + sAlex + MPtrj (PBE/PBE+U) | **ASL (academic)** | TensorFlow; runs via a dedicated env |
 | `orb` | `orb_v3_conservative_inf_omat` | OMat24 (PBE/PBE+U) | Apache-2.0 | |
 | `sevennet` | `7net-mf-ompa` | MPtrj + sAlex + OMat24 (PBE/PBE+U) | GPL-3.0 | |
@@ -93,25 +104,25 @@ reflects what the upstream projects published at the time of writing
 `--model` accepts a checkpoint name or a local file, with per-backend
 syntax for the extra axes some potentials have:
 
-- **pet-mad** — `NAME@VERSION` pins a released version
+- **pet-mad**: `NAME@VERSION` pins a released version
   (`--model pet-mad-s@1.5.0`). A bare name (or `@latest`) resolves to the
   newest release **once, at build start**, and the resolved checkpoint is
   pinned into the bundle; a mid-build upstream release cannot split the
   build. The PBE-level siblings (`pet-omat-s`, `pet-oam-l`, ...) are
   selected the same way.
-- **dpa3** — `MODEL::HEAD` selects the fitting net of the multitask
+- **dpa3**: `MODEL::HEAD` selects the fitting net of the multitask
   checkpoint (default `MP_traj_v024_alldata_mixu`, the MPtrj PBE+U head;
   `DPA-3.1-3M::Omat24` is the other materials head). A frozen single-task
   `.pth` file needs no head.
-- **nequip** — a model-zoo id (`mir-group/NequIP-OAM-XL:0.1`; the
+- **nequip**: a model-zoo id (`mir-group/NequIP-OAM-XL:0.1`; the
   `mir-group/` prefix is the default) or an already-compiled
   `.nequip.pt2`/`.nequip.pth` artifact. Zoo models are compiled once with
   `nequip-compile` into the cache and reloaded from there (per torch
   compile mode: crossing the torch 2.10 TorchScript/AOTInductor
   boundary triggers one recompilation).
-- **mace** — the usual size names plus foundation checkpoints by name
+- **mace**: the usual size names plus foundation checkpoints by name
   (`--model medium-omat-0`) or a downloaded `.model` file path.
-- **grace** — a foundation-model name from the tensorpotential registry
+- **grace**: a foundation-model name from the tensorpotential registry
   (`GRACE-2L-OAM`, `GRACE-1L-OAM`, ...). Local paths are not supported.
 
 Organic molecules have one more option. Rowan's Egret-1 (MIT per its
@@ -130,17 +141,20 @@ molecules in a vacuum box that is no loss.
    The spacegroup is checked before and after, and a symmetry change is
    reported loudly. `--snap-symmetry [TOL]` then projects the positions
    onto the exact orbits of the spacegroup detected at TOL (bare flag:
-   1e-2 A). Float32 relaxations routinely land a hair off the ideal
-   Wyckoff sites, which silently multiplies the displacement count and
-   invalidates symmetry-reduced BORN files; the applied shift is
+   1e-2 A). Float32 potentials routinely land a hair off the ideal
+   Wyckoff sites. That silently multiplies the displacement count, and
+   it invalidates symmetry-reduced BORN files (Born-charge files for
+   polar crystals; see below). The applied shift is
    recorded in the manifest.
-2. **Displace** — phonopy generates the symmetry-reduced displacement set
+2. **Displace**: phonopy generates the symmetry-reduced displacement set
    for the supercell (default: the smallest diagonal supercell whose repeat counts satisfy
    `ceil(12 A / a_i)` per lattice-vector length; this is a
    lattice-parameter rule, not a true minimum-image criterion for
-   strongly skewed cells; override with `--supercell "n1 n2 n3"` or
-   an Lmin).
-3. **Forces** — one potential evaluation per displaced supercell, serial
+   strongly skewed cells). Override with `--supercell`: either explicit
+   repeat counts (`--supercell "3 2 2"`) or a single minimum length in
+   Å (`--supercell 24` picks the smallest supercell whose every
+   lattice vector reaches it).
+3. **Forces**: one potential evaluation per displaced supercell, serial
    by default. `--jobs N` runs N spawn workers with one native thread
    each, and for heavy models it is the one performance knob that
    matters: pick a value
@@ -148,18 +162,18 @@ molecules in a vacuum box that is no loss.
    (see the performance notes below). Forces are cached under a
    physics fingerprint, so an interrupted build resumes where it
    stopped.
-4. **Force constants** — drift correction, symmetrization, and a
+4. **Force constants**: drift correction, symmetrization, and a
    quick-look DOS/imaginary-mode census on a mesh you can override with
-   `--mesh`. The DOS grid pitch is `min(0.5 meV, span/200)`. When the
-   model has numerically dispersionless bands, which the linear
-   tetrahedron method would drop entirely (isolated molecular modes
-   such as an O–H stretch on a small supercell, or every band of a
-   Γ-only mesh, the disordered default), the DOS and the emitters'
-   species-projected DOS fall back to 1 meV Gaussian smearing
-   automatically, and the manifest census records
-   `dos_smearing_fallback_mev`. `--dos-smearing MEV` forces a smearing
+   `--mesh`. The DOS grid pitch is `min(0.5 meV, span/200)`. Some
+   calculations have numerically dispersionless bands: isolated
+   molecular modes such as an O–H stretch on a small supercell, or
+   every band of a Γ-only mesh (the disordered default). The standard
+   linear-tetrahedron DOS integration would drop those bands entirely,
+   so the DOS (and the emitted species-projected DOS) falls back to
+   1 meV Gaussian smearing automatically, and the manifest census
+   records `dos_smearing_fallback_mev`. `--dos-smearing MEV` forces a smearing
    width explicitly (the grid refines to resolve it).
-5. **Bundle** — everything lands in one directory: `phonopy.yaml` with
+5. **Bundle**: everything lands in one directory: `phonopy.yaml` with
    embedded force constants, the relaxed structure, DOS, and a manifest
    with the full provenance (potential; resolved checkpoint identity,
    content-hashed when the model is a local file or compiled artifact;
@@ -172,7 +186,7 @@ on the non-analytical-term correction (NAC), and a real phonopy reload)
 and prints a summary. Run it first on any bundle you received rather
 than built.
 
-It is important to note that a bundle is code-adjacent input: treat a
+A bundle is code-adjacent input: treat a
 received bundle with the same caution as a script from the same
 source. The manifest's sha256 hashes prove *internal consistency*
 only: the bundle's files match what its builder recorded. An
@@ -182,7 +196,7 @@ worthless as evidence of origin or good faith. The concrete hazard is
 which executes `!!python/` tags at parse time. IRMA therefore scans
 every phonopy.yaml and refuses files carrying such tags *before*
 phonopy's parser sees them, at every entry point that parses one:
-`irma mlip validate` and bundle loading, the ENDF deck engine, the
+`irma mlip validate` and bundle loading, the ENDF engine, the
 NCrystal exporter, and the GUI file picker. That scan is fail-closed
 for the known code-execution vector, **not** a sandbox: it does not
 make phonopy's parser safe or vouch for the bundle's physics. Validate
@@ -198,7 +212,9 @@ then the forces recompute. That costs time, never correctness.
 
 ### Born effective charges
 
-Pass `--born PATH` (phonopy BORN format) to embed NAC in the bundle.
+Pass `--born PATH` (phonopy BORN format) to embed the non-analytical
+correction (NAC) in the bundle: the long-range dipole term that splits
+the LO and TO optical modes of polar crystals.
 NAC is never read from the working directory,
 and the emitted inputs are set up so the downstream tools use the
 embedded values. The PET-MAD calculators advertise Born-charge and dielectric outputs,
@@ -210,9 +226,10 @@ a BORN file from DFPT if LO-TO splitting matters for your material.
 Declare disorder explicitly with `--disordered`; IRMA never switches
 behavior on a heuristic (a console hint appears when a large P1 cell
 looks disordered, nothing more). The box is then its own supercell by default (an explicit
-`--supercell` still wins), the mesh defaults to the Γ point, and emission switches to the
-DOS-driven classic path: incoherent elastic scaled by the total bound
-cross section plus a contin-style inelastic deck per species. The
+`--supercell` still wins), the mesh defaults to the Γ point, and emission switches to
+DOS-driven classic input files: incoherent elastic scaled by the total bound
+cross section plus a classic continuous-spectrum inelastic input file
+per species. The
 ncrystal target is refused for disordered bundles in this version.
 
 ## Emitting IRMA inputs
@@ -224,41 +241,41 @@ irma mlip emit <bundle> --to endf,spectra,ncrystal \
     [--inelastic-mode 0|1|2] [--elastic-format mef|sef]
 ```
 
-- **endf** — one ready-to-run deck per principal scatterer (`iel=10`,
+- **endf**: one ready-to-run input file per principal scatterer (`iel=10`,
   automatic alpha/beta grids), gated through the same parser the GUI
   uses before anything is written. The elastic convention is the mixed
   elastic format (MEF: both elastic components on every species' tape)
   by default; `--elastic-format sef` selects the single-channel
   convention. `--inelastic-mode` picks the physics level (default 2):
-  modes 1/2 are the phonopy-backed directional decks (Card 6g
+  modes 1/2 emit directional input files (Card 6g
   `10000 1000 1` and a campaign-density phonopy mesh, the
   validation-campaign settings and the GUI form's production
   defaults; per-species Debye-Waller
-  from the displacement tensors), and mode 0 is the classic isotropic
-  path driven by the
+  from the displacement tensors), and mode 0 emits the classic
+  isotropic input file driven by the
   bundle's species-projected DOS, with the principal's spectrum on the
   classic cards and a Card 6e partial spectrum for every other
   species, so each species' elastic W'(T) carries its own lambda. Mode
   0 is DOS-driven and therefore subject to the imaginary-mode gate
-  (`--allow-unstable`). Every emitted deck also carries its provenance
-  on the tape itself: comment cards 6+ (which the ENDF writer maps
-  onto MF1/MT451 free-text DESCRIPTION records) record the bundle
-  path and fingerprint, wrapped so no card exceeds the writer's
+  (`--allow-unstable`). Every emitted input file also writes the bundle
+  path and fingerprint onto the tape: comment cards 6+ (which the
+  ENDF writer maps onto MF1/MT451 free-text DESCRIPTION records)
+  record them, wrapped so no card exceeds the writer's
   66-column mapping (card 1 is the structured ZSYMAM/ALAB/EDATE
   header, cards 2–5 are left blank for you to fill in). A tape built
-  from an emitted deck is therefore traceable to its bundle without
-  the emit manifest.
-- **spectra** — an `irma spectra` YAML with the bundle's phonon model
-  wired in, validated against the real config schema. The scatterers are
+  from an emitted input file is therefore traceable to its bundle
+  without the emit manifest.
+- **spectra**: an `irma spectra` YAML with the bundle's phonon
+  calculation wired in, validated against the real config schema. The scatterers are
   listed in the bundle's resolved species order; there is no principal
   scatterer here, since the forward model evaluates every scatterer in
   one pass.
-- **ncrystal** — an exporter YAML for `irma ncrystal`, refused for
+- **ncrystal**: an exporter YAML for `irma ncrystal`, refused for
   disordered bundles.
 
 Scattering constants come from the built-in nuclear-data table,
 generated from `periodictable`'s neutron tables (the
-Rauch–Waschkowski/Sears compilation). A phonopy model names elements,
+Rauch–Waschkowski/Sears compilation). A phonopy calculation names elements,
 not isotopes, so the default identity is the natural element (ENDF
 codes it `A = 0`, giving `za = 1000·Z`) and the constants are that
 element's natural-abundance values: identity and physics always come
@@ -277,7 +294,7 @@ are not). Emission refuses to prefill those and asks for explicit
 `b_coh_fm` **and** `sigma_inc_b` via `--species`; an `awr`-only
 override does not unlock them. Because the cross-target preflight
 resolves species before publishing anything, that refusal leaves no
-files behind to edit — supply the constants on the command line and
+files behind to edit; supply the constants on the command line and
 re-run.
 
 The GUI drives the same two flags from a per-species table rather than
@@ -285,11 +302,11 @@ from these mini-languages; see
 [the MLIP tab](gui.md#mlip-phonon-models-tab).
 
 Picking an isotope changes the scattering constants but **not** the
-masses in the phonon model. `irma mlip build` passes the structure's
+masses in the phonon calculation. `irma mlip build` passes the structure's
 masses to phonopy explicitly, and every emitted input keeps pointing at
 that same `phonopy.yaml`, so `--nuclide H=2-H` on a bundle built with
 ordinary hydrogen gives deuterium constants riding on hydrogen phonon
-masses — in the Debye-Waller factors and the prefactors alike. When
+masses, in the Debye-Waller factors and the prefactors alike. When
 that matters, rebuild the bundle from a structure carrying the isotope
 masses.
 
@@ -323,7 +340,17 @@ time of writing:
 The version windows reflect the upstream package metadata verified at
 the time of writing (July 2026); `env create` itself pins only the
 package names plus `ase>=3.23` and picks up whatever the upstreams
-currently publish. The two e3nn camps (`mace-torch` versus everything
+currently publish.
+
+One platform floor sits above all of these: **Intel (x86_64) Macs are
+effectively unsupported for the MLIP front end.** torch stopped
+shipping Intel-mac wheels at 2.2.2 (April 2024), so every potential
+that needs a newer torch fails to install there, and the torch that
+does install was built against NumPy 1.x, which breaks next to the
+NumPy 2 that current packages pull in. `env create` states this up
+front on such machines, and its NumPy fallback (below) can rescue
+`nequip`; for the rest, use Linux or an Apple-Silicon Mac. Everything
+else in IRMA works normally on Intel Macs. The two e3nn camps (`mace-torch` versus everything
 else that uses e3nn)
 were both demonstrated to break in live installs, in either direction;
 this is not a
@@ -338,9 +365,19 @@ irma mlip env remove mace
 
 `env create` builds a standard virtual environment (with `uv` when it is
 on PATH, otherwise the standard library's `venv` seeded from the running
-interpreter; **conda is never required or invoked**), installs a
-known-good requirement set, runs a backend-specific import smoke check,
-and registers the interpreter in the irma-mlip cache. On Debian-family
+interpreter; **conda is never required or invoked**), installs the
+curated requirement set (unpinned package names, resolved against the
+package index at install time), runs a backend-specific import smoke
+check plus a torch/NumPy interop probe, and registers the interpreter in
+the irma-mlip cache. With `uv` the environment is pinned to Python 3.12
+rather than inheriting the interpreter running IRMA: the potential
+packages lag new Python releases, and on the newest interpreter the
+resolver is forced onto bleeding-edge builds of torch. The probe
+catches the one failure an import cannot: a torch wheel built against
+NumPy 1.x sitting next to NumPy 2, which imports cleanly and then
+fails when a tensor first crosses to NumPy; when that signature is
+detected, `env create` reinstalls the environment's NumPy as `numpy<2`
+and re-verifies before registering anything. On Debian-family
 distributions the stdlib-`venv` fallback needs the `python3-venv`
 system package; installing `uv` sidesteps that. From then
 on, `--potential mace` transparently runs its force calls in that
@@ -383,10 +420,11 @@ it): checkpoints, compiled nequip artifacts, the Python environments
 
 The snapshot compares each potential's maximum phonon frequency
 against DFT references, with the imaginary-mode
-census on the shared meshes (Ni fcc vs a 4x4x4 Perlmutter reference;
-graphite vs the published PBE model behind the IRMA paper, whose
+census on the shared meshes (Ni fcc vs a 4×4×4-supercell VASP reference
+computed on Perlmutter, the NERSC supercomputer;
+graphite vs the published PBE calculation behind the IRMA paper, whose
 seven-functional spread is 198.2-202.7 meV; wurtzite BeO vs the paper's
-4x4x3 model, no NAC on either side). The census values below are backed
+4x4x3 calculation, no NAC on either side). The census values below are backed
 by the archived campaign record
 [campaign_census_2026-07-17.txt](assets/mlip/campaign_census_2026-07-17.txt),
 extracted from the per-bundle build manifests:
@@ -401,7 +439,7 @@ extracted from the per-bundle build manifests:
 | pet-mad | -4.6% | +1.5% | +2.6% | none anywhere |
 | mace | -3.3% | +2.9% | — | none |
 | mace-off | — | -3.5% | — | out of domain on graphite (molecular training set, no interlayer physics) |
-| dpa3 | -12.5% | -6.5% | -6.3% | graphite unstable (13 848) |
+| dpa3 | -12.5% | -6.5% | -6.3% | graphite unstable (13 848 imaginary modes on the shared mesh) |
 
 A fourth, harder case is monoclinic ZrO2 (baddeleyite, P2_1/c, the
 phonondb mp-2858 PBEsol reference with its Born charges supplied via
@@ -491,7 +529,7 @@ cores):
   and re-relaxes, each extra cycle with its own `--nmax` budget
   (`steps_taken` reports the cumulative total); a per-step observer
   keeps the lowest-residual frame seen anywhere, and `--snap-symmetry`
-  applies to that frame afterwards. On a 302-atom PMMA glass this took
+  applies to that frame afterwards. On a 302-atom PMMA structure model this took
   mattersim from a 0.09 eV/A stall to 0.005-0.01. Residuals below
   ~0.01 eV/A are usually the potential's own noise floor; pushing
   further does not reduce imaginary modes.

@@ -7,10 +7,10 @@ scatterers (beryllium and oxygen), and the material S(α,β) is the sum of a
 Be-in-BeO evaluation and an O-in-BeO evaluation. BeO therefore exercises
 IRMA's per-principal partition of the coherent one-phonon interference and
 the recombination into a material S(α,β), on top of the directional
-Debye-Waller physics established for graphite. The BeO phonon model is a
+Debye-Waller physics established for graphite. The BeO phonon calculation is a
 representative VASP/PAW PBE calculation (4×4×3 supercell) from the same
-workflow as the graphite model, a test case for the polyatomic methods
-rather than a model optimized against experiment. IRMA results are at
+workflow as the graphite calculation, a test case for the polyatomic
+methods rather than one optimized against experiment. IRMA results are at
 296 K; the released ENDF/B-VIII.1 evaluation is tabulated at 293.6 K.
 
 Throughout this page, **IRMA mode 2 (material)** is the
@@ -19,12 +19,12 @@ beryllium and oxygen principal evaluations, and **IRMA mode 1** is its
 incoherent-approximation counterpart. **OCLIMAX** is a single whole-cell
 calculation (it does not partition per principal scatterer), truncated at
 MAXO=1 or 100. **ENDF/B-VIII.1 BeO** is the released evaluation at
-293.6 K, built from a different phonon model and without the distinct
+293.6 K, built from a different phonon calculation and without the distinct
 (+Sd) effect. **Euphonic (material)** is the whole-cell coherent
-one-phonon reference on the same phonon model, in the beryllium-principal
-convention.
+one-phonon reference on the same phonon calculation, in the
+beryllium-principal convention.
 
-It is important to note that a whole-cell OCLIMAX or Euphonic S(α,β)
+A whole-cell OCLIMAX or Euphonic S(α,β)
 carries the Be-O interference term and cannot be split into a Be-only and
 an O-only contribution without a partition rule. Whole-cell references are
 therefore always compared against the *sum* of IRMA's two principal
@@ -35,9 +35,11 @@ evaluations, never against a single principal in isolation.
 ## Verifying the polyatomic partition
 
 IRMA writes BeO as two principal evaluations, one carried by beryllium and
-one by oxygen. As a reference, the same phonon model was also evaluated in
-a single whole-cell calculation, which computes the complete material
-S(α,β) directly and partitions nothing. The weighted sum of the two
+one by oxygen. As a reference, the same phonon calculation was also run through IRMA
+in a single whole-cell configuration, which computes the complete
+material S(α,β) directly and partitions nothing; the check therefore
+verifies the partition's internal consistency, not agreement with an
+independent code. The weighted sum of the two
 principal evaluations reproduces this whole-cell result to about 10⁻¹⁵ at
 every grid point, and the interference reconstructed from the two written
 evaluations matches the directly computed interference to 3.4×10⁻¹⁵.
@@ -49,8 +51,9 @@ weights place 64.3% with beryllium and 35.7% with oxygen, and the summed
 material S(α,β) does not depend on this choice. The interference is
 locally significant but integrally small: its magnitude amounts to about
 10% of the coherent one-phonon intensity, yet its positive and negative
-regions nearly cancel, and the signed sum over Q ≤ 40 Å⁻¹ and
-E ≤ 150 meV is only −0.044%.
+regions nearly cancel: the signed sum over Q ≤ 40 Å⁻¹ and
+E ≤ 150 meV amounts to only −0.044% of the coherent one-phonon
+integral over the same window.
 
 ---
 
@@ -90,16 +93,17 @@ at the nearest energy of its own tabulated grid.*
 scattering-cross-section-weighted material result formed from the
 beryllium and oxygen principal evaluations is compared with the OCLIMAX
 whole-cell result and the ENDF/B-VIII.1 BeO evaluation at 293.6 K. OCLIMAX
-starts from the same phonon model as IRMA; the evaluation was built from a
-different one.*
+starts from the same phonon calculation as IRMA; the evaluation was built
+from a different one.*
 
-With the multiphonon order matched, the shared-window integral ratio of
+Both codes were run to the same multiphonon order, and the shared-window
+integral ratio of
 the symmetric tables against whole-cell OCLIMAX is 0.99. The released
-evaluation, built from a different phonon model, still integrates to
+evaluation, built from a different phonon calculation, still integrates to
 within 0.1% of IRMA mode 2 over the full window; that is expected of any
 properly normalized S(α,β), because over the full window the integral
 measures only the overall normalization. No integral ratio is therefore
-quoted against evaluations; the model differences are read from the
+quoted against evaluations; the differences are read from the
 pointwise structure and the processed cross sections instead.
 
 ---
@@ -133,31 +137,34 @@ The polyatomic elastic bookkeeping has two output conventions, selected on
 Card 6b: the single-channel elastic format (SEF; LTHR=1 for the
 coherent-carrier cases here) and the mixed elastic format (MEF, LTHR=3); see the
 [elastic-format rules](../theory.md#elastic-format-sef-vs-mef-card-6b-field-1).
-Nickel is the measurement-discriminating case: with σ_coh = 13.3 b and
-σ_inc = 5.2 b it is a mixed elastic scatterer, the situation MEF was
-introduced for.
+For BeO itself the two formats sum to the same material cross section,
+so no BeO measurement can tell them apart; the discriminating test
+borrows nickel. With σ_coh = 13.3 b and
+σ_inc = 5.2 b nickel is a mixed elastic scatterer, the situation MEF was
+introduced for, and the formats separate below its first Bragg edge.
 
 ![SEF and MEF elastic formats: Ni total vs measurement, BeO per-principal split](../assets/validation/beo/fig_cef_mef.png)
 
 *The SEF and MEF elastic formats. (a) Nickel total cross section per atom
 at 299.15 K: EXFOR datasets 11762002 and 11355002, the VENUS nickel
-measurement (to be published), and IRMA mode-2 evaluations from the same
-ferromagnetic DFT phonon model in the SEF and MEF formats, processed
+measurement, and IRMA mode-2 evaluations from one
+ferromagnetic DFT phonon calculation shared by both formats, processed
 through NJOY THERMR with natural-nickel absorption added. (b) For BeO, the
 two formats split the same Bragg-edge sum differently between the principal
 evaluations; the summed material cross section is unchanged.*
 
 Above the first Bragg edge both formats follow the measured Bragg structure
 equally well, with median calculated-to-measured ratios against the VENUS
-points of 0.997 (SEF) and 1.004 (MEF) between 5.2 meV and 4.5 eV; the two
+points of 0.987 (SEF) and 0.996 (MEF) between 5.2 meV and 4.5 eV; the two
 distribute the elastic strength differently around the low-energy Bragg
 structure (SEF scales the coherent edges, MEF adds a smooth incoherent
 term) and converge above 0.1 eV. Below the edge they separate: SEF carries
-the entire elastic strength in the coherent term, whose cross section
-vanishes below the first-edge cutoff, so its total falls 24% under the
-measured points (median ratio 0.757 between 1 and 4.5 meV), while MEF
+the entire elastic strength in the coherent term, and coherent elastic
+scattering does not exist below the first-edge cutoff, so its total falls
+27% under the
+measured points (median ratio 0.731 between 2 and 4.5 meV), while MEF
 retains the incoherent-elastic term and stays on the data (median ratio
-1.001).
+0.985).
 
 For BeO, the formats differ in their per-species assignment. SEF places the
 complete Bragg-edge sum on the oxygen principal, the designated-coherent

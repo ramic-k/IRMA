@@ -12,8 +12,13 @@ irma mlip emit <bundle> --to endf,spectra,ncrystal --mat 'SYM=MAT' ...
 The example structure is `MgO.cif`, a conventional rocksalt MgO cell
 (8 atoms, all sites listed explicitly, so any CIF reader accepts it).
 Rocksalt symmetry reduces it to two displacements, which makes this
-one of the fastest possible builds. Full documentation: the manual's
-*MLIP phonon models* page.
+one of the fastest possible builds. The directory also ships the
+structures behind the manual's *MLIP examples* page: `zro2_cell.vasp`
+with its Born charges `zro2_BORN` (monoclinic ZrO2, the phonondb
+mp-2858 cell), `pe_cell.vasp` (crystalline polyethylene, the
+experimental orthorhombic cell), and `pmma_glass.vasp` (the 302-atom
+amorphous PMMA structure model). Full documentation: the manual's
+*MLIP phonon calculations* page.
 
 ## 1. One-time setup: build the potential's environment
 
@@ -33,7 +38,7 @@ defaults to `mattersim` and eight other backends are available (see
 the manual's potential table, including which checkpoints carry an
 academic-only license).
 
-## 2. Build the phonon-model bundle — `MgO.cif`
+## 2. Build the phonon bundle: `MgO.cif`
 
 ```bash
 irma mlip build examples/mlip/MgO.cif -o mgo_bundle --potential nequip
@@ -64,18 +69,19 @@ irma mlip emit mgo_bundle --to endf,spectra,ncrystal \
     --mat 'Mg=44' --mat 'O=48'
 ```
 
-- **endf** — one ready-to-run deck per principal scatterer (`iel=10`,
-  `inelastic_mode=2`, automatic grids), validated by the same parser
-  the GUI uses. Run each with `python -m irma <deck> <out.endf>`.
-- **spectra** — an `irma spectra` YAML with the bundle's phonon model
-  wired in (see `../spectra/` for what to do with it).
-- **ncrystal** — an exporter YAML for `irma ncrystal`.
+- **endf**: one ready-to-run input file per principal scatterer
+  (`iel=10`, `inelastic_mode=2`, automatic grids), validated by the
+  same parser the GUI uses. Run each with
+  `python -m irma <input file> <out.endf>`.
+- **spectra**: an `irma spectra` YAML with the bundle's phonon
+  calculation wired in (see `../spectra/` for what to do with it).
+- **ncrystal**: an exporter YAML for `irma ncrystal`.
 
 Scattering constants come from the built-in nuclear-data table; the
 `--mat` numbers are the ENDF MAT identifiers you assign to the
-evaluations. The decks default to the mixed elastic format (MEF) and
+evaluations. The emitted input files default to the mixed elastic format (MEF) and
 the full mode-2 physics; `--elastic-format sef` and
-`--inelastic-mode 0` (the fast classic path built from the bundle's
+`--inelastic-mode 0` (the fast classic option built from the bundle's
 species-projected DOS, with a Card 6e partial spectrum for every
 non-principal species) select the other conventions. Nothing runs the downstream calculations for you: you
 inspect the emitted inputs and drive `irma`, `irma spectra`, or
