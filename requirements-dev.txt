@@ -1,4 +1,4 @@
 # Development / test dependencies (not required to run IRMA itself).
 # Install with:  pip install -r requirements-dev.txt
 pytest>=7
-ruff>=0.16.3,<0.17
+ruff>=0.16.5,<0.17
