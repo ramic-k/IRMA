@@ -28,6 +28,7 @@ from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
     form_section, init_form_styles,
     parse_float, parse_int)
+from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.grid_form import SabGridForm, GRID_EXPORT_KEYS
 from irma.gui.element_table import ElementTable, NUCLEAR
 from irma.ncrystal.config import NCrystalExportConfig
@@ -48,7 +49,7 @@ _INELASTIC_BY_INT = {1: "1 (incoherent approx)", 2: "2 (coherent 1ph + multi)"}
 FORM_EXPORT_KEYS = frozenset(
     {"material_id", "inelastic_mode", "num_directions",
      "multiphonon_num_directions", "multiphonon_max_order", "jobs",
-     "incoherent_elastic_mode"} | set(GRID_EXPORT_KEYS))
+     "min_phonon_energy_meV", "incoherent_elastic_mode"} | set(GRID_EXPORT_KEYS))
 
 # the nuclear columns the exporter reads off a scatterer row
 _SCATTERER_KEYS = ("sigma_bound_b", "awr", "b_coh_fm", "sigma_inc_b")
@@ -164,6 +165,7 @@ HELP = {
         "Debye-Waller order required to reach the free-gas limit grows with Q. "
         "Enter an integer to set the order exactly (lower = faster, but a "
         "too-low value truncates the high-Q cross section)."),
+    "min_phonon_energy": MIN_PHONON_ENERGY_HELP,
     "incoherent_elastic_mode": (
         "Debye-Waller treatment of the pack's INCOHERENT elastic "
         "component.\n\n"
@@ -333,6 +335,10 @@ class NCrystalPanel(ttk.Frame):
             g, "multiphonon order:", default="auto", width=8,
             help_text=HELP["multiphonon_max_order"])
         self.multiphonon_max_order.pack(fill=tk.X, pady=2)
+        self.min_phonon_energy = LabeledEntry(
+            g, "min phonon energy [meV]:", default="", width=8,
+            help_text=HELP["min_phonon_energy"])
+        self.min_phonon_energy.pack(fill=tk.X, pady=2)
         self.incoherent_elastic_mode = LabeledCombobox(
             g, "incoh. elastic DW:", ["isotropic", "directional"],
             default="isotropic", help_text=HELP["incoherent_elastic_mode"])
@@ -424,6 +430,9 @@ class NCrystalPanel(ttk.Frame):
                 "multiphonon dirs", self.multiphonon_num_directions.get()),
             "multiphonon_max_order": ("auto" if mpo == "auto"
                                       else parse_int("multiphonon order", mpo)),
+            "min_phonon_energy_meV": (
+                parse_float("min phonon energy [meV]", self.min_phonon_energy.get())
+                if self.min_phonon_energy.get().strip() else 0.0),
         })
         if self.jobs.get().strip():
             export["jobs"] = parse_int("jobs", self.jobs.get())
@@ -510,6 +519,8 @@ class NCrystalPanel(ttk.Frame):
         self.num_directions.set(cfg.num_directions)
         self.multiphonon_num_directions.set(cfg.multiphonon_num_directions)
         self.multiphonon_max_order.set(cfg.multiphonon_max_order)
+        cutoff = float(getattr(cfg, "min_phonon_energy_meV", 0.0))
+        self.min_phonon_energy.set("" if cutoff == 0.0 else f"{cutoff:g}")
         self.jobs.set("" if cfg.jobs is None else cfg.jobs)
         self.incoherent_elastic_mode.set(cfg.incoherent_elastic_mode)
         # the grid form owns its own keys and picks its mode from them

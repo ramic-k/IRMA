@@ -266,6 +266,38 @@ mesh_nx  mesh_ny  mesh_nz  ncpu  use_born  /
 'path/to/BORN'  /        (only if use_born = 1)
 ```
 
+#### Optional minimum phonon energy (`inelastic_mode=1/2` only)
+
+An optional one-value card may appear after Card 6f (and its optional BORN
+path) and immediately before Card 6g:
+
+```
+minimum_phonon_energy_meV /
+```
+
+The card has one value and Card 6g has two or three, so a deck without it
+is read as before. Omitting it, or giving `0`, keeps IRMA's automatic mode
+floors exactly (1 µeV, and 0.1 meV at Γ), which already exclude imaginary
+modes and numerical noise near zero energy. A positive value removes every
+phonon mode with energy at or below it from every term: the phonon DOS,
+the Debye-Waller tensors, the coherent and incoherent one-phonon
+scattering, and the multiphonon expansion. Nothing replaces the removed
+modes and the remaining spectrum is not renormalised: the evaluation
+describes a truncated vibrational model, and the run log and the
+metadata (`min_phonon_energy_meV`, `phonon_cutoff`) say what was removed.
+The same setting exists on the spectra and NCrystal paths
+(`min_phonon_energy_meV` in their configurations) and in `irma mlip emit
+--min-phonon-energy`, so the three paths agree.
+
+It is not a repair for an unstable model: a positive value only ever
+removes real, positive modes. And it is easy to underestimate. Mean-square
+displacements weight modes as 1/E², so a cutoff that removes a negligible
+share of the modes can remove a large share of the Debye-Waller exponent:
+on graphite at 296 K a 5 meV cutoff removes 0.13% of the modes but 29% of
+the displacement, and raises the Debye-Waller intensity factor along the c
+axis by 74% at Q = 10 Å⁻¹. IRMA prints a warning when the displacement
+trace moves by more than 1%.
+
 | Field | Notes |
 |-------|-------|
 | phonopy.yaml path | Quoted path to the phonopy calculation. Force constants are read from the YAML if embedded, otherwise discovered **next to it** in the order `force_constants.hdf5`, `FORCE_CONSTANTS`, `FORCE_SETS`. If none is found this is a hard error; files in the process working directory are never consulted. |

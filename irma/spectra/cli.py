@@ -213,6 +213,10 @@ def _add_common(p):
                    help="multiphonon expansion order; 'auto' sizes it to "
                         "convergence in every mode (mode 0 derives it from "
                         "the DOS Debye-Waller lambda) (default: auto)")
+    p.add_argument("--min-phonon-energy", type=float, default=0.0, metavar="MEV",
+                   help="modes 1/2 -- remove every phonon mode with energy at or "
+                        "below this value (meV) from all terms; 0 = the automatic "
+                        "floors only (default: 0)")
     p.add_argument("--directions", type=int, default=10000,
                    help="modes 1/2 -- coherent powder-average directions "
                         "(default: 10000)")
@@ -371,6 +375,7 @@ def config_from_args(ns):
         material["lattice"] = list(ns.lattice)
     physics = {
         "inelastic_mode": ns.inelastic_mode, "max_phonon_order": ns.max_phonon_order,
+        "min_phonon_energy_meV": float(getattr(ns, "min_phonon_energy", 0.0) or 0.0),
         "n_directions": ns.directions, "multiphonon_directions": ns.mp_directions,
         "jobs": ns.jobs, "elastic": ns.elastic == "on", "elastic_kind": ns.elastic_kind,
         "elastic_from_tape": ns.elastic_from_tape,

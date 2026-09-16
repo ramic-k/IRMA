@@ -778,3 +778,31 @@ def test_emitted_mesh_disordered_keeps_bundle_mesh(dis_bundle):
 def test_emitted_ncpu_is_machine_core_count():
     from irma.mlip.emit import _emit_ncpu
     assert _emit_ncpu() == (os.cpu_count() or 1)
+
+
+def test_min_phonon_energy_reaches_every_emitted_file(al_bundle, tmp_path):
+    """One option, three files: the deck carries the optional one-value card
+    before Card 6g, and both YAML configurations carry the same key."""
+    import yaml
+    from pathlib import Path
+    (path,) = emit_endf_decks(al_bundle, temperature_k=296.0, mats={"Al": 45},
+                              out_dir=str(tmp_path), min_phonon_energy_mev=0.5,
+                              progress=QUIET)
+    st = _parse(path)
+    assert st["noncubic"]["min_phonon_energy_mev"] == 0.5
+    lines = Path(path).read_text().splitlines()
+    i = next(k for k, line in enumerate(lines) if line.strip() == "0.5 /")
+    assert lines[i + 1].split()[:2] == ["10000", "1000"]        # Card 6g follows
+    # the default writes no card at all
+    (plain,) = emit_endf_decks(al_bundle, temperature_k=296.0, mats={"Al": 45},
+                               out_dir=str(tmp_path / "plain"), progress=QUIET)
+    assert _parse(plain)["noncubic"]["min_phonon_energy_mev"] == 0.0
+    assert not any(line.strip() == "0.5 /" for line in Path(plain).read_text().splitlines())
+    spectra = emit_spectra_yaml(al_bundle, temperature_k=296.0,
+                                out_path=str(tmp_path / "spectra.yaml"),
+                                min_phonon_energy_mev=0.5, progress=QUIET)
+    assert yaml.safe_load(Path(spectra).read_text())["physics"]["min_phonon_energy_meV"] == 0.5
+    ncrystal = emit_ncrystal_yaml(al_bundle, temperature_k=296.0,
+                                  out_path=str(tmp_path / "ncrystal.yaml"),
+                                  min_phonon_energy_mev=0.5, progress=QUIET)
+    assert yaml.safe_load(Path(ncrystal).read_text())["export"]["min_phonon_energy_meV"] == 0.5

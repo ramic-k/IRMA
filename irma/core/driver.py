@@ -86,11 +86,12 @@ def _noncubic_mt4_step(crystal_info, ssm, itemp, alpha, beta, nalpha,
         print("WARNING: imaginary modes near Gamma (min "
               f"{np.min(_freqs)*1000:.2f} meV) beyond the acoustic-sum-rule noise "
               "band; they are excluded from the grid, but review the phonon model.")
-    _dropped = ~mode_floor_mask(_freqs.reshape(-1) * 1.0e3, nc_mesh.qpoints,
-                                nc_mesh.n_branches)
+    _dropped = ~mode_floor_mask(
+        _freqs.reshape(-1) * 1.0e3, nc_mesh.qpoints,
+        nc_mesh.n_branches, nc_mesh.min_phonon_energy_mev)
     if np.any(_dropped):
         _below = _freqs.reshape(-1)[_dropped] * 1000.0
-        print(f"NOTE: {int(_dropped.sum())} mode(s) below the DOS floor "
+        print(f"NOTE: {int(_dropped.sum())} mode(s) below the active phonon-energy floor "
               f"excluded (range [{_below.min():.3f}, {_below.max():.3f}] meV).")
     freq_max_ev = float(np.max(_freqs))
     if freq_max_ev <= 0.0:

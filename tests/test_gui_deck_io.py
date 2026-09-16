@@ -381,6 +381,35 @@ def test_card6g_auto_order_field_roundtrip(app, tmp_path):
     assert "100 100 1 /" in app._generate_input_text()
 
 
+def test_min_phonon_energy_gui_deck_roundtrip(app, tmp_path):
+    _reset(app)
+    _setup_iel10(app)
+    app.inelastic_mode_var.set(2)
+    app.nc_phonopy_yaml.set("/nonexistent/phonopy.yaml")
+    app.nc_min_phonon_energy.set("0.5")
+    text = app._generate_input_text()
+    assert "\n0.5 /\n" in text
+    assert text.index("\n0.5 /\n") < text.index(" 1 /\n", text.index("\n0.5 /\n"))
+
+    deck = tmp_path / "cutoff.input"
+    deck.write_text(text)
+    _reset(app)
+    app._import_leapr_from_path(str(deck))
+    assert app.nc_min_phonon_energy.get() == "0.5"
+    assert app._generate_input_text() == text
+
+
+@pytest.mark.parametrize("value", ["-0.1", "nan", "inf"])
+def test_min_phonon_energy_gui_rejects_invalid_values(app, value):
+    _reset(app)
+    _setup_iel10(app)
+    app.inelastic_mode_var.set(2)
+    app.nc_phonopy_yaml.set("/nonexistent/phonopy.yaml")
+    app.nc_min_phonon_energy.set(value)
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        app._generate_input_text()
+
+
 def test_iel10_empty_atom_table_rejected_up_front(app):
     """QA2-042: iel=10 with no atom types emits an invalid Card 6b
     ('elastic_mode 0 0 ...') that the engine later rejects; the GUI must

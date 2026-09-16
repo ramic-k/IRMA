@@ -100,6 +100,9 @@ def build_model_context(
     import phonopy
 
     finish_stage = _stage_printer(time.perf_counter())
+    from irma.core.phonopy_io import validate_min_phonon_energy_mev
+    min_phonon_energy_mev = validate_min_phonon_energy_mev(
+        getattr(args, "min_phonon_energy_mev", 0.0))
 
     # Non-analytical-term correction (Born effective charges): applied to
     # BOTH mesh runs so LO-TO splitting reaches the coherent one-phonon,
@@ -307,7 +310,8 @@ def build_model_context(
     incoherent_one_phonon_valid_modes = mode_floor_mask(
         incoherent_one_phonon_mode_energies_mev,
         incoherent_one_phonon_mesh_qpoints,
-        incoherent_one_phonon_n_branches)
+        incoherent_one_phonon_n_branches,
+        min_phonon_energy_mev)
     incoherent_one_phonon_mode_energies_mev = incoherent_one_phonon_mode_energies_mev[
         incoherent_one_phonon_valid_modes
     ]
@@ -331,7 +335,8 @@ def build_model_context(
     n_branches = mesh_frequencies.shape[1]
     mesh_mode_energies_mev = (mesh_frequencies * THzToEv * 1000.0).reshape(-1)
     valid_modes = mode_floor_mask(
-        mesh_mode_energies_mev, _full_mesh.qpoints, n_branches)
+        mesh_mode_energies_mev, _full_mesh.qpoints, n_branches,
+        min_phonon_energy_mev)
     mesh_mode_energies_mev = mesh_mode_energies_mev[valid_modes]
     max_mode_energy_mev = float(np.max(mesh_mode_energies_mev)) if len(mesh_mode_energies_mev) else 0.0
     finish_stage("mesh mode arrays prepared")
@@ -384,6 +389,7 @@ def build_model_context(
         "primitive": primitive,
         "rec_lat_no_2pi": rec_lat_no_2pi,
         "frequency_factor_to_thz": frequency_factor_to_thz,
+        "min_phonon_energy_mev": min_phonon_energy_mev,
         "incoherent_one_phonon_mesh_qpoints": incoherent_one_phonon_mesh_qpoints,
         "incoherent_one_phonon_mesh_frequencies": incoherent_one_phonon_mesh_frequencies,
         "incoherent_one_phonon_mesh_eigenvectors": incoherent_one_phonon_mesh_eigenvectors,

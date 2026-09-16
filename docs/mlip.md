@@ -238,7 +238,8 @@ ncrystal target is refused for disordered bundles in this version.
 irma mlip emit <bundle> --to endf,spectra,ncrystal \
     --mat 'C=31' [--nuclide C=13-C] [--species 'C:b_coh_fm=6.646'] \
     [--temperature 296] [--out-dir DIR] \
-    [--inelastic-mode 0|1|2] [--elastic-format mef|sef]
+    [--inelastic-mode 0|1|2] [--elastic-format mef|sef] \
+    [--min-phonon-energy MEV]
 ```
 
 - **endf**: one ready-to-run input file per principal scatterer (`iel=10`,
@@ -246,7 +247,9 @@ irma mlip emit <bundle> --to endf,spectra,ncrystal \
   uses before anything is written. The elastic convention is the mixed
   elastic format (MEF: both elastic components on every species' tape)
   by default; `--elastic-format sef` selects the single-channel
-  convention. `--inelastic-mode` picks the physics level (default 2):
+  convention. `--min-phonon-energy` writes the optional minimum phonon
+  energy into the input files and both YAML configurations, so the three
+  paths truncate the same modes. `--inelastic-mode` picks the physics level (default 2):
   modes 1/2 emit directional input files (Card 6g
   `10000 1000 1` and a campaign-density phonopy mesh, the
   validation-campaign settings and the GUI form's production

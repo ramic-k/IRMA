@@ -201,6 +201,7 @@ Each **scatterer** entry: `symbol`, `sigma_bound_b`, `awr`, optional `b_coh_fm`,
 | `inelastic_mode` | 2 | 0 DOS / 1 incoherent-approx / 2 coherent 1-phonon + incoherent multiphonon (2, the validated mode, is the default) |
 | `dos_source` | `file` | mode-0 DOS origin: per-scatterer `dos=` files or `phonopy` |
 | `max_phonon_order` | `auto` | int ≥ 1 or `auto` |
+| `min_phonon_energy_meV` | 0 | modes 1/2: remove every phonon mode with energy at or below this value (meV) from all terms; 0 keeps the automatic floors. Nothing replaces the removed modes; see the input reference's optional minimum phonon energy card. CLI: `--min-phonon-energy` |
 | `n_directions` / `multiphonon_directions` | 10000 / 1000 | powder-average directions (modes 1/2) |
 | `jobs` | null (all cores) | worker processes |
 | `elastic` / `elastic_kind` | true / `both` | elastic line on/off and channel (`both`/`coherent`/`incoherent`) |

@@ -112,6 +112,30 @@ def test_mode2_exact_n1_differs_from_mode1(tapes):
     assert s2 > 1.5 * s1
 
 
+def test_user_cutoff_reaches_complete_mode2_calculation(tapes, tmp_path, capsys):
+    """The optional card must affect the integrated mode-2 calculation,
+    which combines DOS/Debye-Waller setup, exact incoherent one-phonon,
+    coherent one-phonon, and multiphonon scattering."""
+    deck = _DECK.format(mode=2, yaml=_YAML).replace(
+        "4 4 4 1 0/\n40 20/", "4 4 4 1 0/\n5.0/\n40 20/")
+    inp = tmp_path / "cutoff.input"
+    out = tmp_path / "cutoff.endf"
+    inp.write_text(deck)
+    run_leapr(str(inp), str(out))
+
+    log = capsys.readouterr().out
+    assert "User phonon-energy cutoff: 5 meV removes" in log
+    assert "beyond the automatic floors" in log
+    # the engine reports what the cutoff did to the displacements, once per
+    # temperature, and the metadata carries the same numbers
+    assert "Phonon-energy cutoff 5 meV at 296 K" in log
+    assert "Mean-square displacement trace per atom" in log
+    cutoff_sum, cutoff_min, _ = _mt4_stats(out)
+    default_sum, _, _ = _mt4_stats(tapes[2])
+    assert cutoff_min >= 0.0
+    assert cutoff_sum != pytest.approx(default_sum, rel=1.0e-6)
+
+
 def test_noncubic_run_is_deterministic(tapes):
     rerun = _run(1, "m1_again")
     a, b = open(tapes[1]).read(), open(rerun).read()

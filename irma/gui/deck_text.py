@@ -373,8 +373,20 @@ def parse_deck_to_staging(reader, path):
             if use_born == 1:
                 nc['born_path'] = reader.read_string()
 
-            # Card 6g: required noncubic inelastic controls
+            # Optional one-value minimum-phonon-energy card before Card 6g.
+            # A legacy deck starts directly with the 2/3-value Card 6g.
             fvals_nc_ctrl = reader.read_card_floats()
+            nc['min_phonon_energy_mev'] = 0.0
+            if len(fvals_nc_ctrl) == 1:
+                cutoff = float(fvals_nc_ctrl[0])
+                if not (isfinite(cutoff) and cutoff >= 0.0):
+                    raise ValueError(
+                        "minimum phonon energy must be finite and nonnegative "
+                        f"(meV), got {cutoff}.")
+                nc['min_phonon_energy_mev'] = cutoff
+                fvals_nc_ctrl = reader.read_card_floats()
+
+            # Card 6g: required noncubic inelastic controls
             if len(fvals_nc_ctrl) == 4:
                 raise ValueError(
                     "Card 6g takes at most 3 fields: ndir mpdir "

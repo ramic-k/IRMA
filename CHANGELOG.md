@@ -5,6 +5,23 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.3] — 2026-09-16
+
+- Minimum phonon energy for the phonopy-backed modes 1 and 2. An optional
+  one-value card before Card 6g (also `physics.min_phonon_energy_meV` in
+  spectra configurations and `--min-phonon-energy` on the spectra CLI,
+  `export.min_phonon_energy_meV` for the NCrystal exporter, and
+  `irma mlip emit --min-phonon-energy`, with a field on each GUI form)
+  removes every phonon mode with energy at or below the value from every
+  term: the DOS, the Debye-Waller tensors, the coherent and incoherent
+  one-phonon scattering, and the multiphonon expansion. Nothing replaces
+  the removed modes. Blank or 0 keeps the automatic floors, which already
+  exclude imaginary modes, so existing inputs are unchanged. The run log
+  and the metadata (`min_phonon_energy_meV`, `phonon_cutoff`) report the
+  removed weight and the change in the mean-square displacement, with a
+  warning above 1%; NCrystal packs record the value in their provenance.
+
+
 ## [1.0.2] — 2026-09-16
 
 Lin-lin (`iint=1`) grids, the multiphonon work grid, and the GUI's

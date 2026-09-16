@@ -118,13 +118,16 @@ NONCUBIC_HEAD = (
     "6 12 11.9 0.66 0.0 1/\n0 0 0.5/\n"  # second atom
     "'/tmp/phonopy.yaml'/\n"
     "{mesh}/\n"
+    "{cutoff}\n"
     "{ctrl}/\n"
     "3 4 1/\n0.05 1.0 8.0/\n0.0 0.6 2.0 6.0/\n300/\n/\n"
 )
 
 
-def _nc_deck(mesh="20 20 20 1 0", ctrl="10000 1000 1", imode=2):
-    return NONCUBIC_HEAD.format(mesh=mesh, ctrl=ctrl, imode=imode)
+def _nc_deck(mesh="20 20 20 1 0", ctrl="10000 1000 1", imode=2,
+             cutoff=""):
+    return NONCUBIC_HEAD.format(
+        mesh=mesh, ctrl=ctrl, imode=imode, cutoff=cutoff)
 
 
 def test_noncubic_valid_controls_parse(tmp_path):
@@ -133,6 +136,20 @@ def test_noncubic_valid_controls_parse(tmp_path):
     assert nc['ndir'] == 10000 and nc['mpdir'] == 1000
     assert nc['auto_order'] == 1
     assert nc['use_born'] == 0
+    assert nc['min_phonon_energy_mev'] == 0.0
+
+
+def test_min_phonon_energy_card_parse_and_legacy_compatibility(tmp_path):
+    legacy = _stage(_nc_deck(), tmp_path)['noncubic']
+    selected = _stage(_nc_deck(cutoff="0.5/"), tmp_path)['noncubic']
+    assert legacy['min_phonon_energy_mev'] == 0.0
+    assert selected['min_phonon_energy_mev'] == 0.5
+
+
+@pytest.mark.parametrize("cutoff", ["-0.1/", "nan/", "inf/"])
+def test_min_phonon_energy_card_rejects_invalid_values(tmp_path, cutoff):
+    with pytest.raises(ValueError, match="finite and nonnegative|expected a number"):
+        _stage(_nc_deck(cutoff=cutoff), tmp_path)
 
 
 def test_noncubic_use_born_out_of_range_rejected(tmp_path):

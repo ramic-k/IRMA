@@ -76,6 +76,7 @@ export:
   num_directions: 10000
   multiphonon_num_directions: 1000
   multiphonon_max_order: auto
+  min_phonon_energy_meV: 0
   gain_side: scaled_sym
   elastic: true
 ```
@@ -121,6 +122,7 @@ Every field, with its default read from `irma/ncrystal/config.py`:
 | `num_directions` | `10000` | Powder-average directions for the coherent one-phonon term. |
 | `multiphonon_num_directions` | `1000` | Powder-average directions for the multiphonon Debye-Waller term. |
 | `multiphonon_max_order` | `auto` | Multiphonon order: an integer, or `auto` (the engine starts at 100 and sizes the order up to converge the high-Q Poisson sum, bounded by an internal safety cap of 2000). |
+| `min_phonon_energy_meV` | `0` | Remove every phonon mode with energy at or below this value (meV) from all terms of the pack; 0 keeps the automatic floors. Nothing replaces the removed modes, and the pack's provenance records the value; see the input reference's optional minimum phonon energy card. |
 | `jobs` | `null` | Worker processes; `null`/omitted uses all CPU cores. |
 | `gain_side` | `scaled_sym` | `scaled_sym` (default) stores the downscatter half-table; NCrystal reconstructs the upscatter side by detailed balance. `asym` is reserved for a full asymmetric table. |
 | `elastic` | `true` | Whether to attach the elastic line. When on, the data file carries the full physical elastic (coherent Bragg edges + incoherent Debye-Waller); isolate a component at scatter time with NCrystal's `comp=coh_elas` / `comp=incoh_elas`. |

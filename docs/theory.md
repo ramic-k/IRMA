@@ -277,6 +277,19 @@ orders are weighted by a bounded Poisson factor in `2W = Q²a`, where `a` is
 the directional mean-square displacement, rather than by the overflow-prone
 `(Q²)^n/n!` split.
 
+Which modes exist at all is decided once, by one mask, for every term.
+Imaginary modes (negative frequencies) and numerical noise near zero energy
+fall under two fixed floors, 1 µeV in general and 0.1 meV at Γ, so a mesh
+with acoustic-sum-rule noise at Γ still evaluates. An optional user minimum
+phonon energy raises that floor for every term at once, the coherent
+one-phonon term included; the removed modes are not replaced by a Debye or
+any other continuation and the remaining spectrum is not renormalised, so a
+positive value makes the evaluation a deliberately truncated vibrational
+model. Because the mean-square displacement weights modes as 1/E², the
+Debye-Waller factors respond to such a cutoff far more strongly than the
+mode count suggests (on graphite at 296 K a 5 meV cutoff removes 0.13% of
+the modes and 29% of the displacement), which is why the run reports both.
+
 Self-convolution needs a uniform signed-energy work grid. A uniform output
 grid is used directly. A non-uniform (for example log-tailed) output grid
 would blow the work grid up to billions of bins on its finest spacing, so the

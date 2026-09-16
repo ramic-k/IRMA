@@ -696,3 +696,23 @@ def test_cancelled_dialog_keeps_the_empty_starting_row(panel, monkeypatch):
     row = panel.element_table.get_rows()[0]
     assert all(row[k] == "" for k in NUCLEAR)
     assert _snapshot(panel) == before
+
+
+def test_min_phonon_energy_round_trips_through_the_export_form(make_panel):
+    from irma.ncrystal.config import NCrystalExportConfig
+    d = {"material": {"phonopy_yaml": "g.yaml", "mesh": [4, 4, 4],
+                      "temperature_K": 296.0,
+                      "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551, "awr": 11.898,
+                                      "b_coh_fm": 6.646, "sigma_inc_b": 0.001}]},
+         "export": {"material_id": "graphite", "inelastic_mode": 2,
+                    "min_phonon_energy_meV": 0.5}}
+    panel = make_panel()
+    panel.load_config(NCrystalExportConfig.from_dict(d))
+    assert panel.min_phonon_energy.get() == "0.5"
+    assert panel.build_config().min_phonon_energy_meV == 0.5
+    blank = make_panel()
+    assert blank.min_phonon_energy.get() == ""       # a fresh form has no cutoff
+    d["export"].pop("min_phonon_energy_meV")
+    panel.load_config(NCrystalExportConfig.from_dict(d))
+    assert panel.min_phonon_energy.get() == ""
+    assert panel.build_config().min_phonon_energy_meV == 0.0

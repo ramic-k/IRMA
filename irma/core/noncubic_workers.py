@@ -937,6 +937,7 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
     q_mags_all = state["q_mags_physical"]
     dynamical_matrix = state["dynamical_matrix"]
     frequency_factor_to_thz = state["frequency_factor_to_thz"]
+    min_phonon_energy_mev = float(state.get("min_phonon_energy_mev", 0.0))
     thermal_mats = state["thermal_mats"]
     positions_t = state["positions_t"]
     coherent_atom_prefactors = state["coherent_atom_prefactors"]
@@ -993,7 +994,12 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
     # point roundoff (different summation order only); the coherent path is
     # validated against Euphonic by physics metrics, not byte identity.
     n_atoms_coh = eigvecs.shape[1] // 3
-    valid_modes = frequencies > 0.0                                  # (M, B)
+    # One mode population for every term: with a user cutoff the coherent
+    # term applies the mesh consumers' rule (floors plus cutoff, Gamma-aware
+    # on the folded q); without one it keeps every positive mode, as before.
+    from irma.core.phonopy_io import coherent_mode_mask
+    valid_modes = coherent_mode_mask(frequencies * THzToEv * 1000.0, q_folded,
+                                     min_phonon_energy_mev)          # (M, B)
     # 1/sqrt(freq) with invalid modes -> 0 (zeros their amplitude exactly)
     inv_sqrt_freq = np.zeros_like(frequencies)
     np.divide(1.0, np.sqrt(frequencies, where=valid_modes,

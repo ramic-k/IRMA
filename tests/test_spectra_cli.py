@@ -500,3 +500,11 @@ def test_public_api_default_mode_agrees_with_cli_and_config():
         ["vision", "--phonopy-yaml", "g.yaml",
          "--scatterer", "C,5.551,11.898,6.646,0.001", "-o", "v.csv"])
     assert ns.inelastic_mode == PhysicsConfig().inelastic_mode == 2
+
+
+def test_min_phonon_energy_flag_is_parsed_and_defaults_to_zero():
+    from irma.spectra import cli
+    parser = cli.build_parser()
+    ns = parser.parse_args(["vision", "-o", "out", "--min-phonon-energy", "0.5"])
+    assert ns.min_phonon_energy == 0.5
+    assert parser.parse_args(["vision", "-o", "out"]).min_phonon_energy == 0.0
