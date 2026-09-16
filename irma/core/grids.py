@@ -62,18 +62,95 @@ def grid_reference_temperature_K(lat, first_temperature_K):
 # cosh(0.5/4)-1 ~ 0.78%). A pure logarithmic upper tail lets the step grow
 # without bound (d_beta ~ 30 at beta = 196 for the default n_upper), so a
 # lin-lin (iint=1) law overshoots the free-atom cross-section limit by >100% at
-# high incident energy. The cap is only needed where the law is still
-# appreciable: along the recoil ridge (beta ~ alpha), which for the maximum
-# incident energy E=beta_max reaches beta_recoil = 4*beta_max/AWR (back-scatter
-# alpha at that energy). Beyond it the law is the off-ridge tail (~exp(-beta/2),
-# negligible) and the original coarse log spacing is kept, so the grid stays
-# small: capping finely only up to the recoil ridge gives fewer beta points
-# than capping the whole tail while removing the overshoot (validated against the
-# converged linear-Q grid: sigma(5 eV) within ~1.5% of the reference, versus
-# +144% pure log). The cap is irrelevant to log-lin (iint=0) laws, which
-# interpolate the exponential tail exactly on any grid, so default-INT
-# auto-grids stay byte-identical.
+# high incident energy. The cap is needed wherever the law is still
+# appreciable at the alphas the incident energies can reach. At the highest
+# incident energy E = beta_max the back-scatter alpha is 4*beta_max/AWR. The
+# down-scattering kernel THERMR integrates there (the stored symmetric law
+# times exp(+beta/2)) is, in the short-collision-time form, a Gaussian in
+# beta centred at alpha with standard deviation sqrt(2 alpha T_eff/T). The
+# fine step must extend past that centre by a few widths
+# (RIDGE_MARGIN_SIGMAS); ending it AT alpha_max, as the 2026-06 rule did,
+# left populated cells on the coarse log tail, and lin-lin interpolation
+# across them raised the graphite total cross section between 2 eV and the
+# requested energy by 0.8% (5 eV grid) and 2.6% (10 eV grid). Above the
+# margin the original coarse log spacing is kept. The cap is irrelevant to
+# log-lin (iint=0) laws, which interpolate the exponential tail exactly on
+# any grid, so default-INT auto-grids stay byte-identical.
 DELTA_BETA_MAX_LINLIN = 0.5
+
+# How many kernel widths past the back-scatter alpha the fine lin-lin step
+# extends. Calibrated on graphite at 296 K (incoherent approximation, patched
+# NJOY THERMR honouring INT=2): the rise of the total cross section from 2 eV
+# to the requested energy is 0.13% / 0.19% (5 / 10 eV grids) at one width,
+# 0.09% / 0.11% at 1.5 and 0.09% / 0.10% at 2; halving the 0.5 step instead
+# leaves 0.02% / 0.03%, so what 2 widths leave is the step's own cost. Table
+# in docs/grids.md.
+RIDGE_MARGIN_SIGMAS = 2.0
+
+# Deck files carry the grids with six decimals in scientific notation
+# (``irma.mlip.emit._array_lines`` and the GUI writer), so two nodes closer
+# than that print as one value and the engine rejects the deck as
+# non-increasing. The lin-lin seam between the phonon region and the fine
+# tail can produce such a pair.
+DECK_GRID_DECIMALS = 6
+
+
+def effective_temperature_bound_ratio(freq_max_eV, temperature_K):
+    """Upper bound on T_eff/T for any phonon spectrum ending at ``freq_max_eV``.
+
+    T_eff/T = integral of rho(E) (E/2kT) coth(E/2kT) dE over the normalised
+    spectrum, and the integrand increases with E, so no spectrum that ends
+    at E_max exceeds a single mode at E_max: (x/2) coth(x/2) with
+    x = E_max/kT. The grid generator knows only the spectrum's maximum
+    energy, and this bound is the safe direction for the margin below
+    whatever the spectrum's shape (a Debye spectrum with the same cutoff
+    sits 10 to 13% lower).
+    """
+    x = float(freq_max_eV) / (BK * float(temperature_K))
+    if not np.isfinite(x) or x <= 0.0:
+        raise ValueError(f"freq_max_eV/kT must be finite and > 0, got {x}")
+    return float((x / 2.0) / np.tanh(x / 2.0))
+
+
+def linlin_fine_beta_limit(beta_max, awr, freq_max_eV, temperature_K,
+                           ridge_margin_sigmas=RIDGE_MARGIN_SIGMAS,
+                           evaluation_temperatures_K=None):
+    """Beta up to which a lin-lin grid keeps the fine step (``DELTA_BETA_MAX_LINLIN``).
+
+    ``beta_max`` and the returned limit are in the grid's own units, kT at
+    ``temperature_K`` (the grid temperature, 293.6 K for a lat=1 deck). The
+    limit is the back-scatter alpha at the highest incident energy,
+    4*beta_max/awr, plus ``ridge_margin_sigmas`` widths of the
+    down-scattering kernel there. The kernel width depends on the
+    temperature the law is evaluated at: in stored units it is
+    sqrt(2 alpha T_eff(T)/T_grid) with T_eff(T) = T times
+    ``effective_temperature_bound_ratio``, and it grows with T, so the limit
+    is taken at the hottest of ``evaluation_temperatures_K`` (default: the
+    grid temperature itself).
+    """
+    alpha_max = 4.0 * float(beta_max) / float(awr)
+    t_grid = float(temperature_K)
+    temps = ([t_grid] if evaluation_temperatures_K is None
+             else [float(t) for t in np.atleast_1d(evaluation_temperatures_K)])
+    if not temps or not all(np.isfinite(t) and t > 0.0 for t in temps):
+        raise ValueError(
+            f"evaluation_temperatures_K must be finite and > 0, got {temps}")
+    widths = [np.sqrt(2.0 * alpha_max * effective_temperature_bound_ratio(freq_max_eV, t)
+                      * t / t_grid) for t in temps]
+    return alpha_max + float(ridge_margin_sigmas) * max(widths)
+
+
+def _drop_nodes_indistinct_in_a_deck(beta):
+    """Remove the earlier of any two neighbours that print as one deck value."""
+    beta = np.asarray(beta, dtype=float)
+    if beta.size < 2:
+        return beta
+    text = [f"{x:.{DECK_GRID_DECIMALS}e}" for x in beta]
+    keep = np.ones(beta.size, dtype=bool)
+    for i in range(beta.size - 1):
+        if text[i] == text[i + 1]:
+            keep[i] = False
+    return beta[keep]
 
 
 def _upper_beta_tail(beta_lo, beta_hi, n_upper, delta_beta_max=None,
@@ -125,7 +202,9 @@ def _upper_beta_tail(beta_lo, beta_hi, n_upper, delta_beta_max=None,
 
 def generate_beta_grid(freq_max_eV, temperature_K,
                        n_lower=50, n_phonon=300, n_upper=20,
-                       beta_max_eV=5.0, delta_beta_max=None, recoil_awr=None):
+                       beta_max_eV=5.0, delta_beta_max=None, recoil_awr=None,
+                       ridge_margin_sigmas=RIDGE_MARGIN_SIGMAS,
+                       evaluation_temperatures_K=None):
     """Generate a beta grid with logarithmic tails and linear phonon region.
 
     Parameters
@@ -169,7 +248,9 @@ def generate_beta_grid(freq_max_eV, temperature_K,
         the free-atom cross section at high incident energy.
     recoil_awr : float or None
         Atomic weight ratio. When ``delta_beta_max`` is set, the fine cap is
-        applied only up to the recoil ridge ``beta = 4*beta_max/recoil_awr``
+        applied up to ``linlin_fine_beta_limit`` (the back-scatter alpha
+        ``4*beta_max/recoil_awr`` plus ``ridge_margin_sigmas`` kernel widths
+        at the hottest of ``evaluation_temperatures_K``)
         and the coarse log tail is kept above it (the law there is the
         negligible off-ridge tail), which keeps the grid small. None caps the
         whole tail (the safe choice when AWR is unknown; needed anyway for
@@ -209,7 +290,10 @@ def generate_beta_grid(freq_max_eV, temperature_K,
     # lin-lin (iint=1) law does not overshoot its exp(-beta/2) tail)
     beta_upper_max = beta_max_eV / kT_eV
     if n_upper > 0 and beta_upper_max > beta_linear[-1]:
-        beta_fine = (4.0 * beta_upper_max / recoil_awr
+        beta_fine = (linlin_fine_beta_limit(beta_upper_max, recoil_awr,
+                                            freq_max_eV, temperature_K,
+                                            ridge_margin_sigmas,
+                                            evaluation_temperatures_K)
                      if (delta_beta_max is not None and recoil_awr) else None)
         beta_upper = _upper_beta_tail(beta_linear[-1], beta_upper_max,
                                       n_upper, delta_beta_max, beta_fine)
@@ -235,38 +319,124 @@ def generate_beta_grid(freq_max_eV, temperature_K,
     # Combine with zero
     beta_nonzero = np.concatenate((beta_lower, beta_linear, beta_upper))
     beta = np.concatenate(([0.0], beta_nonzero))
+    if delta_beta_max is not None:
+        # Only the capped (lin-lin) tail can put a node within deck precision
+        # of the phonon-region end; the log-lin grid stays byte-identical.
+        beta = _drop_nodes_indistinct_in_a_deck(beta)
 
     return beta
 
 
+def describe_beta_grid(details):
+    """One line for the user on the beta grid's size and, for lin-lin, why.
+
+    ``details`` is the dictionary ``generate_beta_grid_for_iint`` returns
+    with ``return_details=True``; every number in the line is what that call
+    actually built, so the line stays true for light atoms (fine step to the
+    end of the grid), cold decks (a stored cap below 0.5), and grids with no
+    upper tail.
+    """
+    d = details
+    if d["iint"] != 1:
+        return (f"beta grid: {d['n_beta']} points to {d['beta_max_eV']:.3g} eV "
+                f"(log-lin tail)")
+    head = (f"beta grid: {d['n_beta']} points to {d['beta_max_eV']:.3g} eV "
+            f"(a log-lin grid would have {d['loglin_n_beta']})")
+    if not d["has_upper_tail"]:
+        return head + "; the grid ends inside the phonon region, no upper tail"
+    cap = (f"a stored step of at most {d['stored_cap']:.4g} (at most "
+           f"{DELTA_BETA_MAX_LINLIN:g} in physical beta at every temperature "
+           f"of the deck, the lowest being {d['lowest_temperature_K']:.4g} K)")
+    if d["fine_reaches_end"]:
+        return (f"{head}; the lin-lin law keeps {cap} through the whole upper "
+                f"tail, since {d['ridge_margin_sigmas']:g} kernel widths past "
+                f"the back-scatter alpha at the highest energy would reach "
+                f"beta = {d['fine_limit_stored']:.1f}, beyond the grid's end")
+    return (f"{head}; the lin-lin law keeps {cap} in the upper tail up to "
+            f"beta = {d['fine_end_stored']:.1f} ({d['fine_end_eV']:.3g} eV, "
+            f"{d['ridge_margin_sigmas']:g} kernel widths past the back-scatter "
+            f"alpha at the highest energy)")
+
+
 def generate_beta_grid_for_iint(freq_max_eV, temperature_K, *, iint, awr,
                                 n_lower=50, n_phonon=300, n_upper=80,
-                                beta_max_eV=5.0):
+                                beta_max_eV=5.0, evaluation_temperatures_K=None,
+                                return_details=False):
     """Beta grid with the tail treatment matched to the Card 4 ``iint`` flag.
 
     Single home for the safe pairing of tail treatment and
     interpolation law: a log-lin law (``iint=0``, ENDF INT=4) interpolates
     the exp(-beta/2) tail exactly on the pure-log tail, while a lin-lin law
     (``iint=1``, INT=2) overshoots the free-atom cross section on a coarse
-    log tail and needs the step cap (``DELTA_BETA_MAX_LINLIN``) with the
-    recoil ridge from ``awr``. Library callers building ``iint=1`` decks
-    should use this instead of wiring the cap themselves.
+    log tail and needs the step cap (``DELTA_BETA_MAX_LINLIN``) out to the
+    kernel-width margin from ``awr``. Library callers building ``iint=1``
+    decks should use this instead of wiring the cap themselves.
 
     Note the ``n_upper`` default here is 80 (the GUI / NCrystal-export
     default, fine enough for high incident energies), NOT
     ``generate_beta_grid``'s byte-stable default of 20; pass ``n_upper=20``
     to reproduce an existing log-lin deck's grid exactly.
+
+    ``evaluation_temperatures_K`` are the temperatures the law will be
+    evaluated at (the deck's Card 10 list; default: the grid temperature).
+    They enter in two places. The step cap is a physical beta step, but a
+    lat=1 grid is written in units of kT at ``temperature_K`` (293.6 K), so
+    at a lower evaluation temperature the same stored step is a coarser
+    physical step (3.8x at 77 K, where a 0.5 stored step would carry an
+    11.6% midpoint error): the stored cap is 0.5 times the lowest
+    temperature over the grid temperature when that ratio is below one. The
+    kernel width behind the margin grows with temperature, so the fine limit
+    is taken at the highest temperature.
+
+    With ``return_details=True`` the return value is ``(beta, details)``,
+    where ``details`` records what was built (counts, the stored cap, the
+    fine limit and where the fine step actually ends) for
+    ``describe_beta_grid``.
     """
     if iint not in (0, 1):
         raise ValueError(f"iint must be 0 (log-lin, INT=4) or 1 (lin-lin, "
                          f"INT=2), got {iint}")
     if not (np.isfinite(awr) and awr > 0.0):
         raise ValueError(f"awr must be finite and > 0, got {awr}")
-    return generate_beta_grid(
-        freq_max_eV, temperature_K, n_lower=n_lower, n_phonon=n_phonon,
-        n_upper=n_upper, beta_max_eV=beta_max_eV,
-        delta_beta_max=(DELTA_BETA_MAX_LINLIN if iint == 1 else None),
-        recoil_awr=awr)
+    t_grid = float(temperature_K)
+    temps = ([t_grid] if evaluation_temperatures_K is None
+             else [float(x) for x in np.atleast_1d(evaluation_temperatures_K)])
+    if not temps or not all(np.isfinite(x) and x > 0.0 for x in temps):
+        raise ValueError(
+            f"evaluation_temperatures_K must be finite and > 0, got {temps}")
+    common = dict(n_lower=n_lower, n_phonon=n_phonon, n_upper=n_upper,
+                  beta_max_eV=beta_max_eV)
+    if iint == 0:
+        beta = generate_beta_grid(freq_max_eV, t_grid, **common)
+        if not return_details:
+            return beta
+        return beta, {"iint": 0, "n_beta": int(beta.size),
+                      "beta_max_eV": float(beta[-1] * BK * t_grid)}
+    lowest = min(temps)
+    cap = DELTA_BETA_MAX_LINLIN * min(1.0, lowest / t_grid)
+    beta = generate_beta_grid(freq_max_eV, t_grid, delta_beta_max=cap,
+                              recoil_awr=awr, evaluation_temperatures_K=temps,
+                              **common)
+    if not return_details:
+        return beta
+    kT = BK * t_grid
+    loglin = generate_beta_grid(freq_max_eV, t_grid, **common)
+    phonon_end = float(freq_max_eV) / kT * (1.0 - 1.0 / n_phonon)
+    has_upper_tail = n_upper > 0 and beta[-1] > phonon_end * (1.0 + 1.0e-12)
+    limit = linlin_fine_beta_limit(beta[-1], awr, freq_max_eV, t_grid,
+                                   RIDGE_MARGIN_SIGMAS, temps)
+    fine_end = min(limit, float(beta[-1]))
+    return beta, {
+        "iint": 1, "n_beta": int(beta.size), "loglin_n_beta": int(loglin.size),
+        "beta_max_stored": float(beta[-1]), "beta_max_eV": float(beta[-1] * kT),
+        "stored_cap": float(cap), "lowest_temperature_K": float(lowest),
+        "highest_temperature_K": float(max(temps)),
+        "has_upper_tail": bool(has_upper_tail),
+        "fine_limit_stored": float(limit), "fine_end_stored": float(fine_end),
+        "fine_end_eV": float(fine_end * kT),
+        "fine_reaches_end": bool(limit >= float(beta[-1])),
+        "ridge_margin_sigmas": float(RIDGE_MARGIN_SIGMAS),
+    }
 
 
 def generate_alpha_grid(beta, awr, temperature_K, dq_ang_inv=0.05,

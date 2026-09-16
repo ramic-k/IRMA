@@ -1014,3 +1014,27 @@ def test_c_diff_greyed_without_twt(app):
     assert str(app.sec_c_diff.entry.cget("state")) == "normal"
     app.sec_twt.set("0.0")
     assert str(app.sec_c_diff.entry.cget("state")) == "disabled"
+
+
+def test_clicking_mode_2_selects_linlin_and_setting_the_variable_does_not(app):
+    """A click on the inelastic_mode radio buttons sets the Card 4 iint
+    default that suits the mode (lin-lin for the coherent law, log-lin
+    otherwise); a programmatic set of the variable, which is what a deck
+    import does before it applies the deck's own iint, changes nothing."""
+    app.inelastic_mode_var.set(0)
+    app.iint.set(app.IINT_LOGLIN)
+    app.inelastic_mode_var.set(2)                 # trace only, no click
+    assert app._parse_combo_int(app.iint) == 0
+    app._on_inelastic_mode_click()                # the click
+    assert app._parse_combo_int(app.iint) == 1
+    app.inelastic_mode_var.set(1)
+    app._on_inelastic_mode_click()
+    assert app._parse_combo_int(app.iint) == 0
+    # the user's later choice is kept until the next click
+    app.inelastic_mode_var.set(2)
+    app._on_inelastic_mode_click()
+    app.iint.set(app.IINT_LOGLIN)
+    app.inelastic_mode_var.set(2)
+    assert app._parse_combo_int(app.iint) == 0
+    app.inelastic_mode_var.set(0)
+    app._on_inelastic_mode_click()

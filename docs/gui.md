@@ -185,21 +185,47 @@ The first three fields are material identity and ship **blank**; `npr` is a conv
 
 | Field | Default | Meaning |
 |-------|---------|---------|
-| `ZA` | *(blank)* | Scatterer identity as Z×1000 + A, with `A = 0` naming the natural element (`6000` = natural carbon). Must match an atom type from the Material part. |
+| `ZA` | *(blank)* | Scatterer identity as Z×1000 + A, with `A = 0` naming the natural element (`6000` = natural carbon). Must match an atom type from the Material part; **Apply ZA** makes that element's row match (see below). |
 | `AWR` | *(blank)* | Atomic weight ratio to the neutron mass; drives recoil kinematics and alpha-grid scaling. |
 | `sigma_free` (`spr`) | *(blank)* | **FREE-atom** scattering cross section (barn), exactly as on LEAPR Card 5. IRMA derives the bound cross section that normalizes S(α,β) internally as `sigma_b = sigma_free·((1+AWR)/AWR)²` and writes `npr·sigma_free` into the tape's B(1) field (an ENDF bookkeeping value). Do **not** enter the bound value (carbon: enter 4.739, not 5.55; hydrogen: enter ~20.45, not ~82; the bound value makes every MT4 cross section ~4× too large for H). |
 | `npr` | `1` | Number of principal scattering atoms in the compound, not in the unit cell (≥ 1). For `iel=1`–`6` it also scales the built-in Bragg-edge cross sections. |
 
-The **Fill AWR + sigma_free from ZA** button looks the ZA up in IRMA's
-built-in nuclear table (the Rauch–Waschkowski/Sears compilation, see
-`irma.core.nuclear_data`) and overwrites AWR and `sigma_free` with the
-tabulated values; `sigma_free` is derived from the bound cross section as
-`sigma_b·(AWR/(1+AWR))²`, so the free/bound convention is always right.
-It is the quickest way out of the blank identity fields: type a `ZA`, press
-the button, and the other two follow. Pressing it with `ZA` still empty says
-so and changes nothing. Nuclides with energy-dependent scattering lengths
-(B, Cd, Gd, …) and isotopes without measured constants are refused with a
-message; enter those by hand.
+The **Apply ZA: fill AWR + sigma_free, relabel the atom row** button looks
+the ZA up in IRMA's built-in nuclear table (the Rauch–Waschkowski/Sears
+compilation, see `irma.core.nuclear_data`), overwrites AWR and `sigma_free`
+with the tabulated values (`sigma_free` derived from the bound cross section
+as `sigma_b·(AWR/(1+AWR))²`, so the free/bound convention is always right),
+and makes the Material part agree. The engine requires the principal
+`(Z, A)` to be one of the **Atom Types** rows, and **Fill structure from
+phonopy.yaml** fills every row as the natural element (`A = 0`) because a
+phonon model names elements, not isotopes. So after filling the structure,
+type the isotope's ZA (`6012` for C-12) and press the button: the row of
+that element is relabelled to the same nuclide, taking its `A`, `AWR`,
+`b_coh` and `sigma_inc` from the one table entry, positions kept, and the
+line under the button says exactly what changed (`atom row 1: C -> C-12
+(A 0 -> 12, awr 11.9078 -> 11.8969, ...); positions kept`). Typing `6000`
+and pressing again returns the row to the natural element.
+
+The rules that keep this from ever silently overwriting your own numbers:
+only the button changes a row (typing a ZA changes nothing); a row is
+relabelled without a question only when its constants are the table's own
+values for its current nuclide, and a row that carries other constants
+(yours, or an imported evaluation's) is replaced only after a dialog
+showing old and new, where *No* changes nothing on Card 5 either; other
+elements' rows are never touched (in BeO, applying `4009` relabels the Be
+row and leaves O natural); with two rows of the same element the button
+refuses and asks you to set the intended row's `A` by hand; a nuclide with
+no tabulated constants or energy-dependent ones (B, Cd, Gd, …) is refused
+before anything changes. Relabelling a row changes the scattering identity
+and constants only: the phonopy model's masses and phonons are whatever the
+model contains, so a model that labels deuterium as H still carries H
+masses after the row becomes D.
+
+If the deck is still inconsistent when you press **Run** or **Save** (a
+hand-typed row, for example), the same offer is made once more, and *No*
+stops with the engine's own message naming the row it found and the two
+ways to fix the deck. Pressing the button with `ZA` still empty says so and
+changes nothing.
 
 Each input file evaluates one principal scatterer: for `inelastic_mode=1/2`, IRMA writes one principal-scatterer MT4 section per input file even when the crystal has several atom types. If you need more than one principal (for example Be and O in BeO), run separate input files.
 

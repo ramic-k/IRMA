@@ -155,14 +155,27 @@ def test_beta_grid_light_atom_caps_whole_tail():
 
 
 def test_beta_grid_heavy_atom_no_duplicate_seam():
-    """A heavy atom's recoil ridge (4*beta_max/awr) falls at/below the phonon
-    region end, so the whole upper tail is the off-ridge tail: the grid must
-    stay strictly increasing (no duplicate node at the seam) and fall back to
-    the pure-log tail."""
+    """A heavy atom's back-scatter alpha (4*beta_max/awr) falls below the
+    phonon region end, but the law's ridge at that alpha still has a width,
+    so the fine step reaches a few widths past it (linlin_fine_beta_limit):
+    the grid must stay strictly increasing across the seam and carry the fine
+    step up to that limit. For an atom so heavy that even the limit falls
+    below the phonon region end, the whole upper tail is off-ridge and the
+    grid falls back to the pure-log tail."""
+    from irma.core.grids import linlin_fine_beta_limit
+    kT = 8.617333262e-5 * 296.0
     heavy = generate_beta_grid(0.2, 296.0, delta_beta_max=DELTA_BETA_MAX_LINLIN,
                                recoil_awr=300.0)  # 4*beta_max/300 < beta_lin_end
     assert np.all(np.diff(heavy) > 0.0), "duplicate/non-monotonic node at seam"
-    np.testing.assert_array_equal(heavy, generate_beta_grid(0.2, 296.0))
+    limit = linlin_fine_beta_limit(5.0 / kT, 300.0, 0.2, 296.0)
+    beta_lin_end = (0.2 / kT) * (1.0 - 1.0 / 300.0)
+    assert limit > beta_lin_end
+    fine = heavy[(heavy > beta_lin_end) & (heavy <= limit)]
+    assert np.max(np.diff(fine)) <= DELTA_BETA_MAX_LINLIN * (1 + 1e-12)
+    very_heavy = generate_beta_grid(0.2, 296.0, delta_beta_max=DELTA_BETA_MAX_LINLIN,
+                                    recoil_awr=3000.0)
+    assert linlin_fine_beta_limit(5.0 / kT, 3000.0, 0.2, 296.0) < beta_lin_end
+    np.testing.assert_array_equal(very_heavy, generate_beta_grid(0.2, 296.0))
 
 
 def test_beta_grid_invalid_delta_beta_max_raises():
@@ -340,3 +353,137 @@ def test_lat1_auto_grid_independent_of_first_temperature():
     b77 = generate_beta_grid(0.2, grid_reference_temperature_K(1, 77.0))
     b500 = generate_beta_grid(0.2, grid_reference_temperature_K(1, 500.0))
     np.testing.assert_array_equal(b77, b500)
+
+
+# ---- lin-lin fine region: kernel width, temperature, and the user note ------
+def test_effective_temperature_bound_limits():
+    from irma.core.grids import effective_temperature_bound_ratio
+    # classical limit: T_eff -> T when kT is far above the phonon cutoff
+    assert effective_temperature_bound_ratio(0.001, 3000.0) == pytest.approx(1.0, rel=1e-3)
+    # low-temperature limit of a single mode at the cutoff: T_eff -> E_max / 2k
+    x_max = 0.2 / (8.617333262e-5 * 10.0)
+    assert effective_temperature_bound_ratio(0.2, 10.0) == pytest.approx(x_max / 2.0, rel=1e-6)
+    # it bounds a Debye spectrum with the same cutoff (whose T_eff/T is the
+    # integral of 3x^2/x_max^3 (x/2)coth(x/2))
+    x = np.linspace(0.0, x_max, 20001)[1:]
+    debye = np.trapezoid(3.0 * x**2 / x_max**3 * (x / 2.0) / np.tanh(x / 2.0), x)
+    assert effective_temperature_bound_ratio(0.2, 10.0) > debye
+    with pytest.raises(ValueError):
+        effective_temperature_bound_ratio(0.0, 296.0)
+
+
+def test_linlin_fine_limit_sits_past_the_back_scatter_alpha():
+    from irma.core.grids import linlin_fine_beta_limit, RIDGE_MARGIN_SIGMAS
+    kT = 8.617333262e-5 * 296.0
+    beta_max = 5.0 / kT
+    alpha_max = 4.0 * beta_max / 11.898
+    limit = linlin_fine_beta_limit(beta_max, 11.898, 0.2, 296.0)
+    assert limit > alpha_max
+    # the margin scales with the kernel width, so it grows with beta_max and
+    # shrinks for a heavier atom
+    assert linlin_fine_beta_limit(2.0 * beta_max, 11.898, 0.2, 296.0) > limit
+    assert linlin_fine_beta_limit(beta_max, 50.0, 0.2, 296.0) < limit
+    assert linlin_fine_beta_limit(beta_max, 11.898, 0.2, 296.0, 0.0) == pytest.approx(alpha_max)
+    assert RIDGE_MARGIN_SIGMAS > 0.0
+    # the kernel is wider at a hotter evaluation temperature: the limit is
+    # taken at the hottest temperature of the deck, and a colder one adds nothing
+    hot = linlin_fine_beta_limit(beta_max, 11.898, 0.2, 296.0,
+                                 evaluation_temperatures_K=[296.0, 600.0])
+    cold = linlin_fine_beta_limit(beta_max, 11.898, 0.2, 296.0,
+                                  evaluation_temperatures_K=[77.0, 296.0])
+    assert hot > limit
+    assert cold == pytest.approx(limit)
+    with pytest.raises(ValueError, match="evaluation_temperatures_K"):
+        linlin_fine_beta_limit(beta_max, 11.898, 0.2, 296.0, evaluation_temperatures_K=[-5.0])
+
+
+def test_linlin_grid_fine_step_reaches_the_limit():
+    from irma.core.grids import linlin_fine_beta_limit
+    kT = 8.617333262e-5 * 296.0
+    beta = generate_beta_grid_for_iint(0.2, 296.0, iint=1, awr=11.898)
+    limit = linlin_fine_beta_limit(beta[-1], 11.898, 0.2, 296.0)
+    beta_lin_end = (0.2 / kT) * (1.0 - 1.0 / 300.0)
+    # every upper-tail interval up to the limit, the entrance interval
+    # included, is at most the cap, and the limit is reached
+    upper = beta[beta >= beta_lin_end * (1 - 1e-12)]
+    fine = upper[upper <= limit]
+    assert fine.size > 10
+    assert np.max(np.diff(fine)) <= DELTA_BETA_MAX_LINLIN * (1 + 1e-12)
+    assert fine[-1] >= limit - DELTA_BETA_MAX_LINLIN
+    # above the limit the coarse log tail resumes: at least one wider step
+    coarse = beta[beta >= limit]
+    assert np.max(np.diff(coarse)) > DELTA_BETA_MAX_LINLIN
+
+
+def test_linlin_cap_scales_with_the_lowest_temperature():
+    from irma.core.grids import grid_reference_temperature_K
+    t_ref = grid_reference_temperature_K(1, 77.0)
+    warm = generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=11.898)
+    cold, details = generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=11.898,
+                                                evaluation_temperatures_K=[77.0],
+                                                return_details=True)
+    kT = 8.617333262e-5 * t_ref
+    beta_lin_end = (0.2 / kT) * (1.0 - 1.0 / 300.0)
+    ridge = 4.0 * cold[-1] / 11.898
+    cold_fine = cold[(cold > beta_lin_end) & (cold <= ridge)]
+    # a 77 K law evaluated on a 293.6 K-unit grid needs a step 77/293.6 as large
+    assert np.max(np.diff(cold_fine)) <= DELTA_BETA_MAX_LINLIN * 77.0 / t_ref * (1 + 1e-12)
+    assert details["stored_cap"] == pytest.approx(DELTA_BETA_MAX_LINLIN * 77.0 / t_ref)
+    assert len(cold) > len(warm)
+    # a higher evaluation temperature keeps the 0.5 stored cap but widens the
+    # fine region, so it never coarsens the grid
+    hot = generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=11.898,
+                                      evaluation_temperatures_K=[600.0])
+    assert len(hot) >= len(warm)
+    assert np.max(np.diff(hot[(hot > beta_lin_end) & (hot <= ridge)])) <= DELTA_BETA_MAX_LINLIN * (1 + 1e-12)
+    # log-lin grids ignore the temperatures entirely
+    np.testing.assert_array_equal(
+        generate_beta_grid_for_iint(0.2, t_ref, iint=0, awr=11.898, evaluation_temperatures_K=[77.0, 600.0]),
+        generate_beta_grid_for_iint(0.2, t_ref, iint=0, awr=11.898))
+    with pytest.raises(ValueError, match="evaluation_temperatures_K"):
+        generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=11.898, evaluation_temperatures_K=[-1.0])
+
+
+def test_describe_beta_grid_reports_what_was_built():
+    from irma.core.grids import describe_beta_grid, grid_reference_temperature_K
+    t_ref = grid_reference_temperature_K(1, 296.0)
+    beta, details = generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=11.898,
+                                                evaluation_temperatures_K=[296.0],
+                                                return_details=True)
+    note = describe_beta_grid(details)
+    assert f"{len(beta)} points" in note and "log-lin grid would have" in note
+    assert f"{details['loglin_n_beta']}" in note and "kernel widths" in note
+    assert not details["fine_reaches_end"]
+    # a light atom's fine step runs to the end of the grid, and the note says so
+    light, ldetails = generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=1.0,
+                                                  return_details=True)
+    assert ldetails["fine_reaches_end"]
+    assert "whole upper tail" in describe_beta_grid(ldetails)
+    # a cold deck reports its stored cap, not 0.5
+    _, cdetails = generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=11.898,
+                                              evaluation_temperatures_K=[77.0],
+                                              return_details=True)
+    assert f"{cdetails['stored_cap']:.4g}" in describe_beta_grid(cdetails)
+    # log-lin
+    _, zdetails = generate_beta_grid_for_iint(0.2, t_ref, iint=0, awr=11.898, return_details=True)
+    assert "log-lin tail" in describe_beta_grid(zdetails)
+    # no upper tail
+    _, ndetails = generate_beta_grid_for_iint(0.2, t_ref, iint=1, awr=11.898, n_upper=0,
+                                              beta_max_eV=0.1, return_details=True)
+    assert "no upper tail" in describe_beta_grid(ndetails)
+
+
+def test_linlin_grid_survives_the_deck_precision_round_trip():
+    """A seam node within deck precision of the phonon-region end would be
+    written as a duplicate value and rejected by the engine; the generator
+    drops it. Constructed case from the 2026-09-15 review (AWR 238)."""
+    from irma.core.grids import grid_reference_temperature_K, _drop_nodes_indistinct_in_a_deck
+    t_ref = grid_reference_temperature_K(1, 296.0)
+    beta = generate_beta_grid_for_iint(0.40507000876176497, t_ref, iint=1, awr=238.0,
+                                       n_lower=15, n_phonon=300, n_upper=80, beta_max_eV=5.0)
+    printed = np.array([float(f"{x:.6e}") for x in beta])
+    assert np.all(np.diff(printed) > 0.0)
+    assert np.all(np.diff(beta) > 0.0)
+    # the helper itself keeps the later node of a pair, so the end node survives
+    kept = _drop_nodes_indistinct_in_a_deck(np.array([0.0, 1.0, 1.0 + 1e-9, 2.0]))
+    np.testing.assert_allclose(kept, [0.0, 1.0 + 1e-9, 2.0])

@@ -435,10 +435,9 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
                          if at['Z'] == za_Z and at['A'] == za_A]
     principal_atom_idx = principal_matches[0] if principal_matches else None
 
-    reader.require(
-        principal_atom_idx is not None,
-        f"Principal scatterer za={za} (Z={za_Z}, A={za_A}) "
-        f"not found in the Card 6d crystal atom types")
+    if principal_atom_idx is None:
+        from irma.core.crystal_input import principal_mismatch_message
+        reader.require(False, principal_mismatch_message(int(za), atom_types))
     # For inelastic_mode=1/2 a multi-entry principal was merged into one
     # group right after the Card 6d parse, so the match is unique.
     assert inelastic_mode not in (1, 2) or len(principal_matches) == 1

@@ -3,6 +3,66 @@
 Notable changes to IRMA. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.0.2] — 2026-09-16
+
+Lin-lin (`iint=1`) grids, the multiphonon work grid, and the GUI's
+principal-scatterer handling. Log-lin (`iint=0`) grids are byte-identical
+to 1.0.1; evaluations on uniform output grids are byte-identical; a
+log-lin evaluation on an automatic grid whose phonon region is not 300
+steps gets that region's own step as its multiphonon work spacing (third
+item below).
+
+- The lin-lin beta grid keeps its 0.5 step out to a margin past the
+  back-scatter alpha at the highest incident energy
+  (`linlin_fine_beta_limit`: `RIDGE_MARGIN_SIGMAS` widths of the
+  down-scattering kernel, with an upper bound on T_eff from `freq_max`
+  and the hottest temperature in the deck) instead of stopping at that
+  alpha. Stopping there left populated cells on the coarse log tail, and
+  lin-lin interpolation across them raised the graphite total cross
+  section between 2 eV and the requested energy (0.8% for a 5 eV grid,
+  2.6% for a 10 eV grid, from the processed PENDF), while the same tape
+  processed log-lin stayed flat; with the margin the rise is 0.09% (5 eV)
+  and 0.10% (10 eV), the cost of the 0.5 step itself (calibration table
+  in docs/grids.md). The wider fine region costs beta points (541 to 5 eV
+  against 395 log-lin; 710 to 10 eV); the deck emitters, the GUI grid
+  preview, and the NCrystal exporter print a line built from what was
+  generated: the count, the log-lin count, the stored cap, and the energy
+  the fine step reaches.
+- The lin-lin step cap is scaled by the deck's lowest temperature
+  (`evaluation_temperatures_K`) because a `lat=1` grid is stored in
+  0.0253 eV units: a 0.5 stored step evaluated at 77 K was a 1.9 physical
+  step. A seam node that would print as a duplicate at the deck's six
+  decimals is dropped.
+- The multiphonon work spacing for a non-uniform output grid is the output
+  grid's own phonon-region step (the first run of at least ten equal
+  spacings below the highest phonon energy), so the deck's phonon
+  subdivision sets the multiphonon resolution and tail points cannot
+  change it. The previous median rule coarsened from 0.67 meV to 12.7 meV
+  when a graphite beta grid gained 235 tail points, which moved the cross
+  section by 0.3% over 0.5 to 2 eV; it remains only for grids with no
+  such run.
+- GUI: choosing inelastic_mode 2 selects `iint=1` (lin-lin), the form the
+  coherent one-phonon law needs; modes 0 and 1 select log-lin. A deck
+  import keeps the deck's own `iint`.
+- GUI: **Apply ZA** (the former "Fill AWR + sigma_free from ZA") also
+  relabels the atom row of the ZA's element to the same nuclide, taking
+  `A`, `AWR`, `b_coh` and `sigma_inc` from the one table entry and keeping
+  the positions, and reports the change on a line under the button. Until
+  now "Fill structure from phonopy.yaml" left every row as the natural
+  element and a principal ZA naming an isotope (6012) was refused by the
+  engine, with nothing in the GUI to make the two agree. Only the button
+  changes a row; a row carrying constants other than the table's is replaced
+  only after a dialog, other elements and rows sharing the element are
+  never touched automatically, and nuclides without usable constants are
+  refused before any change. Run and Save make the same offer once more
+  when the deck is still inconsistent.
+- The principal-scatterer membership rule and its message now live in one
+  place (`irma.core.crystal_input.principal_mismatch_message`), used by
+  the engine, the deck validator, and the GUI; the engine's error names
+  the row it found and both ways to fix the deck.
+
 ## [1.0.1] — 2026-08-20
 
 Hardening of MLIP environment provisioning, from the first field

@@ -198,7 +198,8 @@ def test_auto_grid_pack_beta_carries_linlin_cap(tmp_path):
     scale = t_ref / 296.0
     expected = generate_beta_grid_for_iint(
         0.2, t_ref, iint=1, awr=awr, n_lower=2, n_phonon=6, n_upper=4,
-        beta_max_eV=1.0)
+        beta_max_eV=1.0,
+        evaluation_temperatures_K=[296.0])
     assert beta_abs == pytest.approx((expected * scale).tolist())
 
     # the cap property itself, on the pack's own axis. The cap governs the
@@ -237,7 +238,7 @@ def test_auto_beta_cap_sized_to_lightest_species(monkeypatch):
 
     captured = {}
 
-    def spy(cfg, t_ref, recoil_awr):
+    def spy(cfg, t_ref, recoil_awr, progress=print):
         captured["recoil_awr"] = recoil_awr
         raise _Abort
 

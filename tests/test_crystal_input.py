@@ -243,3 +243,77 @@ def test_end_to_end_graphite_rows_are_natural_carbon():
     assert len(species) == 1
     assert species[0].za == 6000          # natural carbon, not 6012
     assert species[0].npos == 4
+
+
+# ------------------------------------------- principal ZA against the rows ----
+def _rows():
+    return [
+        {"Z": 6, "A": 0, "awr": 11.907819742, "b_coh": 6.6472, "sigma_inc": 0.001,
+         "npos": 2, "positions": [(0.0, 0.0, 0.25), (0.0, 0.0, 0.75)]},
+        {"Z": 8, "A": 0, "awr": 15.858, "b_coh": 5.803, "sigma_inc": 0.0,
+         "npos": 1, "positions": [(0.5, 0.5, 0.5)]},
+    ]
+
+
+def test_principal_row_match_and_messages():
+    from irma.core.crystal_input import (
+        principal_mismatch_message, principal_row_match)
+    rows = _rows()
+    assert principal_row_match(6000, rows)["exact"] == [0]
+    assert principal_mismatch_message(6000, rows) is None
+    match = principal_row_match(6012, rows)
+    assert match["exact"] == [] and match["same_z"] == [0]
+    message = principal_mismatch_message(6012, rows)
+    assert "ZA=6012 (C-12)" in message and "row 1: Z=6, A=0 (C)" in message
+    assert "ZA=6000" in message and "No rows were changed" in message
+    message = principal_mismatch_message(26056, rows)
+    assert "No row has Z=26" in message
+    rows.append({"Z": 6, "A": 13, "awr": 12.8916, "b_coh": 6.19, "sigma_inc": 0.52,
+                 "npos": 1, "positions": [(0.1, 0.1, 0.1)]})
+    message = principal_mismatch_message(6012, rows)
+    assert "row 1: A=0 (C)" in message and "row 3: A=13 (C-13)" in message
+    assert principal_mismatch_message(6013, rows) is None
+    with pytest.raises(ValueError):
+        principal_row_match(0, rows)
+
+
+def test_relabel_row_takes_identity_and_constants_from_one_entry():
+    from irma.core.crystal_input import (
+        format_atom_row, relabel_row, row_constants_match_table)
+    from irma.core.nuclear_data import lookup
+    rows = _rows()
+    assert row_constants_match_table(rows[0])          # the natural-C prefill
+    new, changes = relabel_row(rows[0], 6012)
+    c12 = lookup((6, 12))
+    assert (new["Z"], new["A"]) == (6, 12)
+    assert new["awr"] == c12.awr and new["b_coh"] == c12.b_coh_fm
+    assert new["sigma_inc"] == c12.sigma_inc_b
+    assert new["positions"] == rows[0]["positions"] and new["npos"] == 2
+    assert [c[0] for c in changes][:2] == ["A", "awr"]
+    assert row_constants_match_table(new)
+    # back to natural is the same operation
+    back, _ = relabel_row(new, 6000)
+    assert back["A"] == 0 and back["awr"] == pytest.approx(rows[0]["awr"], rel=1e-9)
+    # custom constants are recognised as not the table's
+    custom = dict(rows[0], awr=11.898, b_coh=6.646)
+    assert not row_constants_match_table(custom)
+    # wrong element, missing nuclide, energy-dependent nuclide: refused
+    with pytest.raises(ValueError):
+        relabel_row(rows[1], 6012)
+    with pytest.raises(KeyError):
+        relabel_row(rows[0], 6014)
+    gd = {"Z": 64, "A": 0, "awr": 155.9, "b_coh": 6.5, "sigma_inc": 151.0,
+          "npos": 1, "positions": [(0.0, 0.0, 0.0)]}
+    with pytest.raises(ValueError, match="ENERGY-DEPENDENT"):
+        relabel_row(gd, 64157)
+    line = format_atom_row(new)
+    assert line.startswith("6  12  ") and "  2  0.000000 0.000000 0.250000  " in line
+
+
+def test_validator_and_engine_share_the_message():
+    from irma.core.crystal_input import principal_mismatch_message
+    from irma.mlip.emit import validate_deck_semantics
+    staged = {"mat": 28, "za": 6012.0, "iint": 1, "iel": 10,
+              "atoms": [{"Z": 6, "A": 0}], "alpha": [0.1, 0.2], "beta": [0.0, 0.1]}
+    problems = validate_deck_semantics(staged)
+    assert any(principal_mismatch_message(6012, staged["atoms"]) in p for p in problems)

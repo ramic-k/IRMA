@@ -1272,7 +1272,14 @@ def _cfa_incoherent_and_multiphonon(S):
             f"Accumulating multiphonon background through order {args.multiphonon_max_order}...",
             flush=True,
         )
-        e_work_grid_mev, de_work_mev = build_uniform_positive_work_grid(e_grid_mev)
+        if np.size(multiphonon_mode_energies_mev) == 0:
+            raise ValueError(
+                "multiphonon: the model has no positive phonon modes to build "
+                "the seed from, so no work grid can be sized")
+        e_work_grid_mev, de_work_mev = build_uniform_positive_work_grid(
+            e_grid_mev,
+            phonon_max_energy_mev=float(np.max(multiphonon_mode_energies_mev)),
+        )
         e_work_edges_mev = centers_to_edges(e_work_grid_mev, lower_bound=0.0)
         e_signed_grid_mev, positive_slice = build_signed_energy_grid(e_work_grid_mev)
         e_signed_edges_mev = centers_to_edges(e_signed_grid_mev)
