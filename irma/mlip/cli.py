@@ -237,6 +237,10 @@ def _build_parser():
                    help="comma list of endf,spectra,ncrystal")
     e.add_argument("--out-dir", default=None,
                    help="output directory [the bundle directory]")
+    e.add_argument("--min-phonon-energy", type=float, default=0.0, metavar="MEV",
+                   help="remove every phonon mode with energy at or below this "
+                        "value (meV) from all terms, in every emitted file; "
+                        "0 = the automatic floors only (default: 0)")
     e.add_argument("--overwrite", action="store_true",
                    help="replace existing emitted files")
     _add_emit_options(e)
@@ -305,20 +309,23 @@ def _do_emit(bundle, targets, args) -> int:
             nuclides=nuclides, overrides=overrides, out_dir=out_dir,
             overwrite=args.overwrite, allow_unstable=args.allow_unstable,
             inelastic_mode=getattr(args, "inelastic_mode", None),
-            elastic_format=(elastic_format or "mef"))
+            elastic_format=(elastic_format or "mef"),
+            min_phonon_energy_mev=float(getattr(args, "min_phonon_energy", 0.0) or 0.0))
     if "spectra" in targets:
         produced.append(emit_spectra_yaml(
             bundle, temperature_k=args.temperature,
             nuclides=nuclides, overrides=overrides,
             out_path=os.path.join(out_dir, "spectra.yaml"),
-            overwrite=args.overwrite, allow_unstable=args.allow_unstable))
+            overwrite=args.overwrite, allow_unstable=args.allow_unstable,
+            min_phonon_energy_mev=float(getattr(args, "min_phonon_energy", 0.0) or 0.0)))
     if "ncrystal" in targets:
         produced.append(emit_ncrystal_yaml(
             bundle, temperature_k=args.temperature,
             material_id=args.material_id, nuclides=nuclides,
             overrides=overrides,
             out_path=os.path.join(out_dir, "ncrystal.yaml"),
-            overwrite=args.overwrite))
+            overwrite=args.overwrite,
+            min_phonon_energy_mev=float(getattr(args, "min_phonon_energy", 0.0) or 0.0)))
 
     import shlex
     print("\nNext steps (review each file before production):")

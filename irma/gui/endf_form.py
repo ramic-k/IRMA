@@ -18,6 +18,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
     ToolTip, fixed_font, form_section, init_form_styles,
@@ -470,6 +471,13 @@ class EndfFormMixin:
                   "an asymmetric mesh (e.g. 40×40×20) can be used to "
                   "match the crystal symmetry."
                   ).pack(side=tk.LEFT, padx=(4, 0))
+
+        self.nc_min_phonon_energy = LabeledEntry(
+            self._nc_subframe, "Minimum phonon energy [meV]:", "",
+            width=10, label_width=LBL, compact_help=True,
+            help_title="Minimum Phonon Energy",
+            help_text=MIN_PHONON_ENERGY_HELP)
+        self.nc_min_phonon_energy.pack(fill=tk.X, pady=2)
 
         # ncpu row
         dir_row = ttk.Frame(self._nc_subframe)
@@ -2942,6 +2950,16 @@ class EndfFormMixin:
                             "BORN corrections requested but BORN path is empty.")
                     lines.append(f"{_quote(born_p)} /")
 
+                cutoff_raw = self.nc_min_phonon_energy.get().strip()
+                if cutoff_raw:
+                    cutoff = parse_float(
+                        "Minimum phonon energy [meV]", cutoff_raw)
+                    if not np.isfinite(cutoff) or cutoff < 0.0:
+                        raise ValueError(
+                            "Minimum phonon energy [meV] must be finite and "
+                            "nonnegative.")
+                    lines.append(f"{cutoff:g} /")
+
                 ndir_v = self.nc_num_directions.get().strip() or "10000"
                 mpdir_v = self.nc_multiphonon_num_directions.get().strip() or "1000"
                 auto_order_v = int(self.nc_auto_order_var.get())
@@ -3366,6 +3384,7 @@ class EndfFormMixin:
         self.nc_ncpu.set("1")
         self.nc_use_born_var.set(0)
         self.nc_born_path.set("")
+        self.nc_min_phonon_energy.set("")
         self.nc_num_directions.set("10000")
         self.nc_multiphonon_num_directions.set("1000")
         # Matches the fresh-form default (safe by construction). Irrelevant
@@ -3516,6 +3535,9 @@ class EndfFormMixin:
                 self.nc_ncpu.set(str(nc['ncpu']))
                 self.nc_use_born_var.set(nc['use_born'])
                 self.nc_born_path.set(nc['born_path'])
+                cutoff = nc.get('min_phonon_energy_mev', 0.0)
+                self.nc_min_phonon_energy.set(
+                    "" if cutoff == 0.0 else f"{cutoff:g}")
                 self.nc_num_directions.set(str(nc['ndir']))
                 self.nc_multiphonon_num_directions.set(str(nc['mpdir']))
                 self.nc_auto_order_var.set(nc['auto_order'])
@@ -3601,4 +3623,3 @@ class EndfFormMixin:
         # Land on a consistent iel menu: a classic deck never reaches the
         # _toggle_noncubic() call in the iel=10 branch above, so sync here.
         self._sync_iel_choices()
-

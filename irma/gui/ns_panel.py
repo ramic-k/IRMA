@@ -20,6 +20,7 @@ from tkinter import ttk, filedialog, messagebox
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
     form_section, init_form_styles, parse_float, parse_int)
+from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.element_table import ElementTable
 from irma.spectra.config import SpectraConfig, SpectraConfigError, dump, load
 from irma.spectra.cli import parse_angles, parse_coeffs
@@ -269,6 +270,7 @@ HELP = {
         "enter an integer to set it exactly (lower = faster, but truncates "
         "the high-E wing). Keep 'auto' unless you are deliberately limiting "
         "cost."),
+    "min_phonon_energy": MIN_PHONON_ENERGY_HELP,
     "n_directions": (
         "Number of powder-average sampling directions for the ONE-phonon term "
         "(the spectrum is averaged over crystal orientations).\n\nMore "
@@ -732,6 +734,10 @@ class NSPanel(ttk.Frame):
         self.max_phonon_order = LabeledEntry(g, "max phonon order:", default="auto",
                                              width=8, help_text=HELP["max_phonon_order"])
         self.max_phonon_order.pack(fill=tk.X, pady=2)
+        self.min_phonon_energy = LabeledEntry(
+            g, "min phonon energy [meV]:", default="", width=8,
+            help_text=HELP["min_phonon_energy"])
+        self.min_phonon_energy.pack(fill=tk.X, pady=2)
         # directions / multiphonon dirs / jobs apply to the eigenvector engine
         # (modes 1/2) only -- hidden for mode 0.
         self.eng_only_box = ttk.Frame(g)
@@ -1310,6 +1316,9 @@ class NSPanel(ttk.Frame):
             "dos_source": "phonopy" if (mode == 0 and not is_dos_file) else "file",
             "max_phonon_order": ("auto" if mpo == "auto"
                                  else parse_int("max phonon order", mpo)),
+            "min_phonon_energy_meV": (
+                parse_float("min phonon energy [meV]", self.min_phonon_energy.get())
+                if self.min_phonon_energy.get().strip() else 0.0),
             "elastic": self.elastic.get() == "on",
             "elastic_kind": self.elastic_kind.get(),
             "incoherent_elastic_mode": self.incoherent_elastic_dw.get(),
@@ -1442,6 +1451,8 @@ class NSPanel(ttk.Frame):
         self.inelastic_mode.set(self._MODE_BY_INT.get(p.inelastic_mode,
                                                       self._MODE_LABELS[0]))
         self.max_phonon_order.set(p.max_phonon_order)
+        cutoff = float(getattr(p, "min_phonon_energy_meV", 0.0))
+        self.min_phonon_energy.set("" if cutoff == 0.0 else f"{cutoff:g}")
         self.n_directions.set(p.n_directions)
         self.mp_directions.set(p.multiphonon_directions)
         self.jobs.set("" if p.jobs is None else p.jobs)

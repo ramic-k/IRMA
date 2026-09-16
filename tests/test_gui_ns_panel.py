@@ -765,3 +765,34 @@ def test_map_mask_checkbox_starts_disabled_like_save_map(panel):
     state."""
     assert str(panel.savemap_btn.cget("state")) == "disabled"
     assert str(panel.map_mask_chk.cget("state")) == "disabled"
+
+
+def test_min_phonon_energy_round_trips_through_the_form(panel):
+    """The cutoff field loads from a config, is written back by build_config,
+    and stays blank (0) when the config carries none."""
+    from irma.spectra.config import SpectraConfig
+    d = {
+        "material": {"phonopy_yaml": "g.yaml", "mesh": [40, 40, 40],
+                     "temperature_K": 296.0,
+                     "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551,
+                                     "awr": 11.898, "b_coh_fm": 6.646,
+                                     "sigma_inc_b": 0.001}]},
+        "physics": {"inelastic_mode": 2, "max_phonon_order": "auto",
+                    "min_phonon_energy_meV": 0.5,
+                    "n_directions": 8000, "multiphonon_directions": 800,
+                    "elastic": True, "elastic_kind": "coherent"},
+        "grid": {"e_min_meV": 0.0, "e_max_meV": 200.0, "de_meV": 0.5,
+                 "dq_max_invA": 0.05},
+        "instrument": {"geometry": "direct", "bank_halfwidth_deg": 5.0,
+                       "combine": "mean", "e_fixed_meV": 250.0,
+                       "angles_deg": [10.0, 60.0, 120.0]},
+    }
+    cfg = SpectraConfig.from_dict(d)
+    panel.load_config(cfg)
+    assert panel.min_phonon_energy.get() == "0.5"
+    assert panel.build_config().physics.min_phonon_energy_meV == 0.5
+    assert panel.build_config() == cfg
+    d["physics"].pop("min_phonon_energy_meV")
+    panel.load_config(SpectraConfig.from_dict(d))
+    assert panel.min_phonon_energy.get() == ""
+    assert panel.build_config().physics.min_phonon_energy_meV == 0.0

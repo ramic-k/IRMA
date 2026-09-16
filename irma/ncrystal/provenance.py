@@ -94,6 +94,7 @@ def collect_provenance(
     multiphonon_num_directions: int,
     multiphonon_max_order: int | str,
     inelastic_mode: int = 2,
+    min_phonon_energy_meV: float = 0.0,
     born: str | Path | None = None,
     extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
@@ -107,6 +108,9 @@ def collect_provenance(
         "num_directions": str(int(num_directions)),
         "multiphonon_num_directions": str(int(multiphonon_num_directions)),
         "multiphonon_max_order": str(multiphonon_max_order),
+        # 0 = automatic floors only; a positive value means every term of the
+        # pack was built from a truncated vibrational model
+        "min_phonon_energy_meV": f"{float(min_phonon_energy_meV):.17g}",
     }
     if phonopy_yaml is not None:
         meta["phonopy_yaml_sha256"] = file_sha256(phonopy_yaml)

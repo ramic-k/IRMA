@@ -25,6 +25,7 @@ from irma.gui.element_table import (
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
     form_section, init_form_styles, parse_float, parse_int)
+from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.mlip.calculators import POTENTIALS
 
 _TARGETS = ("endf", "spectra", "ncrystal")
@@ -322,6 +323,7 @@ HELP = {
         "  1/2: directional input files computed from the phonopy calculation.\n\n"
         "Not applicable to disordered bundles: the CLI rejects an explicit "
         "mode there, since they always use the DOS-driven classic option."),
+    "emit_min_phonon_energy": MIN_PHONON_ENERGY_HELP,
     "emit_elastic_format": (
         "ENDF target only. Elastic output convention of the emitted ENDF "
         "input files (--elastic-format).\n\n"
@@ -586,6 +588,10 @@ class MlipPanel(ttk.Frame):
             g, "elastic format:", ["default", "mef", "sef"],
             default="default", help_text=HELP["emit_elastic_format"])
         self.emit_elastic_format.pack(fill=tk.X, pady=2)
+        self.emit_min_phonon_energy = LabeledEntry(
+            g, "min phonon energy [meV]:", default="", width=8,
+            help_text=HELP["emit_min_phonon_energy"])
+        self.emit_min_phonon_energy.pack(fill=tk.X, pady=2)
         self.material_id = LabeledEntry(g, "material id (opt):", default="",
                                         width=18,
                                         help_text=HELP["material_id"])
@@ -855,6 +861,9 @@ class MlipPanel(ttk.Frame):
         if "endf" in targets:
             if self.emit_inelastic_mode.get() != "default":
                 cmd += ["--inelastic-mode", self.emit_inelastic_mode.get()]
+            if self.emit_min_phonon_energy.get().strip():
+                cmd += ["--min-phonon-energy",
+                        f"{parse_float('min phonon energy [meV]', self.emit_min_phonon_energy.get()):g}"]
             if self.emit_elastic_format.get() != "default":
                 cmd += ["--elastic-format", self.emit_elastic_format.get()]
         if "ncrystal" in targets and self.material_id.get().strip():

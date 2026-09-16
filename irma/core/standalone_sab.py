@@ -114,6 +114,7 @@ def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
                          num_directions, multiphonon_num_directions, num_jobs,
                          sigma_mev,
                          multiphonon_max_order,
+                         min_phonon_energy_mev=0.0,
                          scattering_lengths_json=None,
                          incoherent_cross_sections_json=None,
                          site_scattering_lengths_angstrom=None,
@@ -146,6 +147,7 @@ def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
         "__noncubic_model__",
         input_ids,
         tuple(int(x) for x in mesh_dim),
+        float(min_phonon_energy_mev),
     )
     context_key = (
         input_ids,
@@ -156,6 +158,7 @@ def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
         int(max(1, int(num_jobs))),
         float(sigma_mev),
         int(multiphonon_max_order),
+        float(min_phonon_energy_mev),
         scattering_lengths_json,
         incoherent_cross_sections_json,
         None if site_scattering_lengths_angstrom is None else _grid_digest(
@@ -185,6 +188,7 @@ def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
             "q_chunk_size": 20000,
             "multiphonon_num_directions": int(multiphonon_num_directions),
             "multiphonon_max_order": int(multiphonon_max_order),
+            "min_phonon_energy_mev": float(min_phonon_energy_mev),
         })()
         if model_context is None:
             # Positional/keyword form kept stub-compatible: tests monkeypatch
@@ -302,6 +306,8 @@ def run_noncubic_standalone_sab(
 
     multiphonon_max_order = int(controls.multiphonon_max_order)
     auto_multiphonon_order = bool(getattr(controls, "auto_multiphonon_order", False))
+    min_phonon_energy_mev = float(
+        getattr(controls, "min_phonon_energy_mev", 0.0))
     num_directions = int(controls.num_directions)
     multiphonon_num_directions = int(controls.multiphonon_num_directions)
     sigma_mev = 0.0 if sigma_mev is None else float(sigma_mev)
@@ -346,6 +352,7 @@ def run_noncubic_standalone_sab(
         multiphonon_num_directions=multiphonon_num_directions,
         num_jobs=num_jobs,
         sigma_mev=sigma_mev, multiphonon_max_order=multiphonon_max_order,
+        min_phonon_energy_mev=min_phonon_energy_mev,
         scattering_lengths_json=scattering_lengths_json,
         incoherent_cross_sections_json=incoherent_cross_sections_json,
         site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
@@ -371,6 +378,7 @@ def run_noncubic_standalone_sab(
         sigma_mev=sigma_mev,
         multiphonon_max_order=multiphonon_max_order,
         auto_multiphonon_order=auto_multiphonon_order,
+        min_phonon_energy_mev=min_phonon_energy_mev,
         represented_principal_site_count=represented_principal_site_count,
         principal_group_index=principal_group_index,
         site_groups=site_groups,

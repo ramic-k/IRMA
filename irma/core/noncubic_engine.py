@@ -500,6 +500,9 @@ def _cfa_setup_mesh_and_grids(S):
     # authoritative.
 
     phase_start = time.time()
+    # Filled when a user phonon-energy cutoff is active; carried into the
+    # run metadata and printed once per temperature.
+    phonon_cutoff_summary = None
     precomputed_tdm = getattr(args, "precomputed_thermal_mats", None)
     if precomputed_tdm is not None:
         # The engine's MT4 step already ran ThermalDisplacementMatrices on the
@@ -550,6 +553,8 @@ def _cfa_setup_mesh_and_grids(S):
                 masses_amu=np.asarray(primitive.masses, dtype=float),
                 atom_symbols=[str(s) for s in primitive.symbols],
                 atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
+                min_phonon_energy_mev=float(
+                    getattr(args, "min_phonon_energy_mev", 0.0)),
                 phonopy_mesh_object=mesh,
             )
             thermal_mats = compute_thermal_displacement_matrices(
@@ -561,6 +566,41 @@ def _cfa_setup_mesh_and_grids(S):
                 f"Thermal displacement matrices ready in {time.time() - phase_start:.1f} s",
                 flush=True,
             )
+    _cutoff_mev = float(getattr(args, "min_phonon_energy_mev", 0.0))
+    if _cutoff_mev > 0.0:
+        # Report what the cutoff removed, whichever branch supplied the
+        # displacement matrices: the summary rebuilds both mode populations
+        # on the mesh at this temperature (two cheap per-mode sums), so a
+        # truncated model announces itself and records itself in the
+        # metadata. Cached per temperature with the model context.
+        from irma.core.phonopy_io import (
+            PhonopyMeshData, format_phonon_cutoff_summary,
+            phonon_cutoff_summary as _summary)
+        _summary_ctx = (context.get("_model_context")
+                        if isinstance(context, dict) else None)
+        _summary_cache = (_summary_ctx.setdefault("phonon_cutoff_summary_by_temperature", {})
+                          if isinstance(_summary_ctx, dict) else None)
+        _summary_key = round(float(args.temperature), 9)
+        if _summary_cache is not None and _summary_key in _summary_cache:
+            phonon_cutoff_summary = _summary_cache[_summary_key]
+        else:
+            phonon_cutoff_summary = _summary(PhonopyMeshData(
+                qpoints=np.asarray(mesh.qpoints, dtype=float),
+                frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
+                eigenvectors=reshape_mesh_eigenvectors(
+                    np.asarray(mesh.eigenvectors), len(primitive.masses)),
+                weights=np.asarray(
+                    getattr(mesh, "weights", np.ones(len(mesh.qpoints))), dtype=float),
+                masses_amu=np.asarray(primitive.masses, dtype=float),
+                atom_symbols=[str(s) for s in primitive.symbols],
+                atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
+                min_phonon_energy_mev=_cutoff_mev,
+                phonopy_mesh_object=mesh,
+            ), args.temperature)
+            if _summary_cache is not None:
+                _summary_cache[_summary_key] = phonon_cutoff_summary
+        for _line in format_phonon_cutoff_summary(phonon_cutoff_summary):
+            print(_line, flush=True)
     kT_meV = KB_MEV_PER_K * args.temperature
     if args.temperature <= BOSE_T0_LIMIT_K:
         incoherent_one_phonon_mode_occupancies = np.zeros_like(
@@ -578,7 +618,7 @@ def _cfa_setup_mesh_and_grids(S):
         )
 
     _loc = locals()
-    for _n in ['chunk_size', 'coherent_atom_prefactors', 'coherent_blocks', 'de_used', 'directions', 'dq_used', 'e_bin_widths_mev', 'e_edges_mev', 'e_grid_mev', 'e_max_used', 'e_min_used', 'frequency_factor_to_thz', 'incoherent_approx_prefactors', 'incoherent_one_phonon_mesh_qpoints', 'incoherent_one_phonon_mesh_weights', 'incoherent_one_phonon_mode_eigvecs_valid', 'incoherent_one_phonon_mode_energies_mev', 'incoherent_one_phonon_mode_frequencies_thz', 'incoherent_one_phonon_mode_occupancies', 'incoherent_one_phonon_mode_weights', 'incoherent_prefactors', 'max_mode_energy_mev', 'mesh', 'mev_to_joule', 'multiphonon_dir_chunk_size', 'multiphonon_mode_eigvecs_valid', 'multiphonon_mode_energies_mev', 'multiphonon_mode_frequencies_thz', 'multiphonon_mode_projection_components', 'multiphonon_mode_weights', 'multiphonon_num_directions', 'multiphonon_q_weight_norm', 'multiphonon_star_counts', 'need_coherent_n1', 'need_exact_incoherent_n1', 'need_incoherent_approx_n1', 'num_jobs', 'phase_start', 'primitive', 'q_bin_sample_mags', 'q_bin_sample_weights', 'q_cart_physical', 'q_center_mags', 'q_center_weights', 'q_edges_ang_inv', 'q_grid_ang_inv', 'q_mags_physical', 'q_max_used', 'q_min_used', 'q_red', 'q_shell_index', 'rec_lat_no_2pi', 'sample_weights', 'scattering_lengths', 'shell_blocks', 'sigma_coh_by_atom', 'sigma_inc', 'sigma_inc_by_atom', 'sigma_total_by_atom', 'start', 'thermal_mats', 'unit_conversion', 'unit_directions']:
+    for _n in ['chunk_size', 'coherent_atom_prefactors', 'coherent_blocks', 'de_used', 'directions', 'dq_used', 'e_bin_widths_mev', 'e_edges_mev', 'e_grid_mev', 'e_max_used', 'e_min_used', 'frequency_factor_to_thz', 'incoherent_approx_prefactors', 'incoherent_one_phonon_mesh_qpoints', 'incoherent_one_phonon_mesh_weights', 'incoherent_one_phonon_mode_eigvecs_valid', 'incoherent_one_phonon_mode_energies_mev', 'incoherent_one_phonon_mode_frequencies_thz', 'incoherent_one_phonon_mode_occupancies', 'incoherent_one_phonon_mode_weights', 'incoherent_prefactors', 'max_mode_energy_mev', 'mesh', 'mev_to_joule', 'multiphonon_dir_chunk_size', 'multiphonon_mode_eigvecs_valid', 'multiphonon_mode_energies_mev', 'multiphonon_mode_frequencies_thz', 'multiphonon_mode_projection_components', 'multiphonon_mode_weights', 'multiphonon_num_directions', 'multiphonon_q_weight_norm', 'multiphonon_star_counts', 'need_coherent_n1', 'need_exact_incoherent_n1', 'need_incoherent_approx_n1', 'num_jobs', 'phase_start', 'primitive', 'q_bin_sample_mags', 'q_bin_sample_weights', 'q_cart_physical', 'q_center_mags', 'q_center_weights', 'q_edges_ang_inv', 'q_grid_ang_inv', 'q_mags_physical', 'q_max_used', 'q_min_used', 'q_red', 'phonon_cutoff_summary', 'q_shell_index', 'rec_lat_no_2pi', 'sample_weights', 'scattering_lengths', 'shell_blocks', 'sigma_coh_by_atom', 'sigma_inc', 'sigma_inc_by_atom', 'sigma_total_by_atom', 'start', 'thermal_mats', 'unit_conversion', 'unit_directions']:
         # STRICT lookup: a renamed/missing local must fail HERE with a
         # KeyError naming it, not plant a silent None for a later phase
         # (names that are legitimately branch-dependent are initialized
@@ -1021,6 +1061,8 @@ def _cfa_coherent_one_phonon(S):
             "q_mags_physical": q_mags_physical,
             "dynamical_matrix": mesh.dynamical_matrix,
             "frequency_factor_to_thz": frequency_factor_to_thz,
+            "min_phonon_energy_mev": float(
+                getattr(args, "min_phonon_energy_mev", 0.0)),
             "thermal_mats": thermal_mats,
             "positions_t": primitive.scaled_positions.T,
             "coherent_atom_prefactors": coherent_atom_prefactors,
@@ -1742,6 +1784,7 @@ def _cfa_assemble_outputs(S):
     e_min_used = getattr(S, "e_min_used")
     estimated_multiphonon_beta_support = getattr(S, "estimated_multiphonon_beta_support")
     estimated_one_phonon_beta_support = getattr(S, "estimated_one_phonon_beta_support")
+    phonon_cutoff_summary = getattr(S, "phonon_cutoff_summary", None)
     incoherent_one_phonon_mesh_qpoints = getattr(S, "incoherent_one_phonon_mesh_qpoints")
     incoherent_one_phonon_mesh_weights = getattr(S, "incoherent_one_phonon_mesh_weights")
     max_mode_energy_mev = getattr(S, "max_mode_energy_mev")
@@ -1844,6 +1887,11 @@ def _cfa_assemble_outputs(S):
         "coherent_powder_average": "directions",
         "multiphonon_num_directions": multiphonon_num_directions,
         "multiphonon_max_order": args.multiphonon_max_order,
+        # The user phonon-energy cutoff (0 = the automatic floors only) and,
+        # when active, what it removed: a truncated vibrational model must
+        # say so in its own metadata.
+        "min_phonon_energy_meV": float(getattr(args, "min_phonon_energy_mev", 0.0)),
+        "phonon_cutoff": phonon_cutoff_summary,
         # The multiphonon tail (orders n>=2) is the incoherent-APPROXIMATION model
         # (sigma_total-scaled per-atom self kernel), NOT exact coherent multiphonon
         # scattering: even in inelastic_mode=2 only the ONE-phonon term carries
@@ -2034,6 +2082,7 @@ def run_noncubic_sab_inprocess(
     sigma_mev: float = 0.0,
     multiphonon_max_order: int = 100,
     auto_multiphonon_order: bool = False,
+    min_phonon_energy_mev: float = 0.0,
     material_name: str = "material",
     represented_principal_site_count: int | None = None,
     principal_group_index: int = 0,
@@ -2091,6 +2140,7 @@ def run_noncubic_sab_inprocess(
         q_chunk_size=20000,
         multiphonon_max_order=int(multiphonon_max_order),
         auto_multiphonon_order=bool(auto_multiphonon_order),
+        min_phonon_energy_mev=float(min_phonon_energy_mev),
         inelastic_mode=0 if inelastic_mode is None else int(inelastic_mode),
         represented_principal_site_count=(
             None

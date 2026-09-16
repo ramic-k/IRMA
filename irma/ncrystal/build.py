@@ -477,7 +477,8 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         num_directions=cfg.num_directions,
         multiphonon_num_directions=cfg.multiphonon_num_directions,
         multiphonon_max_order=cfg.effective_multiphonon_max_order,
-        auto_multiphonon_order=cfg.auto_multiphonon_order)
+        auto_multiphonon_order=cfg.auto_multiphonon_order,
+        min_phonon_energy_mev=float(cfg.min_phonon_energy_meV))
 
     result = run_noncubic_standalone_sab(
         alpha=np.asarray(alpha, float),
@@ -517,6 +518,7 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         temperature_K=mat.temperature_K, num_directions=cfg.num_directions,
         multiphonon_num_directions=cfg.multiphonon_num_directions,
         multiphonon_max_order=cfg.multiphonon_max_order,
+        min_phonon_energy_meV=float(cfg.min_phonon_energy_meV),
         inelastic_mode=cfg.inelastic_mode,
         born=mat.born,
         extra={

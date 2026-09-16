@@ -356,8 +356,8 @@ def preflight_emit_targets(bundle, targets, *, out_dir=None, overwrite=False,
 def emit_endf_decks(bundle: Bundle, *, temperature_k, mats, nuclides=None,
                     overrides=None, out_dir=None, overwrite=False,
                     allow_unstable=False, inelastic_mode=None,
-                    elastic_format="mef", _preview=False,
-                    progress=print) -> list:
+                    elastic_format="mef", min_phonon_energy_mev=0.0,
+                    _preview=False, progress=print) -> list:
     """One deck per principal scatterer; layout depends on disordered.
 
     ``inelastic_mode`` selects the emitted deck's physics level (0, 1, or
@@ -417,6 +417,7 @@ def emit_endf_decks(bundle: Bundle, *, temperature_k, mats, nuclides=None,
                              out_dir, progress, overwrite=overwrite,
                              inelastic_mode=(2 if inelastic_mode is None
                                              else inelastic_mode),
+                             min_phonon_energy_mev=min_phonon_energy_mev,
                              elastic_format=elastic_format,
                              allow_unstable=allow_unstable,
                              _preview=_preview)
@@ -518,6 +519,7 @@ def _uniform_rho(e_mev, rho):
 
 def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
                       progress, overwrite=False, inelastic_mode=2,
+                      min_phonon_energy_mev=0.0,
                       elastic_format="mef", allow_unstable=False,
                       _preview=False):
     """_preview (tests/smoke only): coarse grids + tiny sampling + low
@@ -571,8 +573,11 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
                 f"{_qpath(bundle.phonopy_yaml)} /",
                 f"{mesh[0]} {mesh[1]} {mesh[2]} "
                 f"{2 if _preview else _emit_ncpu()} 0 /",
-                f"{sampling[0]} {sampling[1]} {sampling[2]} /",
             ]
+            if float(min_phonon_energy_mev) > 0.0:
+                # the optional one-value card before Card 6g
+                lines.append(f"{float(min_phonon_energy_mev):g} /")
+            lines.append(f"{sampling[0]} {sampling[1]} {sampling[2]} /")
         else:
             # Card 6e: every non-principal species' own spectrum, so its
             # elastic W'(T) uses its own lambda (no inherited-lambda
@@ -759,7 +764,7 @@ def _grid_section(bundle):
 def emit_spectra_yaml(bundle: Bundle, *, temperature_k,
                       nuclides=None, overrides=None, out_path=None,
                       overwrite=False, allow_unstable=False,
-                      progress=print):
+                      min_phonon_energy_mev=0.0, progress=print):
     """Spectra config in the real SpectraConfig schema (no unknown keys).
 
     Scatterers are emitted in the bundle's resolved species order. Unlike
@@ -792,6 +797,7 @@ def emit_spectra_yaml(bundle: Bundle, *, temperature_k,
             "physics": {
                 "inelastic_mode": 2,
                 "max_phonon_order": "auto",
+                "min_phonon_energy_meV": float(min_phonon_energy_mev),
                 "n_directions": SAMPLING[0],
                 "multiphonon_directions": SAMPLING[1],
                 "elastic": True,
@@ -863,7 +869,8 @@ def emit_spectra_yaml(bundle: Bundle, *, temperature_k,
 
 def emit_ncrystal_yaml(bundle: Bundle, *, temperature_k, material_id=None,
                        nuclides=None, overrides=None, out_path=None,
-                       overwrite=False, progress=print):
+                       overwrite=False, min_phonon_energy_mev=0.0,
+                       progress=print):
     """NCrystal exporter config (real NCrystalExportConfig schema).
 
     Crystalline materials only in v1: the exporter's coherent-elastic story
@@ -889,6 +896,7 @@ def emit_ncrystal_yaml(bundle: Bundle, *, temperature_k, material_id=None,
             "num_directions": SAMPLING[0],
             "multiphonon_num_directions": SAMPLING[1],
             "multiphonon_max_order": "auto",
+            "min_phonon_energy_meV": float(min_phonon_energy_mev),
             "gain_side": "scaled_sym",
             "elastic": True,
             "coherent_partition_mode": "auto",

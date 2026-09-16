@@ -82,6 +82,7 @@ class NCrystalExportConfig:
     num_directions: int = 10000
     multiphonon_num_directions: int = 1000
     multiphonon_max_order: Union[int, str] = "auto"
+    min_phonon_energy_meV: float = 0.0      # remove modes <= this (0 = automatic floors only)
     jobs: Optional[int] = None
     gain_side: str = "scaled_sym"
     elastic: bool = True
@@ -162,6 +163,14 @@ class NCrystalExportConfig:
         else:
             self.multiphonon_max_order = _require_positive_int(
                 self.multiphonon_max_order, "multiphonon_max_order")
+        try:
+            from irma.core.phonopy_io import validate_min_phonon_energy_mev
+            self.min_phonon_energy_meV = validate_min_phonon_energy_mev(
+                self.min_phonon_energy_meV)
+        except (TypeError, ValueError) as exc:
+            raise SpectraConfigError(
+                f"export.min_phonon_energy_meV must be a finite number >= 0 "
+                f"(meV), got {self.min_phonon_energy_meV!r}: {exc}") from None
         self.num_directions = _require_positive_int(
             self.num_directions, "num_directions")
         self.multiphonon_num_directions = _require_positive_int(

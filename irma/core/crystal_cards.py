@@ -590,6 +590,21 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
             born_path_nc = reader.read_string()
             print(f"  Non-cubic: BORN path = {born_path_nc}")
 
+        # Optional Card 6f-cutoff: a single minimum phonon energy in meV.
+        # A 2/3-value card here is the legacy/current Card 6g, so old decks
+        # remain unambiguous and unchanged.
+        reader.card("optional minimum phonon energy / Card 6g")
+        fvals_nc_ctrl = reader.read_card_floats()
+        min_phonon_energy_mev = 0.0
+        if len(fvals_nc_ctrl) == 1:
+            min_phonon_energy_mev = float(fvals_nc_ctrl[0])
+            reader.require(
+                np.isfinite(min_phonon_energy_mev)
+                and min_phonon_energy_mev >= 0.0,
+                "minimum phonon energy must be finite and nonnegative (meV).")
+            reader.card("Card 6g (ndir mpdir [auto])")
+            fvals_nc_ctrl = reader.read_card_floats()
+
         # Card 6g: noncubic inelastic controls.
         # Decks must provide:
         #   num_directions multiphonon_num_directions [auto_multiphonon_order] /
@@ -604,8 +619,6 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
         # beyond the tabulated law are handled by THERMR's
         # short-collision-time extension (driven by the tape's effective
         # temperature), not by IRMA.
-        reader.card("Card 6g (ndir mpdir [auto])")
-        fvals_nc_ctrl = reader.read_card_floats()
         reader.require(
             len(fvals_nc_ctrl) != 4,
             "Card 6g takes at most 3 fields: num_directions "
@@ -638,6 +651,7 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
             multiphonon_num_directions=multiphonon_num_directions_nc,
             multiphonon_max_order=multiphonon_max_order_nc,
             auto_multiphonon_order=bool(auto_multiphonon_order_nc),
+            min_phonon_energy_mev=min_phonon_energy_mev,
         )
         print(
             "  Non-cubic controls: "
@@ -655,7 +669,8 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
             from irma.core.phonopy_io import load_phonopy_mesh
             nc_mesh_data = load_phonopy_mesh(
                 phonopy_yaml_path, [mesh_nx, mesh_ny, mesh_nz],
-                born_path=born_path_nc)
+                born_path=born_path_nc,
+                min_phonon_energy_mev=min_phonon_energy_mev)
         except DeckError:
             raise   # deck problems keep their card/line context
         except Exception as exc:
@@ -697,6 +712,27 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
         crystal_info['nc_atom_type_site_groups'] = nc_atom_type_site_groups
         crystal_info['principal_nc_site_indices'] = principal_nc_site_indices
         crystal_info['nc_inelastic_controls'] = nc_inelastic_controls
+        crystal_info['nc_min_phonon_energy_mev'] = min_phonon_energy_mev
+        if min_phonon_energy_mev > 0.0:
+            # Count only what the cutoff removes beyond the automatic floors;
+            # the displacement consequence is reported per temperature by the
+            # engine (phonon_cutoff_summary).
+            from irma.core.phonopy_io import mode_floor_mask as _floor_mask
+            _energies_mev = nc_mesh_data.frequencies_ev.reshape(-1) * 1000.0
+            _n_branches = nc_mesh_data.frequencies_ev.shape[1]
+            _baseline = _floor_mask(_energies_mev, nc_mesh_data.qpoints, _n_branches, 0.0)
+            _kept = _floor_mask(_energies_mev, nc_mesh_data.qpoints, _n_branches,
+                                min_phonon_energy_mev)
+            _removed = _baseline & ~_kept
+            _weights = np.repeat(np.asarray(nc_mesh_data.weights, dtype=float), _n_branches)
+            print(
+                f"User phonon-energy cutoff: {min_phonon_energy_mev:g} meV removes "
+                f"{int(np.count_nonzero(_removed))} positive mode(s) beyond the "
+                f"automatic floors ({100.0 * _weights[_removed].sum() / _weights.sum():.4f}% "
+                f"of the mode weight); {int(np.count_nonzero(~_baseline))} mode(s) were "
+                f"already excluded as imaginary or below the floors. No replacement "
+                f"spectrum is added."
+            )
         print(f"  Non-cubic: principal scatterer spans "
               f"{len(principal_nc_site_indices)} phonopy site(s)")
 

@@ -83,6 +83,7 @@ When `inelastic_mode` is 1 or 2, the sub-frame exposes:
 | `ndir` | `10000` | One-phonon powder-average direction count: the validation-campaign sampling, well converged for production runs; drop to ~4000 for a faster look or ~1000 for a quick one. Cost is roughly linear. |
 | `mpdir` | `1000` | Multiphonon powder-average directions over the unit sphere (golden-spiral / Fibonacci); converged by ~50–100, so the default carries ample margin. |
 | Auto-size multiphonon order | **on** | When on (the default), IRMA sizes the multiphonon order `nphon` from the anisotropic Debye-Waller physics. When off, your Card 3 `nphon` is honored exactly (see below). |
+| Minimum phonon energy [meV] | blank | Removes every phonon mode with energy at or below the value from all terms (nothing replaces them; the run is a truncated vibrational model, and the log reports the removed weight and the Debye-Waller change, with a warning above 1%). Blank or 0 keeps the automatic floors, which already exclude imaginary modes. Written as the optional one-value card before Card 6g. |
 | Use BORN corrections (NAC) | off | Non-analytical correction for polar materials; checking it reveals a BORN-file selector. Leave unchecked for non-polar materials such as graphite. |
 
 With the anisotropic Debye-Waller factor the multiphonon order needed to reach the free-gas limit grows with Q, so a hand-set `nphon` that is fine at low Q will silently truncate the high-Q rows of the cross section. With the default grids (`Beta max = 5 eV`, graphite AWR) the grid reaches Q ≈ 98 Å⁻¹, where an order near 223 is needed while the default `nphon` is 100. The GUI therefore ships **Auto-size multiphonon order** on. If you turn it off (a deliberate low-order study), IRMA honors your `nphon` exactly and prints a terminal warning when it is too low.
@@ -425,7 +426,9 @@ element symbol with hand-entered isotope constants.
 ### Physics, Grid, and the elastic line
 
 **Physics** holds the engine controls: **max phonon order** (`auto`
-recommended), and for modes 1/2 the powder-average **directions**,
+recommended), **min phonon energy** (blank; a positive value removes the
+modes at or below it from every term, see the ENDF part's field of the
+same name), and for modes 1/2 the powder-average **directions**,
 **multiphonon dirs**, and worker **jobs**, plus the **elastic line** switch,
 **elastic kind** (`both`, `coherent`, `incoherent`), and two toggles:
 **include energy-gain side** (anti-Stokes by detailed balance, on by default)
@@ -493,7 +496,9 @@ material block as the other tabs: **phonopy.yaml** (plus optional **BORN** /
 scatterer table, which starts as one empty row and autofills its nuclear
 constants when you type a symbol; then the export settings
 (**material_id**, **inelastic mode**, the powder-average **directions** and
-**multiphonon dirs**, the **multiphonon order**, the incoherent-elastic
+**multiphonon dirs**, the **multiphonon order**, **min phonon energy**
+(the same truncation as on the ENDF and spectra tabs; the pack's provenance
+records it), the incoherent-elastic
 Debye-Waller treatment, **jobs**) and the shared **S(α,β) grid** section, which
 is either the converged automatic grid or an explicit alpha/beta pair.
 

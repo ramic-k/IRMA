@@ -137,6 +137,7 @@ class PhysicsConfig:
     inelastic_mode: Union[int, str] = 2     # 0/'dos' | 1/'incoherent' | 2/'coherent' (exact 1ph; the validated default)
     dos_source: str = "file"                # mode-0 DOS origin: file (per-scatterer) | phonopy
     max_phonon_order: Union[int, str] = "auto"   # int >= 1 or "auto"
+    min_phonon_energy_meV: float = 0.0      # modes 1/2: remove modes <= this (0 = automatic floors only)
     n_directions: int = 10000
     multiphonon_directions: int = 1000
     jobs: Optional[int] = None          # worker processes; null = auto (all CPU cores)
@@ -260,6 +261,14 @@ class SpectraConfig:
             raise SpectraConfigError(
                 f"physics.max_phonon_order must be an int or 'auto', got "
                 f"{physics.max_phonon_order!r}")
+        try:
+            from irma.core.phonopy_io import validate_min_phonon_energy_mev
+            physics.min_phonon_energy_meV = validate_min_phonon_energy_mev(
+                physics.min_phonon_energy_meV)
+        except (TypeError, ValueError) as exc:
+            raise SpectraConfigError(
+                f"physics.min_phonon_energy_meV must be a finite number >= 0 "
+                f"(meV), got {physics.min_phonon_energy_meV!r}: {exc}") from None
         physics.elastic = _strict_bool("physics.elastic", physics.elastic)
         physics.include_energy_gain = _strict_bool(
             "physics.include_energy_gain", physics.include_energy_gain)
@@ -975,6 +984,7 @@ def run_spectra(cfg: SpectraConfig, *, workdir=None, label=None, progress=print)
         num_directions=p.n_directions,
         multiphonon_num_directions=p.multiphonon_directions,
         multiphonon_max_order=max_order, auto_multiphonon_order=auto_order,
+        min_phonon_energy_mev=float(p.min_phonon_energy_meV),
         jobs=p.jobs,  # None -> compute_spectrum auto-detects all cores
         force_constants=m.force_constants, force_sets=m.force_sets, born_path=m.born,
         site_scattering_lengths_angstrom=None,
@@ -1089,6 +1099,7 @@ def run_map(cfg, *, q_min=0.0, q_max=None, dQ_map=None, angle_range=None,
         num_directions=p.n_directions,
         multiphonon_num_directions=p.multiphonon_directions,
         multiphonon_max_order=max_order, auto_multiphonon_order=auto_order,
+        min_phonon_energy_mev=float(p.min_phonon_energy_meV),
         jobs=p.jobs,
         force_constants=m.force_constants, force_sets=m.force_sets, born_path=m.born,
         sigma_coeffs=ins.sigma_coeffs, resolution_shape=ins.resolution_shape,
