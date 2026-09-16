@@ -20,7 +20,7 @@ import numpy as np
 
 from irma.core.constants import AMASSN
 from irma.core.grids import (
-    generate_alpha_grid, generate_beta_grid_for_iint,
+    describe_beta_grid, generate_alpha_grid, generate_beta_grid_for_iint,
     grid_reference_temperature_K)
 from .config import NCrystalExportConfig
 from .convert import pack_from_irma_sab
@@ -78,7 +78,7 @@ def _estimate_freq_max_eV(mat) -> float:
     return _load_mesh_and_freq_max_eV(mat)[0]
 
 
-def _auto_beta_grid(cfg, t_ref, recoil_awr):
+def _auto_beta_grid(cfg, t_ref, recoil_awr, progress=print):
     """Build the shared converged beta grid (generate_beta_grid_for_iint,
     lin-lin) AND return a phonopy ``Mesh`` to reuse downstream.
 
@@ -103,10 +103,13 @@ def _auto_beta_grid(cfg, t_ref, recoil_awr):
     else:
         freq_max, mesh_data = _load_mesh_and_freq_max_eV(cfg.material)
         preloaded = mesh_data.phonopy_mesh_object
-    beta = generate_beta_grid_for_iint(
+    beta, details = generate_beta_grid_for_iint(
         freq_max, t_ref, iint=1, awr=float(recoil_awr),
         n_lower=cfg.n_lower, n_phonon=cfg.n_phonon,
-        n_upper=cfg.n_upper, beta_max_eV=cfg.beta_max_eV)
+        n_upper=cfg.n_upper, beta_max_eV=cfg.beta_max_eV,
+        evaluation_temperatures_K=[float(cfg.material.temperature_K)],
+        return_details=True)
+    progress("  " + describe_beta_grid(details))
     return beta, preloaded
 
 
@@ -385,7 +388,8 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
     t_ref = grid_reference_temperature_K(cfg.lat, float(cfg.material.temperature_K))
     auto_beta, preloaded_mesh = (
         (None, None) if cfg.grid_mode == "explicit"
-        else _auto_beta_grid(cfg, t_ref, min(g.awr for g in groups)))
+        else _auto_beta_grid(cfg, t_ref, min(g.awr for g in groups),
+                             progress=progress))
 
     packs: list[IRMAPack] = []
     # Geometry + dynamics for the NCMAT: prefer the EXACT positions/lattice the

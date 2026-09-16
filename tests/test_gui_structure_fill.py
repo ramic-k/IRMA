@@ -180,6 +180,7 @@ def test_deck_import_fills_nothing(app, tmp_path):
     """Importing a mode-2 deck that NAMES a phonopy.yaml must apply the
     deck's own Card 6c/6d, never the model's."""
     _setup_mode2(app)
+    app.za.set("6012")          # the row below is C-12: the deck must agree
     _set_text(app.atoms_text,
               "6 12 11.907856 6.6484 0.001 2  0 0 0.25  0 0 0.75")
     for widget, value in zip((app.latt_a, app.latt_b, app.latt_c,
@@ -247,7 +248,7 @@ def test_preview_text_states_the_assumptions(app):
     assert "NATURAL ELEMENT" in text
     assert "A = 0" in text
     assert "deuterium" in text                  # elements, not isotopes
-    assert "edited AFTERWARDS" in text
+    assert "Apply" in text and "relabels" in text   # isotopes come from ZA
     assert "2.460600" in text and "11.907820" in text
 
 

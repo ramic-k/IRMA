@@ -158,7 +158,7 @@ def test_principal_scatterer_mismatch_is_deck_error():
 4 9 8.93 7.79 0.0018 1/
 0.0 0.0 0.0/
 """
-    _expect(deck, "Principal scatterer", "not found", "Card 6d")
+    _expect(deck, "Card 4 ZA=6012 (C-12)", "Card 6d", "No row has Z=6")
 
 _SPLIT_PRINCIPAL_DECK = """20 /
 'duplicate principal types'/

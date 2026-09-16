@@ -400,15 +400,15 @@ class EndfFormMixin:
         ttk.Radiobutton(
             coh_elas_dw_row, text="0 — legacy cubic",
             variable=self.inelastic_mode_var, value=0,
-            command=self._toggle_noncubic).pack(side=tk.LEFT, padx=(0, 8))
+            command=self._on_inelastic_mode_click).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Radiobutton(
             coh_elas_dw_row, text="1 — incoherent approx.",
             variable=self.inelastic_mode_var, value=1,
-            command=self._toggle_noncubic).pack(side=tk.LEFT, padx=(0, 8))
+            command=self._on_inelastic_mode_click).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Radiobutton(
             coh_elas_dw_row, text="2 — coherent (exact 1-phonon)",
             variable=self.inelastic_mode_var, value=2,
-            command=self._toggle_noncubic).pack(side=tk.LEFT)
+            command=self._on_inelastic_mode_click).pack(side=tk.LEFT)
 
         # Sub-frame that is shown/hidden by either checkbox
         self._nc_subframe = ttk.Frame(nc_body)
@@ -946,6 +946,25 @@ class EndfFormMixin:
         self._update_special_scatter_note()
         self._update_nphon_state()
 
+    IINT_LOGLIN = "0 — log-lin (INT=4)"
+    IINT_LINLIN = "1 — lin-lin (INT=2)"
+
+    def _on_inelastic_mode_click(self):
+        """A user's click on an inelastic_mode radio button.
+
+        Besides the layout update the variable trace already does, the
+        click sets the Card 4 interpolation default that suits the mode:
+        the coherent one-phonon law (mode 2) has structural near-zeros
+        that log interpolation floors, so it gets lin-lin; modes 0 and 1
+        get the classic log-lin. Only a click does this, so a deck import
+        (which sets the mode variable and then the deck's own iint) and the
+        user's later choice of iint are left alone.
+        """
+        self._toggle_noncubic()
+        if hasattr(self, "iint"):
+            self.iint.set(self.IINT_LINLIN if self.inelastic_mode_var.get() == 2
+                          else self.IINT_LOGLIN)
+
     def _toggle_noncubic(self):
         """Show/hide the phonopy parameter sub-frame based on inelastic_mode."""
         if self.inelastic_mode_var.get() > 0:
@@ -1020,8 +1039,10 @@ class EndfFormMixin:
         "    always come from one table entry.\n"
         "  - A phonopy model names ELEMENTS, not isotopes. It typically\n"
         "    labels deuterium as H, and it says nothing about enrichment.\n"
-        "  - An isotopic or enriched material must be edited AFTERWARDS:\n"
-        "    set A and the matching constants on the affected rows by hand.\n"
+        "  - For an isotope, set ZA on the Scattering tab and press 'Apply\n"
+        "    ZA': it relabels that element's row with the isotope's identity\n"
+        "    and constants (positions kept). Enrichment or a nuclide without\n"
+        "    tabulated constants is edited on the row by hand.\n"
         "  - Positions are the phonopy PRIMITIVE cell's fractional\n"
         "    coordinates, which is the cell inelastic_mode 1/2 requires.\n\n"
         "Apply replaces the lattice fields AND the whole atom block; Cancel\n"
@@ -1184,23 +1205,46 @@ class EndfFormMixin:
     # ------------------------------------------------------------------
     # Tab 2: Scattering Parameters
     # ------------------------------------------------------------------
-    def _fill_from_za(self):
-        """Fill AWR + sigma_free (spr) from the built-in nuclear table.
+    APPLY_ZA_TITLE = "Apply ZA"
 
-        Explicit action, never automatic: the fields carry defaults the
-        user may have edited, and an overwrite must be a deliberate
-        click. spr is derived as sigma_bound * (AWR/(1+AWR))^2 -- the
-        same free<->bound convention the deck writer documents.
-        Energy-dependent nuclides are refused (their tabulated values
-        are resonance-region numbers, not static constants).
+    def _ask_yes_no(self, title, text):
+        """One place for the yes/no dialogs, so tests can answer them."""
+        return bool(messagebox.askyesno(title, text))
+
+    def _set_za_status(self, text):
+        if hasattr(self, "za_status_var"):
+            self.za_status_var.set(text)
+
+    def _fill_from_za(self):
+        """Apply the principal ZA: fill AWR + sigma_free (spr) from the
+        built-in nuclear table, and relabel the atom row of that element
+        to the same nuclide.
+
+        Explicit click only, never automatic: the fields carry values the
+        user may have edited, and an overwrite must be a deliberate click.
+        The whole action is one transaction: a refusal or a cancelled
+        dialog changes nothing, on Card 5 or in the atom block.
+
+        The atom row rule: with exactly one row of the ZA's element, the
+        row is relabelled to the nuclide (A, AWR, b_coh, sigma_inc from
+        the table entry; positions kept) when its constants are the
+        table's own numbers for its current nuclide, and only after a
+        confirmation showing old and new values when they are not (they
+        are then someone's custom constants). Several rows of one element
+        are never chosen between. Nuclides with no tabulated constants,
+        or with energy-dependent ones, are refused outright.
         """
+        from irma.core.crystal_input import (
+            format_atom_row, nuclide_label, principal_row_match, relabel_row,
+            row_constants_match_table, split_za)
         from irma.core.nuclear_data import lookup
+        from irma.gui.deck_text import parse_atoms_text
         za_text = str(self.za.get()).strip()
         if not za_text:
             # The fresh form ships ZA blank (it names the user's material), so
             # an empty field is the ordinary first click here, not a typo.
             messagebox.showerror(
-                "Fill from ZA",
+                self.APPLY_ZA_TITLE,
                 "Enter a ZA first — this button reads the scatterer identity "
                 "and fills AWR and sigma_free from the built-in nuclear "
                 "table.\n\nZA is Z*1000+A (e.g. 6000 for natural carbon, "
@@ -1208,28 +1252,160 @@ class EndfFormMixin:
             return
         try:
             za = int(za_text)
-            z, a = divmod(za, 1000)
+            z, a = split_za(za)
             nuc = lookup((z, a))
         except (KeyError, ValueError) as exc:
             messagebox.showerror(
-                "Fill from ZA",
+                self.APPLY_ZA_TITLE,
                 f"No tabulated scattering constants for ZA="
                 f"{self.za.get()!r} ({exc}).\n\nZA must be Z*1000+A "
                 f"(e.g. 6012 for C-12). The natural element (A=000) "
                 f"usually has constants; isotopes without measured "
-                f"values must be entered manually.")
+                f"values must be entered manually, on Card 5 and in the "
+                f"atom row alike.")
             return
         if nuc.energy_dependent:
             messagebox.showerror(
-                "Fill from ZA",
+                self.APPLY_ZA_TITLE,
                 f"{nuc.symbol} has energy-dependent scattering lengths "
                 f"(resonance region); the tabulated value is not a static "
                 f"constant. Enter constants appropriate for your energy "
                 f"range manually.")
             return
-        self.awr.set(f"{nuc.awr:.6g}")
+        label = nuclide_label(z, a)
         spr = nuc.sigma_bound_b * (nuc.awr / (1.0 + nuc.awr)) ** 2
+
+        # The atom rows: decide the row change before touching anything.
+        atoms_text = self.atoms_text.get("1.0", tk.END) if hasattr(self, "atoms_text") else ""
+        row_note, new_rows = "", None
+        if atoms_text.strip():
+            try:
+                rows = parse_atoms_text(atoms_text)
+            except ValueError as exc:
+                messagebox.showerror(
+                    self.APPLY_ZA_TITLE,
+                    f"The atom types block does not parse, so the row for "
+                    f"{label} cannot be checked:\n\n{exc}\n\nNothing was "
+                    f"changed.")
+                return
+            match = principal_row_match(za, rows)
+            if match["exact"]:
+                i = match["exact"][0]
+                if row_constants_match_table(rows[i]):
+                    row_note = f"atom row {i + 1} is already {label}"
+                else:
+                    row_note = (f"atom row {i + 1} is already {label} and keeps "
+                                f"its own constants (they differ from the table)")
+            elif len(match["same_z"]) == 1:
+                i = match["same_z"][0]
+                old_label = nuclide_label(rows[i]["Z"], rows[i]["A"])
+                try:
+                    new_row, changes = relabel_row(rows[i], za)
+                except (KeyError, ValueError) as exc:
+                    messagebox.showerror(
+                        self.APPLY_ZA_TITLE,
+                        f"Atom row {i + 1} ({old_label}) cannot be relabelled "
+                        f"to {label}: {exc}\n\nNothing was changed.")
+                    return
+                change_text = ", ".join(
+                    f"{name} {old:g} -> {new:g}" if name != "A" else f"A {old} -> {new}"
+                    for name, old, new in changes)
+                if not row_constants_match_table(rows[i]):
+                    if not self._ask_yes_no(
+                            self.APPLY_ZA_TITLE,
+                            f"Atom row {i + 1} ({old_label}) carries constants "
+                            f"that differ from the table entry for {old_label}, "
+                            f"so they look like your own values.\n\n"
+                            f"Replace the row with the table's {label} values?\n"
+                            f"  {change_text}\n\n"
+                            f"Positions are kept. 'No' changes nothing, on Card 5 "
+                            f"either."):
+                        self._set_za_status("nothing changed")
+                        return
+                new_rows = list(rows)
+                new_rows[i] = new_row
+                row_note = (f"atom row {i + 1}: {old_label} -> {label} "
+                            f"({change_text}); positions kept")
+            elif match["same_z"]:
+                listing = "; ".join(
+                    f"row {i + 1}: {nuclide_label(rows[i]['Z'], rows[i]['A'])}"
+                    for i in match["same_z"])
+                messagebox.showerror(
+                    self.APPLY_ZA_TITLE,
+                    f"Several atom rows are Z={z} ({listing}) and none is "
+                    f"{label}. Set the intended row's A and constants by "
+                    f"hand, or set ZA to one of those rows.\n\nNothing was "
+                    f"changed.")
+                return
+            else:
+                row_note = (f"no atom row is Z={z}; the structure's rows must "
+                            f"include {label} before the deck can run")
+        else:
+            row_note = (f"no atom rows yet; fill the structure, then press this "
+                        f"button again to relabel the {nuc.symbol} row")
+
+        # Commit: Card 5, then the atom block, together.
+        self.awr.set(f"{nuc.awr:.6g}")
         self.spr.set(f"{spr:.6g}")
+        if new_rows is not None:
+            self.atoms_text.delete("1.0", tk.END)
+            self.atoms_text.insert("1.0", "\n".join(format_atom_row(r) for r in new_rows) + "\n")
+        model_note = ""
+        if new_rows is not None and self.inelastic_mode_var.get() in (1, 2):
+            model_note = ("; the phonopy model's masses and phonons are not "
+                          "changed by this")
+            if (z, a) in ((1, 2), (1, 3)):
+                model_note += (" (a model that labels these sites H still "
+                               "carries H masses)")
+        self._set_za_status(
+            f"ZA {za} ({label}): AWR {nuc.awr:.6g}, sigma_free {spr:.6g} b; "
+            f"{row_note}{model_note}")
+
+    def _relabel_row_or_abort(self, za, rows):
+        """Run/Save backstop for a principal ZA with no matching atom row.
+
+        With exactly one row of that element whose constants are the
+        table's own, offer to relabel it (the same change 'Apply ZA'
+        makes) and continue; otherwise, or on 'No', abort with the
+        engine's own message. Returns the rows to write.
+        """
+        from irma.core.crystal_input import (
+            format_atom_row, nuclide_label, principal_mismatch_message,
+            principal_row_match, relabel_row, row_constants_match_table)
+        message = principal_mismatch_message(za, rows)
+        if message is None:
+            return rows
+        match = principal_row_match(za, rows)
+        if len(match["same_z"]) == 1:
+            i = match["same_z"][0]
+            try:
+                new_row, changes = relabel_row(rows[i], za)
+            except (KeyError, ValueError):
+                raise ValueError(message)
+            old_label = nuclide_label(rows[i]["Z"], rows[i]["A"])
+            new_label = nuclide_label(match["Z"], match["A"])
+            custom = "" if row_constants_match_table(rows[i]) else (
+                "\n\nThat row's constants differ from the table entry for "
+                f"{old_label}, so they look like your own values.")
+            change_text = ", ".join(
+                f"{name} {old:g} -> {new:g}" if name != "A" else f"A {old} -> {new}"
+                for name, old, new in changes)
+            if self._ask_yes_no(
+                    self.APPLY_ZA_TITLE,
+                    f"Card 4 ZA={za} is {new_label}, but atom row {i + 1} is "
+                    f"{old_label}.{custom}\n\nRelabel row {i + 1} to "
+                    f"{new_label} ({change_text}; positions kept) and "
+                    f"continue?\n\n'No' stops here and changes nothing."):
+                new_rows = list(rows)
+                new_rows[i] = new_row
+                self.atoms_text.delete("1.0", tk.END)
+                self.atoms_text.insert(
+                    "1.0", "\n".join(format_atom_row(r) for r in new_rows) + "\n")
+                self._set_za_status(
+                    f"atom row {i + 1}: {old_label} -> {new_label} "
+                    f"({change_text}); positions kept")
+                return new_rows
+        raise ValueError(message)
 
     def _build_scattering_tab(self):
         """Build the Scattering part widgets."""
@@ -1262,11 +1438,18 @@ class EndfFormMixin:
         self.za.pack(fill=tk.X, pady=2)
         fill_row = ttk.Frame(pf)
         fill_row.pack(fill=tk.X, pady=(0, 2))
-        ttk.Button(fill_row, text="Fill AWR + sigma_free from ZA",
+        ttk.Button(fill_row, text="Apply ZA: fill AWR + sigma_free, "
+                   "relabel the atom row",
                    command=self._fill_from_za).pack(side=tk.LEFT)
         ttk.Label(fill_row,
                   text="(built-in Rauch-Waschkowski/Sears table)",
                   foreground="gray").pack(side=tk.LEFT, padx=(6, 0))
+        # What the last click did, in one line: the row it relabelled and
+        # the constants it wrote, so a change in the Material part is never
+        # silent.
+        self.za_status_var = tk.StringVar(value="")
+        ttk.Label(pf, textvariable=self.za_status_var, style="Hint.TLabel",
+                  justify=tk.LEFT, wraplength=640).pack(anchor=tk.W)
         self.awr = LabeledEntry(
             pf, "AWR:", "",
             help_title="AWR (Atomic Weight Ratio)",
@@ -1401,8 +1584,9 @@ class EndfFormMixin:
                       "INT flag on the MF7/MT4 section, for both the alpha "
                       "and beta tables).\n\n"
                       "0: log-lin (ENDF INT=4), classic and NJOY-faithful "
-                      "(default).\n\n"
-                      "1: lin-lin (ENDF INT=2). Coherent one-phonon "
+                      "(the default for inelastic_mode 0 and 1).\n\n"
+                      "1: lin-lin (ENDF INT=2), selected when inelastic_mode 2 "
+                      "is chosen. Coherent one-phonon "
                       "S(alpha,beta) tables have structural near-zeros (e.g. "
                       "the graphite (002) dip) that logarithmic interpolation "
                       "floors, biasing the cross section LOW in the thermal "
@@ -2142,22 +2326,25 @@ class EndfFormMixin:
                 # step-capped tail vs the log-lin pure-log tail, so the GUI and
                 # library callers share one safe pairing.
                 iint = self._parse_combo_int(self.iint)
-                beta = generate_beta_grid_for_iint(
+                beta, grid_details = generate_beta_grid_for_iint(
                     freq_max, t_ref, iint=iint, awr=awr,
                     n_lower=parse_int("N lower (log)", self.n_lower.get()),
                     n_phonon=parse_int("N phonon (linear)", self.n_phonon.get()),
                     n_upper=parse_int("N upper (log)", self.n_upper.get()),
-                    beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()))
+                    beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()),
+                    evaluation_temperatures_K=temps, return_details=True)
                 alpha = generate_alpha_grid(
                     beta, awr, t_ref,
                     dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),
                     q_cut_ang_inv=parse_float("Alpha Q cut [1/A]",
                                               self.alpha_qcut.get()),
                     n_log=parse_int("Alpha N log", self.alpha_nlog.get()))
+                from irma.core.grids import describe_beta_grid
                 self.grid_info_var.set(
                     f"nalpha={len(alpha)}, nbeta={len(beta)}, "
                     f"alpha=[{alpha[0]:.4e}..{alpha[-1]:.4e}], "
-                    f"beta=[{beta[0]:.1f}..{beta[-1]:.4e}]")
+                    f"beta=[{beta[0]:.1f}..{beta[-1]:.4e}]\n"
+                    + describe_beta_grid(grid_details))
             else:
                 alpha = self._parse_manual_array(self.alpha_text, "alpha grid")
                 beta = self._parse_manual_array(self.beta_text, "beta grid")
@@ -2682,6 +2869,18 @@ class EndfFormMixin:
                     "(Card 6d) in the Material part. Type the rows in, press "
                     "'" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or "
                     "load an input file with Import Input File.")
+            # The principal ZA must be one of the rows (the engine's rule);
+            # a lone row of that element can be relabelled here, with the
+            # user's yes, instead of failing later in the engine.
+            za_text = self.za.get().strip()
+            if za_text:
+                try:
+                    za_int = int(float(za_text))
+                except ValueError:
+                    za_int = None
+                if za_int is not None and za_int > 0:
+                    atoms = self._relabel_row_or_abort(za_int, atoms)
+                    nat = len(atoms)
             elastic_mode = self._parse_elastic_mode()
 
             # Card 6e partial spectra ride through import -> export verbatim;
@@ -2791,7 +2990,8 @@ class EndfFormMixin:
                 n_lower=parse_int("N lower (log)", self.n_lower.get()),
                 n_phonon=parse_int("N phonon (linear)", self.n_phonon.get()),
                 n_upper=parse_int("N upper (log)", self.n_upper.get()),
-                beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()))
+                beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()),
+                evaluation_temperatures_K=temps)
             alpha = generate_alpha_grid(
                 beta, awr, t_ref,
                 dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),

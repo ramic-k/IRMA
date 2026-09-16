@@ -16,7 +16,7 @@ Supports:
     with an auto chopper-resolution model for the 8 PyChop direct instruments
 """
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __author__ = "IRMA developers"
 
 # Pin native BLAS/OMP thread pools to 1 at package import, before numpy can be

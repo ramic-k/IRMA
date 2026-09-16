@@ -280,8 +280,11 @@ the directional mean-square displacement, rather than by the overflow-prone
 Self-convolution needs a uniform signed-energy work grid. A uniform output
 grid is used directly. A non-uniform (for example log-tailed) output grid
 would blow the work grid up to billions of bins on its finest spacing, so the
-engine switches to the output grid's median spacing and rebins the smooth
-result back in an integral-conserving way. The multiphonon direction count is
+engine works on a uniform grid at the output grid's own phonon-region step
+(the spacing that repeats across the linear phonon region, so the deck's
+phonon subdivision sets the multiphonon resolution and the number of tail
+points cannot change it) and rebins the smooth result back in an
+integral-conserving way. The multiphonon direction count is
 Card 6g `mpdir` (converges by ~50–100; 1000 recommended, cost linear).
 Transfers beyond the tabulated grid are covered downstream by THERMR's
 short-collision-time extension.

@@ -135,3 +135,136 @@ def format_lattice_fields(cellpar) -> Tuple[str, ...]:
     if len(values) != 6:
         raise ValueError(f"cellpar must have 6 entries, got {len(values)}")
     return tuple(f"{v:.6f}" for v in values)
+
+
+# ------------------------------------------------------------------------
+# The principal scatterer against the Card 6d rows.
+#
+# Card 5's ZA names the nuclide the evaluation is written for; Card 6d's rows
+# carry the identity and the scattering constants each site is computed with.
+# The engine requires the principal (Z, A) to be one of the rows, so the
+# ENDF identity and the physics come from the same nuclide. These helpers
+# are the one place that rule and its wording live, for the engine, the
+# deck validator, and the GUI alike. Rows are the dictionaries
+# ``irma.gui.deck_text.parse_atoms_text`` and the deck stager produce
+# (keys Z, A, awr, b_coh, sigma_inc, npos, positions).
+
+# Constants equal to the table entry to this many significant digits count
+# as the table's own numbers (a prefill), not the user's.
+TABLE_MATCH_DIGITS = 6
+
+
+def split_za(za):
+    """``(Z, A)`` of an integer ZA; raises ValueError for a bad value."""
+    za = int(za)
+    if za <= 0:
+        raise ValueError(f"za must be a positive integer, got {za}")
+    return za // 1000, za % 1000
+
+
+def nuclide_label(z, a):
+    """'C' for a natural element, 'C-12' for an isotope, 'D' for 1-2."""
+    from irma.core.nuclear_data import lookup
+    if (int(z), int(a)) == (1, 2):
+        return "D"
+    try:
+        symbol = lookup((int(z), 0)).symbol
+    except KeyError:
+        symbol = f"Z{int(z)}"
+    return symbol if int(a) == 0 else f"{symbol}-{int(a)}"
+
+
+def principal_row_match(za, rows):
+    """Which Card 6d rows the principal ZA matches.
+
+    Returns ``{"za", "Z", "A", "exact", "same_z"}``: ``exact`` the indices
+    of rows with the principal's (Z, A), ``same_z`` the indices of rows of
+    that element with any A. The deck is consistent when ``exact`` is not
+    empty.
+    """
+    z, a = split_za(za)
+    exact = [i for i, r in enumerate(rows) if int(r["Z"]) == z and int(r["A"]) == a]
+    same_z = [i for i, r in enumerate(rows) if int(r["Z"]) == z]
+    return {"za": int(za), "Z": z, "A": a, "exact": exact, "same_z": same_z}
+
+
+def principal_mismatch_message(za, rows):
+    """None when the principal ZA is one of the rows; else what to do."""
+    match = principal_row_match(za, rows)
+    if match["exact"]:
+        return None
+    z, a = match["Z"], match["A"]
+    want = nuclide_label(z, a)
+    head = (f"Card 4 ZA={int(za)} ({want}) requires a Card 6d atom row with "
+            f"Z={z}, A={a}.")
+    if not match["same_z"]:
+        found = ", ".join(f"row {i + 1}: {nuclide_label(r['Z'], r['A'])}"
+                          for i, r in enumerate(rows)) or "no rows"
+        return (f"{head} No row has Z={z} (found {found}). Add a row for "
+                f"{want} or change ZA to one of the rows' nuclides.")
+    if len(match["same_z"]) == 1:
+        i = match["same_z"][0]
+        have = nuclide_label(rows[i]["Z"], rows[i]["A"])
+        have_za = 1000 * int(rows[i]["Z"]) + int(rows[i]["A"])
+        return (f"{head} Found row {i + 1}: Z={z}, A={int(rows[i]['A'])} "
+                f"({have}). Either keep that composition and set ZA={have_za} "
+                f"with matching Card 5 constants, or change row {i + 1}'s A "
+                f"and its AWR, b_coh and sigma_inc to the {want} values (the "
+                f"GUI's 'Apply ZA' button does this). No rows were changed.")
+    listing = "; ".join(f"row {i + 1}: A={int(rows[i]['A'])} "
+                        f"({nuclide_label(rows[i]['Z'], rows[i]['A'])})"
+                        for i in match["same_z"])
+    return (f"{head} Rows with Z={z}: {listing}. Set ZA to the row that is "
+            f"the principal scatterer, or change that row's A and constants "
+            f"to {want}. No rows were changed.")
+
+
+def row_constants_match_table(row):
+    """True when the row's AWR, b_coh and sigma_inc are the table entry's
+    values for its own (Z, A), to ``TABLE_MATCH_DIGITS`` significant digits;
+    False when they differ or the nuclide has no entry."""
+    from irma.core.nuclear_data import lookup
+    try:
+        nuc = lookup((int(row["Z"]), int(row["A"])))
+    except KeyError:
+        return False
+    def same(x, y):
+        return f"{float(x):.{TABLE_MATCH_DIGITS}g}" == f"{float(y):.{TABLE_MATCH_DIGITS}g}"
+    return (same(row["awr"], nuc.awr) and same(row["b_coh"], nuc.b_coh_fm)
+            and same(row["sigma_inc"], nuc.sigma_inc_b))
+
+
+def relabel_row(row, za):
+    """The row rewritten for nuclide ``za``: identity and constants from the
+    table entry, positions and npos untouched.
+
+    Returns ``(new_row, changes)`` where ``changes`` lists the fields that
+    differ as ``(name, old, new)``. Raises ``KeyError`` when the nuclide has
+    no tabulated constants and ``ValueError`` when the table marks them
+    energy-dependent, in both cases before anything is changed.
+    """
+    from irma.core.nuclear_data import lookup
+    z, a = split_za(za)
+    if int(row["Z"]) != z:
+        raise ValueError(f"row is Z={int(row['Z'])}, not Z={z}")
+    nuc = lookup((z, a))          # KeyError: no entry
+    if nuc.energy_dependent:
+        raise ValueError(
+            f"{nuclide_label(z, a)}: the tabulated scattering length is marked "
+            f"ENERGY-DEPENDENT (resonance-region value) and is not a safe "
+            f"prefill; enter b_coh and sigma_inc for your energy range by hand")
+    new = dict(row)
+    new.update({"A": a, "awr": float(nuc.awr), "b_coh": float(nuc.b_coh_fm),
+                "sigma_inc": float(nuc.sigma_inc_b)})
+    changes = [(name, row[name], new[name]) for name in ("A", "awr", "b_coh", "sigma_inc")
+               if f"{float(row[name]):.{TABLE_MATCH_DIGITS}g}"
+               != f"{float(new[name]):.{TABLE_MATCH_DIGITS}g}"]
+    return new, changes
+
+
+def format_atom_row(row):
+    """One Card 6d line from a row dictionary (the GUI's atom-block format)."""
+    coords = "  ".join(f"{x:.6f} {y:.6f} {z:.6f}" for x, y, z in row["positions"])
+    return (f"{int(row['Z'])}  {int(row['A'])}  {float(row['awr']):.6f}  "
+            f"{float(row['b_coh']):.6f}  {float(row['sigma_inc']):.6f}  "
+            f"{int(row['npos'])}  {coords}")

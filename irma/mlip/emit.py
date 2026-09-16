@@ -204,20 +204,24 @@ def _auto_grids(freq_max_ev, awr, temperature_k, iint, coarse=None):
     """The shared automatic grids; `coarse` (test/preview use) shrinks them
     by scaling the density knobs while keeping the same construction."""
     from irma.core.grids import (
-        AUTO_GRID_DEFAULTS, generate_alpha_grid, generate_beta_grid_for_iint,
-        grid_reference_temperature_K)
+        AUTO_GRID_DEFAULTS, describe_beta_grid, generate_alpha_grid,
+        generate_beta_grid_for_iint, grid_reference_temperature_K)
     d = dict(AUTO_GRID_DEFAULTS)
     if coarse:
         d["n_lower"], d["n_phonon"], d["n_upper"] = 10, 40, 10
         d["alpha_dq_invA"], d["alpha_nlog"] = 0.5, 20
     tref = grid_reference_temperature_K(1, float(temperature_k))
-    beta = generate_beta_grid_for_iint(
+    beta, details = generate_beta_grid_for_iint(
         float(freq_max_ev), tref, iint=iint, awr=float(awr),
         n_lower=d["n_lower"], n_phonon=d["n_phonon"],
-        n_upper=d["n_upper"], beta_max_eV=d["beta_max_eV"])
+        n_upper=d["n_upper"], beta_max_eV=d["beta_max_eV"],
+        evaluation_temperatures_K=[float(temperature_k)],
+        return_details=True)
     alpha = generate_alpha_grid(
         beta, float(awr), tref, dq_ang_inv=d["alpha_dq_invA"],
         q_cut_ang_inv=d["alpha_qcut_invA"], n_log=d["alpha_nlog"])
+    if not coarse:
+        print("  " + describe_beta_grid(details), flush=True)
     return alpha, beta
 
 
@@ -270,11 +274,11 @@ def validate_deck_semantics(staged: dict) -> list:
                 problems.append(f"{axis} grid is not strictly increasing")
     if staged.get("iel") == 10:
         atoms = staged.get("atoms") or []
-        pairs = {(t["Z"], t["A"]) for t in atoms}
-        if isinstance(za, int) and (za // 1000, za % 1000) not in pairs:
-            problems.append(
-                f"Card 4 za={za} has no matching Card 6d (Z, A) group "
-                f"{sorted(pairs)}")
+        if isinstance(za, int):
+            from irma.core.crystal_input import principal_mismatch_message
+            message = principal_mismatch_message(za, atoms)
+            if message:
+                problems.append(message)
         for t in atoms:
             if t["A"] < 0:
                 problems.append(f"Card 6d Z={t['Z']}: A must be >= 0 "

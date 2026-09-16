@@ -170,7 +170,8 @@ def test_auto_grid_is_the_endf_converged_grid_not_uniform():
     from irma.core.grids import AUTO_GRID_DEFAULTS as _D
     beta_ref = generate_beta_grid_for_iint(
         0.2, t_ref, iint=1, awr=awr, n_lower=_D["n_lower"], n_phonon=300,
-        n_upper=80, beta_max_eV=5.0)
+        n_upper=80, beta_max_eV=5.0,
+        evaluation_temperatures_K=[cfg.material.temperature_K])
     alpha_ref = generate_alpha_grid(beta_ref, awr, t_ref, dq_ang_inv=0.05,
                                     q_cut_ang_inv=12.0, n_log=160)
     assert np.allclose(beta, beta_ref)
@@ -200,7 +201,8 @@ def test_auto_grid_honors_config_overrides():
     from irma.core.grids import AUTO_GRID_DEFAULTS as _D
     beta_ref = generate_beta_grid_for_iint(
         0.15, t_ref, iint=1, awr=awr, n_lower=_D["n_lower"], n_phonon=120,
-        n_upper=80, beta_max_eV=5.0)
+        n_upper=80, beta_max_eV=5.0,
+        evaluation_temperatures_K=[cfg.material.temperature_K])
     alpha_ref = generate_alpha_grid(beta_ref, awr, t_ref, dq_ang_inv=0.1,
                                     q_cut_ang_inv=12.0, n_log=160)
     assert np.allclose(beta, beta_ref)
