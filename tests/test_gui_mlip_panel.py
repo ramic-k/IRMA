@@ -591,3 +591,27 @@ def test_bundle_species_skips_the_embedded_force_constants(tmp_path):
     symbols, masses = bundle_species(str(tmp_path))
     assert symbols == ["Be", "O"]
     assert masses == {"Be": 9.012218, "O": 15.9994}
+
+
+def test_model_field_browses_to_a_file_without_loading_it(panel, tmp_path,
+                                                           monkeypatch):
+    """The model field is a file selector: a cancelled dialog keeps the
+    value, a chosen path (spaces included) lands in the entry as one
+    argv element, and a typed model name still works."""
+    from tkinter import filedialog
+    struct = tmp_path / "cell.vasp"
+    struct.write_text("x")
+    panel.structure.set(str(struct))
+    panel.outdir.set(str(tmp_path / "bundle"))
+
+    panel.model.set("medium-omat-0")
+    monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: "")
+    panel.model._browse()
+    assert panel.model.get() == "medium-omat-0"          # cancel keeps it
+
+    chosen = str(tmp_path / "my models" / "ptp stage two.model")
+    monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: chosen)
+    panel.model._browse()
+    assert panel.model.get() == chosen
+    cmd = panel.build_command()
+    assert cmd[cmd.index("--model") + 1] == chosen

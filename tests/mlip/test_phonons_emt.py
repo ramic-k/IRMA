@@ -209,3 +209,14 @@ def test_symmetrization_metrics_are_reported(tmp_path):
     assert res.asr_drift_before >= 0.0
     assert res.symmetrization_delta >= 0.0
     assert res.wall_s > 0.0
+
+
+def test_worker_spec_keeps_the_pinned_identity():
+    """Pool workers rebuild from the parent's canonical spec: only the
+    thread width changes, the model and its pinned digest survive."""
+    from irma.mlip.phonons import _worker_spec
+    spec = CalculatorSpec("emt", model="x", checkpoint_sha256="b" * 64,
+                          threads=8)
+    worker = _worker_spec(spec, 2)
+    assert worker.threads == 2
+    assert worker.model == "x" and worker.checkpoint_sha256 == "b" * 64

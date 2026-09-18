@@ -25,11 +25,14 @@ import json
 import math
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from irma.mlip.calculators import CalculatorSpec, make_calculator
 
-FINGERPRINT_VERSION = 1
+# 2: MACE-family checkpoint files are loaded from bytes verified against
+# a digest pinned in the spec; caches written before that contract
+# existed are not reused under it.
+FINGERPRINT_VERSION = 2
 
 
 @dataclass
@@ -119,6 +122,13 @@ def _fingerprint(atoms, phonon, delta, supercell, spec: CalculatorSpec) -> str:
 # --- worker side (top-level: picklable by reference under spawn) -----------
 
 _WORKER_CALC = None
+
+
+def _worker_spec(spec: CalculatorSpec, worker_threads: int) -> CalculatorSpec:
+    """The spec each pool worker rebuilds its calculator from: the
+    parent's canonical spec (model identity and pinned checkpoint digest
+    included), with only the thread width changed."""
+    return replace(spec, threads=worker_threads)
 
 
 def _worker_init(spec: CalculatorSpec):
@@ -298,8 +308,7 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
         # 1 native thread per worker by default (the measured-safe
         # convention); --worker-threads widens each worker for machines
         # where jobs x threads < cores has headroom
-        worker_spec = CalculatorSpec(spec.potential, model=spec.model,
-                                     threads=worker_threads)
+        worker_spec = _worker_spec(spec, worker_threads)
         pool = ProcessPoolExecutor(max_workers=jobs,
                                    mp_context=get_context("spawn"),
                                    initializer=_worker_init,

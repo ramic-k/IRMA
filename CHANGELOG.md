@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- User-trained MACE checkpoints in the MLIP front end. `--potential mace`
+  or `mace-off` with `--model <file>` (the GUI's model field gains a
+  Browse... button) loads the checkpoint once, from bytes verified
+  against a digest pinned in the calculator specification; displacement
+  workers and force servers verify the same digest before loading, and
+  the manifest records it with the model class, cutoff, interaction
+  layers, element table, stored dtype and head. The calculator refuses
+  force calls on elements the checkpoint does not cover, for named MACE
+  models too, and the build stops before relaxation with the uncovered
+  elements named; multi-head checkpoints are refused; float32 weights
+  are evaluated in float64 with a note in the log and the manifest. The
+  force-cache fingerprint version is now 2, so the scratch caches of
+  interrupted builds from earlier versions are recomputed.
+
 ## [1.0.3] — 2026-09-16
 
 - Minimum phonon energy for the phonopy-backed modes 1 and 2. An optional
