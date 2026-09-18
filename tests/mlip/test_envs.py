@@ -701,3 +701,15 @@ def test_conflict_section_head_survives_a_long_candidate_walk():
     assert "torch>=2.2.0" in detail          # the decisive head line
     assert "truncated" in detail             # the walk was cut, visibly
     assert "ResolutionImpossible" in detail
+
+
+def test_pinned_digest_crosses_the_force_server_protocol():
+    """The spec payload carries every field: an identity request with a
+    pinned digest gets that digest back from the server, so a foreign
+    loader sees the same pin the parent computed."""
+    spec = CalculatorSpec("emt", checkpoint_sha256="c" * 64)
+    assert envs.spec_payload(spec) == {
+        "potential": "emt", "model": None, "threads": 1,
+        "checkpoint_sha256": "c" * 64}
+    identity, _ = envs.remote_identity(spec, sys.executable)
+    assert identity == "c" * 64

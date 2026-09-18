@@ -118,36 +118,297 @@ def test_mattersim_branch_with_stubs(monkeypatch, tmp_path):
     assert meta["checkpoint_sha256"] is not None and len(meta["checkpoint_sha256"]) == 64
 
 
-def test_mace_off_branch_with_stubs(monkeypatch, tmp_path):
+class _FakeDtype:
+    def __init__(self, name, floating=True):
+        self.name = name
+        self.is_floating_point = floating
+
+    def __str__(self):
+        return "torch." + self.name
+
+
+class _FakeTensor:
+    def __init__(self, dtype):
+        self.dtype = dtype
+
+
+class _FakeMaceModel:
+    """What torch.load returns for a MACE .model file: the attributes
+    MACE's calculator reads, plus parameters/buffers for the dtype."""
+
+    def __init__(self, atomic_numbers=(1, 6), r_max=6.5, dtypes=("float32",),
+                 heads=("Default",), num_interactions=2):
+        self.atomic_numbers = list(atomic_numbers)
+        self.r_max = r_max
+        self.num_interactions = num_interactions
+        if heads is not None:
+            self.heads = list(heads)
+        self._dtypes = list(dtypes)
+
+    def parameters(self):
+        return [_FakeTensor(_FakeDtype(d)) for d in self._dtypes]
+
+    def buffers(self):
+        return [_FakeTensor(_FakeDtype("int64", floating=False))]
+
+
+class _FakeZTable:
+    def __init__(self, zs):
+        self.zs = list(zs)
+
+
+class _FakeMaceCalculator:
+    """Stands in for mace.calculators.MACECalculator: records how it was
+    built and counts backend calls (the guard tests need the count)."""
+    implemented_properties = ["energy", "forces", "stress"]
+
+    def __init__(self, models=None, model_paths=None, default_dtype="",
+                 device="cpu"):
+        model = models[0] if isinstance(models, list) else models
+        self.models = [model]
+        self.z_table = _FakeZTable(model.atomic_numbers)
+        self.r_max = float(model.r_max)
+        self.available_heads = list(getattr(model, "heads", ["Default"]))
+        self.head = self.available_heads[0]
+        self.default_dtype = default_dtype
+        self.device = device
+        self.calls = 0
+        self.closed = False
+        self.results = {}
+
+    def calculate(self, atoms=None, properties=None, system_changes=None):
+        import numpy as np
+        self.calls += 1
+        self.results = {"energy": 0.0, "forces": np.zeros((len(atoms), 3))}
+
+    def close(self):
+        self.closed = True
+
+
+def _stub_mace(monkeypatch, loaded, made):
+    """Fake torch + mace so a checkpoint FILE loads through the seam:
+    torch.load returns `loaded` and records the bytes it was given;
+    MACECalculator is the fake above; the named-model entry points build
+    the same fake from a fresh model."""
     fake_torch = _FakeTorch()
+
+    def load(f, map_location=None, weights_only=None):
+        made.setdefault("loads", []).append(
+            (f.read(), map_location, weights_only))
+        return loaded
+    fake_torch.load = load
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    made = {}
-
-    def stub_mace_off(model=None, default_dtype=None, device=None):
-        made.update(model=model, default_dtype=default_dtype, device=device)
-        return "the-calculator"
-
     _install_stub(monkeypatch, "mace")
-    _install_stub(monkeypatch, "mace.calculators", mace_off=stub_mace_off)
 
-    calc, meta = make_calculator(CalculatorSpec("mace-off"))
-    assert calc == "the-calculator"
-    assert made == {"model": "medium", "default_dtype": "float64",
-                    "device": "cpu"}
+    def named(model=None, default_dtype=None, device=None):
+        made.setdefault("named", []).append((model, default_dtype, device))
+        return _FakeMaceCalculator(models=_FakeMaceModel(
+            atomic_numbers=range(1, 90), r_max=6.0, dtypes=("float64",),
+            heads=("default",)), default_dtype=default_dtype, device=device)
+    _install_stub(monkeypatch, "mace.calculators",
+                  MACECalculator=_FakeMaceCalculator, mace_mp=named,
+                  mace_off=named)
+    return fake_torch
+
+
+@pytest.mark.parametrize("potential", ["mace", "mace-off"])
+def test_mace_named_models_are_guarded_and_described(monkeypatch,
+                                                     potential):
+    pytest.importorskip("ase")
+    made = {}
+    _stub_mace(monkeypatch, _FakeMaceModel(), made)
+    calc, meta = make_calculator(CalculatorSpec(potential))
+    default = {"mace": "medium-mpa-0", "mace-off": "medium"}[potential]
+    assert made["named"] == [(default, "float64", "cpu")]
+    assert "loads" not in made              # nothing read from disk
     assert meta["dtype"] == "float64"
-    assert meta["checkpoint"] == "medium"
-    assert meta["checkpoint_sha256"] is None   # named model, not a local file
-    # named MACE-OFF checkpoints are ASL; a user checkpoint FILE (e.g. the
-    # MIT Egret-1) carries its own license and must get no note
-    assert "Academic Software License" in meta["license_note"]
+    assert meta["checkpoint"] == default
+    assert meta["checkpoint_sha256"] is None   # named model, not a file
+    # the calculator is wrapped by the element guard around the real one
+    assert isinstance(calc.inner, _FakeMaceCalculator)
+    assert meta["checkpoint_elements"][:3] == ["H", "He", "Li"]
+    assert len(meta["checkpoint_elements"]) == 89
+    assert meta["checkpoint_r_max_A"] == 6.0
+    assert meta["checkpoint_num_interactions"] == 2
+    assert meta["checkpoint_heads"] == ["default"]
+    assert meta["checkpoint_head"] == "default"
+    # a converted named model: the stored dtype is not recoverable
+    assert meta["checkpoint_stored_dtype"] == "unknown"
+    assert "dtype_note" not in meta
+    if potential == "mace-off":
+        assert "Academic Software License" in meta["license_note"]
+    else:
+        assert "license_note" not in meta   # MPA line is MIT: no note
 
+
+def test_mace_foundation_checkpoints_carry_the_asl_note(monkeypatch,
+                                                        tmp_path):
+    pytest.importorskip("ase")
+    _stub_mace(monkeypatch, _FakeMaceModel(), {})
+    omat_file = tmp_path / "mace-omat-0.model"
+    omat_file.write_bytes(b"weights")
+    for name in ("medium-omat-0", "MACE-matpes-pbe-0", str(omat_file)):
+        _, meta = make_calculator(CalculatorSpec("mace", model=name))
+        assert "Academic Software License" in meta.get("license_note", ""), \
+            name
+    for name in ("medium-mpa-0", "medium", "small-0b"):
+        _, meta = make_calculator(CalculatorSpec("mace", model=name))
+        assert "license_note" not in meta, name
+
+
+@pytest.mark.parametrize("potential", ["mace", "mace-off"])
+def test_mace_checkpoint_file_is_loaded_once_from_verified_bytes(
+        monkeypatch, tmp_path, potential):
+    pytest.importorskip("ase")
+    from irma.mlip.calculators import _checkpoint_sha256, canonicalize_spec
+    made = {}
+    loaded = _FakeMaceModel()
+    _stub_mace(monkeypatch, loaded, made)
     # tmp_path, not NamedTemporaryFile: Windows cannot reopen a file
     # that is still held open by its creator
     model_file = tmp_path / "weights.model"
     model_file.write_bytes(b"weights")
-    _, meta_file = make_calculator(
-        CalculatorSpec("mace-off", model=str(model_file)))
-    assert "license_note" not in meta_file
+    digest = _checkpoint_sha256(str(model_file))
+
+    spec = canonicalize_spec(CalculatorSpec(potential, model=str(model_file)))
+    assert spec.checkpoint_sha256 == digest
+    calc, meta = make_calculator(spec)
+
+    # exactly one deserialization, of the bytes that were verified, and
+    # the calculator is built from that same object (no second load, no
+    # model_paths round trip through the file name)
+    assert made["loads"] == [(b"weights", "cpu", False)]
+    assert "named" not in made
+    assert calc.inner.models[0] is loaded
+    assert calc.inner.default_dtype == "float64"
+    assert meta["checkpoint"] == str(model_file)
+    assert meta["checkpoint_sha256"] == digest
+    assert meta["checkpoint_model_class"] == "_FakeMaceModel"
+    assert meta["checkpoint_stored_dtype"] == "float32"
+    assert meta["checkpoint_r_max_A"] == 6.5
+    assert meta["checkpoint_num_interactions"] == 2
+    assert meta["checkpoint_elements"] == ["H", "C"]
+    assert meta["checkpoint_heads"] == ["Default"]
+    assert meta["checkpoint_head"] == "Default"
+    assert meta["dtype_note"].startswith("stored weights: float32")
+    # a user checkpoint FILE carries its own license: no ASL note (the
+    # named MACE-OFF checkpoints are ASL, see the named-model test)
+    assert "license_note" not in meta
+
+
+def test_mace_checkpoint_digest_mismatch_refuses_to_load(monkeypatch,
+                                                         tmp_path):
+    pytest.importorskip("ase")
+    made = {}
+    _stub_mace(monkeypatch, _FakeMaceModel(), made)
+    model_file = tmp_path / "weights.model"
+    model_file.write_bytes(b"weights")
+    # a spec pinned to other bytes: the file was replaced after pinning
+    spec = CalculatorSpec("mace", model=str(model_file),
+                          checkpoint_sha256="0" * 64)
+    with pytest.raises(RuntimeError, match="changed after the build pinned"):
+        make_calculator(spec)
+    assert "loads" not in made              # refused BEFORE unpickling
+
+
+def test_mace_checkpoint_stored_dtype_variants(monkeypatch, tmp_path):
+    pytest.importorskip("ase")
+    model_file = tmp_path / "w.model"
+    model_file.write_bytes(b"w")
+    for dtypes, stored, note in (
+            (("float64",), "float64", False),
+            (("float32", "float64"), "mixed (float32, float64)", True),
+            ((), "unknown", False)):
+        _stub_mace(monkeypatch, _FakeMaceModel(dtypes=dtypes), {})
+        _, meta = make_calculator(CalculatorSpec("mace",
+                                                 model=str(model_file)))
+        assert meta["checkpoint_stored_dtype"] == stored
+        assert ("dtype_note" in meta) is note
+    # legacy checkpoints without a heads attribute are single-head
+    _stub_mace(monkeypatch, _FakeMaceModel(heads=None), {})
+    _, meta = make_calculator(CalculatorSpec("mace", model=str(model_file)))
+    assert meta["checkpoint_heads"] == ["Default"]
+
+
+def test_mace_multihead_and_non_mace_files_are_refused(monkeypatch,
+                                                       tmp_path):
+    pytest.importorskip("ase")
+    model_file = tmp_path / "w.model"
+    model_file.write_bytes(b"w")
+    _stub_mace(monkeypatch, _FakeMaceModel(heads=("mp", "omat")), {})
+    with pytest.raises(ValueError, match="multi-head"):
+        make_calculator(CalculatorSpec("mace", model=str(model_file)))
+    # a state dict (a plain mapping) is not a serialized model
+    _stub_mace(monkeypatch, {"weights": 1}, {})
+    with pytest.raises(ValueError, match="not a serialized MACE model"):
+        make_calculator(CalculatorSpec("mace-off", model=str(model_file)))
+
+
+def test_element_guard_refuses_uncovered_atoms_before_the_backend():
+    pytest.importorskip("ase")
+    from ase import Atoms
+    from irma.mlip.calculators import _guard_elements
+    inner = _FakeMaceCalculator(models=_FakeMaceModel(atomic_numbers=(1, 6)))
+    calc = _guard_elements(inner, (1, 6), "test model")
+
+    water = Atoms("H2O", positions=[[0, 0, 0], [0.9, 0, 0], [0, 0.9, 0]])
+    water.calc = calc
+    with pytest.raises(ValueError, match="covers H C; the structure "
+                                         "contains O"):
+        water.get_forces()
+    assert inner.calls == 0                 # refused before any backend call
+
+    methane = Atoms("CH4", positions=[[0, 0, 0], [1, 0, 0], [0, 1, 0],
+                                      [0, 0, 1], [-1, 0, 0]])
+    methane.calc = calc
+    assert methane.get_forces().shape == (5, 3)
+    assert inner.calls == 1
+    assert calc.implemented_properties == inner.implemented_properties
+    calc.close()
+    assert inner.closed
+
+
+def test_missing_elements():
+    from irma.mlip.calculators import missing_elements
+    assert missing_elements(["H", "C"], ["C", "H", "H"]) == []
+    assert missing_elements(["H", "C"], ["C", "O", "N", "O"]) == ["N", "O"]
+
+
+def test_canonicalize_pins_mace_checkpoint_files(monkeypatch, tmp_path):
+    from irma.mlip.calculators import (
+        _checkpoint_sha256, canonicalize_spec, resolved_checkpoint_identity)
+    model_file = tmp_path / "w.model"
+    model_file.write_bytes(b"weights")
+    digest = _checkpoint_sha256(str(model_file))
+    monkeypatch.chdir(tmp_path)
+
+    for potential in ("mace", "mace-off"):
+        pinned = canonicalize_spec(CalculatorSpec(potential, model="w.model"))
+        assert pinned.model == str(model_file)          # absolute path
+        assert pinned.checkpoint_sha256 == digest
+        assert canonicalize_spec(pinned) is pinned      # idempotent
+        # a pinned digest wins over a re-hash: the pin is what the
+        # loaders verify against
+        kept = canonicalize_spec(CalculatorSpec(
+            potential, model="w.model", checkpoint_sha256="a" * 64))
+        assert kept.model == str(model_file)
+        assert kept.checkpoint_sha256 == "a" * 64
+        # the fingerprint identity is the pinned digest
+        assert resolved_checkpoint_identity(pinned) == digest
+        assert resolved_checkpoint_identity(kept) == "a" * 64
+        # named models and missing files pass through unchanged
+        for model in (None, "medium", str(tmp_path / "missing.model")):
+            spec = CalculatorSpec(potential, model=model)
+            assert canonicalize_spec(spec) is spec
+
+
+def test_spec_rejects_a_malformed_digest():
+    with pytest.raises(ValueError, match="checkpoint_sha256"):
+        CalculatorSpec("mace", checkpoint_sha256="abc")
+    with pytest.raises(ValueError, match="checkpoint_sha256"):
+        CalculatorSpec("mace", checkpoint_sha256="A" * 64)
+    spec = CalculatorSpec("mace", checkpoint_sha256="a" * 64)
+    assert pickle.loads(pickle.dumps(spec)) == spec
 
 
 def test_native_thread_env_is_clamped(monkeypatch):
@@ -180,42 +441,6 @@ def test_sevennet_branch_with_stubs(monkeypatch):
     calc, _ = make_calculator(CalculatorSpec("sevennet", model="7net-0"))
     assert made == {"model": "7net-0", "modal": None, "device": "cpu"} or \
            made == {"model": "7net-0", "device": "cpu"}
-
-
-def test_mace_branch_with_stubs(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    made = {}
-
-    def stub_mace_mp(model=None, default_dtype=None, device=None):
-        made.update(model=model, default_dtype=default_dtype, device=device)
-        return "mace-calc"
-
-    _install_stub(monkeypatch, "mace")
-    _install_stub(monkeypatch, "mace.calculators", mace_mp=stub_mace_mp)
-    calc, meta = make_calculator(CalculatorSpec("mace"))
-    assert calc == "mace-calc" and meta["dtype"] == "float64"
-    assert made == {"model": "medium-mpa-0", "default_dtype": "float64",
-                    "device": "cpu"}
-    assert "license_note" not in meta        # MPA line is MIT: no note
-
-
-def test_mace_foundation_checkpoints_carry_the_asl_note(monkeypatch,
-                                                        tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    _install_stub(monkeypatch, "mace")
-    _install_stub(monkeypatch, "mace.calculators",
-                  mace_mp=lambda **kw: "mace-calc")
-
-    for name in ("medium-omat-0", "MACE-matpes-pbe-0",
-                 str(tmp_path / "mace-omat-0.model")):
-        _, meta = make_calculator(CalculatorSpec("mace", model=name))
-        assert "Academic Software License" in meta.get("license_note", ""), \
-            name
-    for name in ("medium-mpa-0", "medium", "small-0b"):
-        _, meta = make_calculator(CalculatorSpec("mace", model=name))
-        assert "license_note" not in meta, name
 
 
 def _stub_orb(monkeypatch, builder_result, calculator_cls,

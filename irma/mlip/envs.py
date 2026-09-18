@@ -497,13 +497,18 @@ def _oneshot(interpreter: str, payload: dict, what: str) -> dict:
         handle.close()
 
 
+def spec_payload(spec) -> dict:
+    """The spec as the force-server protocol carries it: every field,
+    so a pinned checkpoint digest reaches the foreign loader."""
+    from dataclasses import asdict
+    return asdict(spec)
+
+
 def remote_canonicalize(spec, interpreter: str) -> str:
     """Pin a spec's model string inside the foreign environment."""
     reply = _oneshot(
         interpreter,
-        {"cmd": "canonicalize",
-         "spec": {"potential": spec.potential, "model": spec.model,
-                  "threads": spec.threads}},
+        {"cmd": "canonicalize", "spec": spec_payload(spec)},
         f"canonicalize {spec.potential}")
     return reply["model"]
 
@@ -512,9 +517,7 @@ def remote_identity(spec, interpreter: str) -> tuple[str, str]:
     """(checkpoint identity, package version) from the foreign env."""
     reply = _oneshot(
         interpreter,
-        {"cmd": "identity",
-         "spec": {"potential": spec.potential, "model": spec.model,
-                  "threads": spec.threads}},
+        {"cmd": "identity", "spec": spec_payload(spec)},
         f"resolve identity of {spec.potential}")
     return reply["identity"], reply["version"]
 
@@ -534,9 +537,7 @@ def remote_calculator(spec, interpreter: str):
     handle = _ServerHandle(interpreter)
     try:
         reply = handle.request(
-            {"cmd": "init",
-             "spec": {"potential": spec.potential, "model": spec.model,
-                      "threads": spec.threads}},
+            {"cmd": "init", "spec": spec_payload(spec)},
             f"initialize {spec.potential}")
     except BaseException:
         handle.close()          # no orphan on a failed init

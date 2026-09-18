@@ -528,7 +528,12 @@ Three actions sit under the **output dir**:
 
 When you have no phonon calculation at all, this tab builds one from a
 structure file: pick the file and a potential, optionally set the supercell
-and mesh, and click **Build bundle**. The form mirrors `irma mlip build`
+and mesh, and click **Build bundle**. The model field takes a checkpoint
+name or, through its **Browse...** button, a checkpoint file you trained
+yourself (`mace` and `mace-off`; see
+[Your own trained checkpoint](mlip.md#your-own-trained-checkpoint));
+browsing only fills the field, nothing is loaded until the build runs.
+The form mirrors `irma mlip build`
 field for field (every control has the ⓘ help glyph), the **Log** pane
 streams the relaxation and force-evaluation progress, and the **DOS** pane
 plots the bundle's quick-look DOS after a successful build (or on demand

@@ -202,10 +202,17 @@ class CalculatorSpec:
         worker, the measured-oversubscription convention shared with
         irma.core.noncubic_workers); the serial path passes the user's
         --threads.
+    checkpoint_sha256: content digest of a checkpoint FILE, pinned by
+        canonicalize_spec in the parent process (MACE family). Every
+        loader verifies the bytes it deserializes against it, so the
+        parent, the pool workers, and a force server cannot silently load
+        different files under one identity. None for named models and
+        for potentials that resolve their own files.
     """
     potential: str
     model: str | None = None
     threads: int = 1
+    checkpoint_sha256: str | None = None
 
     def __post_init__(self):
         if self.potential not in _VALID:
@@ -216,6 +223,16 @@ class CalculatorSpec:
             raise ValueError(f"threads must be an integer, got {self.threads!r}")
         if self.threads < 1:
             raise ValueError(f"threads must be >= 1, got {self.threads}")
+        if self.checkpoint_sha256 is not None and not _is_sha256_hex(
+                self.checkpoint_sha256):
+            raise ValueError(
+                f"checkpoint_sha256 must be a 64-character lowercase hex "
+                f"digest, got {self.checkpoint_sha256!r}")
+
+
+def _is_sha256_hex(text) -> bool:
+    return (isinstance(text, str) and len(text) == 64
+            and all(c in "0123456789abcdef" for c in text))
 
 
 def _require(potential: str):
@@ -555,6 +572,212 @@ def _compile_nequip_model(zoo_id: str) -> str:
     return out
 
 
+# --- MACE-family checkpoints -------------------------------------------------
+
+MACE_FAMILY = ("mace", "mace-off")
+STORED_DTYPE_UNKNOWN = "unknown"
+
+
+def read_verified_checkpoint(path: str,
+                             expected_sha256: str | None) -> tuple[bytes, str]:
+    """Read a checkpoint file once and return (bytes, sha256 of the bytes).
+
+    The bytes returned are the bytes that get deserialized, so the digest
+    the manifest and the force-cache fingerprint record describes exactly
+    the model that produced the forces. When a digest was pinned into the
+    spec (canonicalize_spec does this in the parent, before the pool
+    workers and any force server start), a file that no longer matches
+    is refused: it was replaced between pinning and loading.
+    """
+    with open(path, "rb") as fh:
+        data = fh.read()
+    actual = hashlib.sha256(data).hexdigest()
+    if expected_sha256 and actual != expected_sha256:
+        raise RuntimeError(
+            f"checkpoint {path} changed after the build pinned it: sha256 "
+            f"{actual} != pinned {expected_sha256}; refusing to load it. "
+            f"Restart the build so every process reads the same file.")
+    return data, actual
+
+
+def _floating_dtypes(module) -> list[str]:
+    """Distinct floating-point dtypes of a module's parameters and
+    buffers, in first-seen order, as plain names ('float32')."""
+    names = []
+    tensors = list(module.parameters()) + list(module.buffers())
+    for tensor in tensors:
+        dt = getattr(tensor, "dtype", None)
+        if dt is None or not getattr(dt, "is_floating_point", False):
+            continue
+        name = str(dt).replace("torch.", "")
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def inspect_mace_model(loaded, origin: str) -> dict:
+    """Describe a deserialized MACE module BEFORE any dtype conversion.
+
+    Raises ValueError when the object is not a full serialized MACE model:
+    a state dict or a training checkpoint lacks the attributes MACE's own
+    calculator needs, and a file extension proves nothing about the
+    contents.
+    """
+    if not (hasattr(loaded, "atomic_numbers") and hasattr(loaded, "r_max")
+            and callable(getattr(loaded, "parameters", None))
+            and callable(getattr(loaded, "buffers", None))):
+        raise ValueError(
+            f"{origin} is not a serialized MACE model (a state dict or a "
+            f"training checkpoint, perhaps); MACE writes the full model as "
+            f"<name>.model at the end of training, pass that file")
+    dtypes = _floating_dtypes(loaded)
+    if len(dtypes) == 1:
+        stored = dtypes[0]
+    elif dtypes:
+        stored = "mixed (" + ", ".join(dtypes) + ")"
+    else:
+        stored = STORED_DTYPE_UNKNOWN
+    heads = getattr(loaded, "heads", None)
+    n_int = getattr(loaded, "num_interactions", None)
+    return {
+        "model_class": type(loaded).__name__,
+        "stored_dtype": stored,
+        "r_max_A": float(loaded.r_max),
+        "num_interactions": int(n_int) if n_int is not None else None,
+        "atomic_numbers": [int(z) for z in loaded.atomic_numbers],
+        "heads": [str(h) for h in heads] if heads is not None else None,
+    }
+
+
+def _mace_calculator_from_file(path: str, expected_sha256: str | None):
+    """(MACECalculator, description) for a checkpoint FILE, loaded once.
+
+    One deserialized module is described (stored dtype before MACE's
+    float64 conversion, class, cutoff, elements, heads) and then handed
+    to MACECalculator, so the description and the forces come from the
+    same object. Genuine multi-head checkpoints are refused: IRMA has no
+    head selection, and MACE would otherwise pick a head silently.
+
+    Trust note: a MACE model file is a pickle, and loading it runs code
+    from the file. The user chose the file; nothing here makes an
+    untrusted file safe.
+    """
+    import io
+
+    import torch
+    from mace.calculators import MACECalculator
+    data, digest = read_verified_checkpoint(path, expected_sha256)
+    loaded = torch.load(io.BytesIO(data), map_location="cpu",
+                        weights_only=False)
+    info = inspect_mace_model(loaded, f"checkpoint {path}")
+    if info["heads"] and len(info["heads"]) > 1:
+        raise ValueError(
+            f"checkpoint {path} is a multi-head MACE model (heads: "
+            f"{', '.join(info['heads'])}); IRMA does not select a head, "
+            f"so it cannot tell which fitting net would produce the "
+            f"forces. Export a single-head model for the head you want.")
+    calc = MACECalculator(models=loaded, default_dtype="float64",
+                          device="cpu")
+    info["sha256"] = digest
+    return calc, info
+
+
+def missing_elements(covered_symbols, structure_symbols) -> list[str]:
+    """Element symbols present in the structure but not in the
+    checkpoint's table, sorted; empty when the checkpoint covers all."""
+    covered = set(covered_symbols)
+    return sorted({str(s) for s in structure_symbols} - covered)
+
+
+def _guard_elements(calc, covered_numbers, origin: str):
+    """Wrap an ASE calculator so it refuses atoms outside its element table.
+
+    The check runs before every delegated calculation, on every path
+    that builds a calculator (parent, pool workers, force server), so a
+    structure the checkpoint was never trained on fails closed instead of
+    producing forces from an untrained embedding.
+    """
+    from ase.calculators.calculator import Calculator, all_changes
+    from ase.data import chemical_symbols
+    covered = frozenset(int(z) for z in covered_numbers)
+    covered_text = " ".join(chemical_symbols[z] for z in sorted(covered))
+
+    class ElementCoverageGuard(Calculator):
+        implemented_properties = list(getattr(
+            calc, "implemented_properties", ("energy", "forces")))
+
+        def __init__(self):
+            super().__init__()
+            self.inner = calc
+            self.covered_numbers = covered
+
+        def calculate(self, atoms=None, properties=("energy",),
+                      system_changes=all_changes):
+            Calculator.calculate(self, atoms)
+            present = {int(z) for z in self.atoms.get_atomic_numbers()}
+            missing = sorted(present - covered)
+            if missing:
+                raise ValueError(
+                    f"{origin} covers {covered_text}; the structure "
+                    f"contains "
+                    f"{' '.join(chemical_symbols[z] for z in missing)}, "
+                    f"which it was not trained on; refusing the force call")
+            self.inner.calculate(self.atoms, list(properties),
+                                 system_changes)
+            self.results = dict(self.inner.results)
+
+        def close(self):
+            close = getattr(self.inner, "close", None)
+            if close is not None:
+                close()
+
+    return ElementCoverageGuard()
+
+
+def _finish_mace(calc, info: dict | None, origin: str):
+    """Element guard plus provenance for a constructed MACE-family
+    calculator. `info` is the pre-conversion description of a file
+    checkpoint, or None for a named model (its stored dtype is unknown
+    once MACE has converted it)."""
+    from ase.data import chemical_symbols
+    try:
+        numbers = [int(z) for z in calc.z_table.zs]
+        r_max = float(calc.r_max)
+        first = calc.models[0]
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise RuntimeError(
+            f"{origin}: the MACE calculator exposes no element table, so "
+            f"element coverage cannot be guarded") from exc
+    if info is not None:
+        # the description and the calculator must come from one object
+        if info["atomic_numbers"] != numbers or info["r_max_A"] != r_max:
+            raise RuntimeError(
+                f"{origin}: the loaded model and the calculator built from "
+                f"it disagree on their element table or cutoff")
+    n_int = getattr(first, "num_interactions", None)
+    meta = {
+        "checkpoint_model_class": type(first).__name__,
+        "checkpoint_stored_dtype": (info["stored_dtype"] if info
+                                    else STORED_DTYPE_UNKNOWN),
+        "checkpoint_r_max_A": r_max,
+        "checkpoint_num_interactions": (int(n_int) if n_int is not None
+                                        else None),
+        "checkpoint_elements": [chemical_symbols[z] for z in numbers],
+        "checkpoint_heads": (list(calc.available_heads)
+                             if getattr(calc, "available_heads", None)
+                             else None),
+        "checkpoint_head": getattr(calc, "head", None),
+    }
+    stored = meta["checkpoint_stored_dtype"]
+    if stored not in ("float64", STORED_DTYPE_UNKNOWN):
+        meta["dtype_note"] = (
+            f"stored weights: {stored}; evaluation: float64, to reduce "
+            f"numerical error in the finite-displacement forces. The "
+            f"conversion does not restore precision lost when the weights "
+            f"were stored.")
+    return _guard_elements(calc, numbers, origin), meta
+
+
 def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
     """Pin floating model identities in a spec, before it fans out.
 
@@ -563,10 +786,21 @@ def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
     the version listing and the checkpoint download in upet's alias path
     are network calls that every spawned worker would otherwise repeat,
     and a mid-run upstream release could split the build across versions.
-    dpa3 aliases get their '::head' made explicit. The returned spec is
+    dpa3 aliases get their '::head' made explicit. A MACE-family
+    checkpoint FILE gets its absolute path and content digest pinned, so
+    every later loader verifies the bytes it reads. The returned spec is
     what relaxation, every pool worker, and the cache fingerprint all
     see. Other potentials pass through unchanged.
     """
+    if spec.potential in MACE_FAMILY:
+        model = spec.model
+        if model and os.path.isfile(str(model)):
+            path = os.path.abspath(str(model))
+            if spec.checkpoint_sha256 and path == str(model):
+                return spec
+            digest = spec.checkpoint_sha256 or _checkpoint_sha256(path)
+            return replace(spec, model=path, checkpoint_sha256=digest)
+        return spec
     if spec.potential == "pet-mad":
         model = spec.model or _DEFAULT_MODELS["pet-mad"]
         if os.path.isfile(str(model)):
@@ -620,7 +854,8 @@ def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
 def resolved_checkpoint_identity(spec: CalculatorSpec) -> str:
     """The string that stands for the checkpoint in cache fingerprints.
 
-    Local files are content-hashed. pet-mad aliases resolve to
+    Local files are content-hashed (a digest pinned in the spec is the
+    hash of the bytes every loader verified). pet-mad aliases resolve to
     'alias@version' (a released version names immutable weights); dpa3
     aliases resolve to the downloaded file's content hash plus the head,
     because the head selects a different fitting net from the same file.
@@ -642,7 +877,8 @@ def resolved_checkpoint_identity(spec: CalculatorSpec) -> str:
         base, head = _split_dpa_model(model)
         path = _resolve_dpa_checkpoint(base)
         return f"{_checkpoint_sha256(path)}|head={head}"
-    return _checkpoint_sha256(spec.model) or str(model)
+    return (spec.checkpoint_sha256 or _checkpoint_sha256(spec.model)
+            or str(model))
 
 
 def effective_package_version(spec: CalculatorSpec) -> str:
@@ -722,6 +958,8 @@ def make_calculator(spec: CalculatorSpec):
     model = spec.model or _DEFAULT_MODELS[spec.potential]
     dtype = "float32"
     license_note = None
+    checkpoint_sha256 = None
+    extra_meta = None
 
     if spec.potential == "mattersim":
         from mattersim.forcefield.potential import MatterSimCalculator
@@ -774,8 +1012,16 @@ def make_calculator(spec: CalculatorSpec):
         else:
             calc = SevenNetCalculator(model=model, device="cpu")
     elif spec.potential == "mace":
-        from mace.calculators import mace_mp
-        calc = mace_mp(model=model, default_dtype="float64", device="cpu")
+        if os.path.isfile(str(model)):
+            calc, info = _mace_calculator_from_file(
+                str(model), spec.checkpoint_sha256)
+            checkpoint_sha256 = info["sha256"]
+        else:
+            from mace.calculators import mace_mp
+            calc = mace_mp(model=model, default_dtype="float64",
+                           device="cpu")
+            info = None
+        calc, extra_meta = _finish_mace(calc, info, f"MACE model {model}")
         dtype = "float64"
         license_note = _mace_license_note(model)
     elif spec.potential == "pet-mad":
@@ -858,8 +1104,17 @@ def make_calculator(spec: CalculatorSpec):
             "research-only, non-commercial; commercial use needs a "
             "separate license from ICAMS")
     else:  # mace-off
-        from mace.calculators import mace_off
-        calc = mace_off(model=model, default_dtype="float64", device="cpu")
+        if os.path.isfile(str(model)):
+            calc, info = _mace_calculator_from_file(
+                str(model), spec.checkpoint_sha256)
+            checkpoint_sha256 = info["sha256"]
+        else:
+            from mace.calculators import mace_off
+            calc = mace_off(model=model, default_dtype="float64",
+                            device="cpu")
+            info = None
+        calc, extra_meta = _finish_mace(calc, info,
+                                        f"MACE-OFF model {model}")
         dtype = "float64"
         if not os.path.isfile(str(model)):
             # the NAMED MACE-OFF checkpoints are ASL (github.com/ACEsuit/
@@ -870,7 +1125,7 @@ def make_calculator(spec: CalculatorSpec):
                 "Academic Software License: research-only, "
                 "non-commercial; commercial use needs a separate license")
 
-    if spec.potential != "dpa3":     # dpa3 hashed its resolved path above
+    if checkpoint_sha256 is None:    # dpa3 and MACE files hashed above
         checkpoint_sha256 = _checkpoint_sha256(spec.model)
     meta = {
         "potential": spec.potential,
@@ -882,6 +1137,8 @@ def make_calculator(spec: CalculatorSpec):
         "dtype": dtype,
         "threads": spec.threads,
     }
+    if extra_meta:
+        meta.update(extra_meta)
     if license_note:
         meta["license_note"] = license_note
     return calc, meta

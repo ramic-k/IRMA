@@ -178,7 +178,18 @@ HELP = {
         "  mace      size names or foundation names (medium-omat-0; an ASL "
         "license note is printed and recorded)\n"
         "  grace     foundation name (GRACE-2L-OAM, ...)\n"
-        "  others    checkpoint name or file path"),
+        "  others    checkpoint name or file path\n\n"
+        "Your own trained MACE checkpoint: with potential mace or "
+        "mace-off, Browse... to the .model file MACE wrote at the end of "
+        "training. The checkpoint must cover every element in the "
+        "structure (the build refuses others), single-head models only; "
+        "float32 weights are evaluated in float64. The manifest records "
+        "the file's SHA-256, class, cutoff, elements and stored dtype."
+        "\n\nMACE model files may contain pickled Python objects. Loading "
+        "a checkpoint can execute arbitrary code with your account's "
+        "permissions. Use checkpoints only from sources you trust; the "
+        "SHA-256 identifies the file, it does not establish that it is "
+        "safe."),
     "supercell": (
         "Supercell used for the "
         "finite-displacement force constants: an explicit 'n1 n2 n3', or a "
@@ -437,8 +448,16 @@ class MlipPanel(ttk.Frame):
         self.potential.combo.bind(
             "<<ComboboxSelected>>",
             lambda e: self._update_potential_status())
-        self.model = LabeledEntry(g, "model (blank=default):", default="",
-                                  width=34, help_text=HELP["model"])
+        # a FileSelector, not a plain entry: a trained checkpoint is a
+        # file, a foundation model is a name, and both live in one field.
+        # Browsing only fills the entry; nothing loads the file until the
+        # build runs.
+        self.model = FileSelector(
+            g, "model (blank=default):", mode="open",
+            filetypes=[("Checkpoint files", "*.model *.pt *.pth *.ckpt "
+                                            "*.pt2"),
+                       ("All files", "*")],
+            help_text=HELP["model"])
         self.model.pack(fill=tk.X, pady=2)
         self.supercell = LabeledEntry(g, "supercell (opt):", default="",
                                       width=12, help_text=HELP["supercell"])

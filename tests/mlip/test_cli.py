@@ -327,3 +327,31 @@ def test_omitted_elastic_format_still_defaults_to_mef(al_poscar, tmp_path,
     assert main(["emit", outdir, "--to", "endf", "--mat", "Al=45"]) == 0
     rec = json.load(open(os.path.join(outdir, "emit_manifest.json")))
     assert rec["elastic_format"] == "mef"
+
+
+def test_uncovered_element_is_refused_before_relaxation(tmp_path, monkeypatch,
+                                                       capsys):
+    """A checkpoint that does not cover the structure's elements stops
+    the build with a readable exit-2 message, before any force call."""
+    from ase.calculators.emt import EMT
+    from irma.mlip import calculators
+
+    def fake_make_calculator(spec):
+        return EMT(), {"potential": spec.potential, "checkpoint": "w.model",
+                       "checkpoint_sha256": None, "dtype": "float64",
+                       "checkpoint_elements": ["H", "C"],
+                       "checkpoint_model_class": "ScaleShiftMACE",
+                       "checkpoint_r_max_A": 6.5,
+                       "checkpoint_num_interactions": 2,
+                       "checkpoint_stored_dtype": "float32",
+                       "dtype_note": "stored weights: float32"}
+    monkeypatch.setattr(calculators, "make_calculator", fake_make_calculator)
+    cu = tmp_path / "Cu.vasp"
+    ase_write(str(cu), bulk("Cu", "fcc", a=3.6, cubic=True), direct=True,
+              format="vasp")
+    rc = main(["build", str(cu), "-o", str(tmp_path / "b"),
+               "--potential", "emt", "--allow-dev-backend"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "covers H C" in err and "contains Cu" in err
+    assert not (tmp_path / "b").exists()
