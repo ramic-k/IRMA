@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from irma.core.noncubic_helpers import MULTIPHONON_MARGIN_SIGMAS
 from irma.core.noncubic_inelastic import NoncubicInelasticControls
 
 # The α↔Q/β↔E convention lives in one shared place (irma.core.sab_grids) so
@@ -239,6 +240,34 @@ def _last_nonzero_beta(beta_downscatter_abs: np.ndarray, sab_qe: np.ndarray) -> 
     return float(beta_arr[nz[-1]])
 
 
+def _truncation_warning(sab_key, beta_downscatter_abs, sab_qe, needed_beta):
+    """Warning text when the computed law ends before the reach it needs, else None.
+
+    ``needed_beta`` is the engine's needed multiphonon reach, the recoil ridge
+    at the largest Q plus the margin widths capped at the grid top, in the
+    grid's own kT units. Zeros beyond it are the negligible tail of the law,
+    not a truncation, so the grid top is the wrong reference. The comparison
+    uses the last grid point at or below the needed reach, so a coarse grid
+    step past the reach cannot raise a false alarm.
+    """
+    last = _last_nonzero_beta(beta_downscatter_abs, sab_qe)
+    needed = float(needed_beta or 0.0)
+    if last is None or not needed > 0.0:
+        return None
+    beta = np.asarray(beta_downscatter_abs, dtype=float)
+    covered = beta[beta <= needed * (1.0 + 1.0e-12)]
+    if covered.size == 0 or last >= covered[-1]:
+        return None
+    return (
+        f"Selected standalone SAB array {sab_key} becomes identically zero "
+        f"above beta={last:.6f}, short of beta={needed:.6f}, the recoil ridge "
+        f"at the largest Q plus {MULTIPHONON_MARGIN_SIGMAS:g} thermal widths, "
+        f"below which the law still has weight, so the computed array was cut "
+        f"short. Check the multiphonon order warnings above; if the order "
+        f"meets the requirement, this points to a fault in the calculation "
+        f"worth reporting.")
+
+
 def run_noncubic_standalone_sab(
     *,
     alpha: np.ndarray,
@@ -431,21 +460,11 @@ def run_noncubic_standalone_sab(
     sab_qe = sab_downscatter
 
     last_nonzero_beta = _last_nonzero_beta(beta_downscatter_abs, sab_qe)
-    requested_beta_max = float(beta_downscatter_abs[-1]) if len(beta_downscatter_abs) else 0.0
-    if (
-        last_nonzero_beta is not None
-        and requested_beta_max > 0.0
-        and last_nonzero_beta < 0.95 * requested_beta_max
-    ):
-        print(
-            "WARNING: Selected standalone SAB array "
-            f"{sab_key} becomes identically zero above beta={last_nonzero_beta:.6f} "
-            f"while IRMA requested beta_max={requested_beta_max:.6f}. "
-            "This usually means multiphonon_max_order (Card 3 nphon) is too small "
-            "for the requested grid — raise it or set Card 6g auto_order=1. "
-            "THERMR's short-collision-time extension covers transfers beyond the "
-            "tabulated law using the tape's effective temperature."
-        , flush=True)
+    truncation_warning = _truncation_warning(
+        sab_key, beta_downscatter_abs, sab_qe,
+        result.get("metadata", {}).get("needed_multiphonon_beta_support"))
+    if truncation_warning:
+        print(f"WARNING: {truncation_warning}", flush=True)
 
     ssm_internal = sab_qe.T
 

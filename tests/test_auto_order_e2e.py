@@ -152,3 +152,12 @@ def test_auto_order_changes_the_emitted_law(runs):
     assert s_on > s_off                                 # added background, not removed
     # ... and the tapes themselves differ byte-for-byte.
     assert open(off).read() != open(on).read()
+
+
+def test_auto_sized_run_prints_no_reach_warning(runs):
+    """An auto-sized order meets the Poisson rule, so it reaches the recoil
+    ridge plus the margin: the energy-reach guard and the check on the
+    computed array both stay silent."""
+    _, on_log = runs["on"]
+    assert "WARNING: multiphonon order" not in on_log
+    assert "becomes identically zero" not in on_log

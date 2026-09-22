@@ -168,6 +168,8 @@ from irma.core.noncubic_helpers import (  # re-exported for back-compat
     parse_incoherent_cross_sections,
     reshape_mesh_eigenvectors,
     derive_required_multiphonon_order,
+    multiphonon_energy_reach,
+    MULTIPHONON_MARGIN_SIGMAS,
 )
 from irma.core.noncubic_numerics import (  # re-exported for back-compat
     UNIFORM_GRID_RTOL,
@@ -717,19 +719,43 @@ def _cfa_site_groups_and_multiphonon_policy(S):
         if args.multiphonon_max_order >= 2
         else estimated_one_phonon_beta_support
     )
+    # Energy-reach guard. The law needs the sum to reach the recoil ridge at
+    # the largest Q plus a few thermal widths, not the top of the energy
+    # grid: for any atom heavier than a few mass units the grid top lies far
+    # out on a Gaussian tail. Any order meeting the Poisson rule above
+    # passes this check (see multiphonon_energy_reach), so it fires only for
+    # an order below that requirement, or if the rule itself is changed.
+    energy_reach = multiphonon_energy_reach(
+        args.multiphonon_max_order, max_mode_energy_mev, max_q_for_order,
+        primitive.masses, args.temperature, float(np.max(e_grid_mev)))
+    needed_multiphonon_beta_support = (
+        energy_reach.needed_mev / kT_mev if kT_mev > 0.0 else 0.0)
     coverage_warning = None
-    if requested_beta_max > estimated_multiphonon_beta_support * 1.05:
+    if energy_reach.short:
+        symbol = str(primitive.symbols[energy_reach.atom_index])
+        suggested_order = max(
+            required_order,
+            int(math.ceil(energy_reach.needed_mev / max_mode_energy_mev)))
+        if energy_reach.capped:
+            need_text = (
+                f"the recoil ridge of {symbol} at Q_max = {max_q_for_order:.1f} "
+                f"1/Angstrom sits at {energy_reach.ridge_mev / 1e3:.2f} eV, at or "
+                f"beyond the top of the energy grid, so the sum needs the grid "
+                f"top, {energy_reach.needed_mev / 1e3:.2f} eV")
+        else:
+            need_text = (
+                f"the recoil ridge of {symbol} at Q_max = {max_q_for_order:.1f} "
+                f"1/Angstrom sits at {energy_reach.ridge_mev / 1e3:.2f} eV with a "
+                f"thermal width of {energy_reach.width_mev / 1e3:.2f} eV, so the "
+                f"sum needs {energy_reach.needed_mev / 1e3:.2f} eV (ridge plus "
+                f"{MULTIPHONON_MARGIN_SIGMAS:g} widths)")
+        remedy = f"Raise Card 3 nphon to at least {suggested_order}"
+        if not auto_multiphonon_order:
+            remedy += ", or enable auto-sizing"
         coverage_warning = (
-            "Requested beta/energy grid extends beyond the support implied by "
-            f"multiphonon_max_order={args.multiphonon_max_order}. "
-            f"Estimated n=1 support beta~{estimated_one_phonon_beta_support:.3f} "
-            f"({max_mode_energy_mev:.3f} meV), estimated total support "
-            f"beta~{estimated_multiphonon_beta_support:.3f}, requested beta_max={requested_beta_max:.3f}. "
-            "Higher-beta rows will remain zero unless multiphonon_max_order is "
-            "increased (or Card 6g auto_order=1 is set); THERMR's own "
-            "short-collision-time extension covers transfers beyond the "
-            "tabulated law using the tape's effective temperature."
-        )
+            f"multiphonon order {args.multiphonon_max_order} reaches "
+            f"{energy_reach.reach_mev / 1e3:.2f} eV of energy transfer; "
+            f"{need_text}. The law is truncated past the reach. {remedy}.")
         print(f"WARNING: {coverage_warning}")
     represented_principal_site_count = getattr(args, "represented_principal_site_count", None)
     if represented_principal_site_count is None:
@@ -786,7 +812,7 @@ def _cfa_site_groups_and_multiphonon_policy(S):
     )
 
     _loc = locals()
-    for _n in ['coherent_partition_mode', 'coverage_warning', 'estimated_multiphonon_beta_support', 'estimated_one_phonon_beta_support', 'export_incoherent_approx_prefactors', 'export_incoherent_prefactors', 'export_multiphonon_sigma_total_scale', 'group_coherent_weights', 'principal_cross_weight', 'principal_group_index', 'principal_site_indices', 'represented_principal_site_count', 'requested_beta_max', 'site_groups']:
+    for _n in ['coherent_partition_mode', 'coverage_warning', 'estimated_multiphonon_beta_support', 'estimated_one_phonon_beta_support', 'needed_multiphonon_beta_support', 'export_incoherent_approx_prefactors', 'export_incoherent_prefactors', 'export_multiphonon_sigma_total_scale', 'group_coherent_weights', 'principal_cross_weight', 'principal_group_index', 'principal_site_indices', 'represented_principal_site_count', 'requested_beta_max', 'site_groups']:
         # STRICT lookup: a renamed/missing local must fail HERE with a
         # KeyError naming it, not plant a silent None for a later phase
         # (names that are legitimately branch-dependent are initialized
@@ -1784,6 +1810,7 @@ def _cfa_assemble_outputs(S):
     e_min_used = getattr(S, "e_min_used")
     estimated_multiphonon_beta_support = getattr(S, "estimated_multiphonon_beta_support")
     estimated_one_phonon_beta_support = getattr(S, "estimated_one_phonon_beta_support")
+    needed_multiphonon_beta_support = getattr(S, "needed_multiphonon_beta_support")
     phonon_cutoff_summary = getattr(S, "phonon_cutoff_summary", None)
     incoherent_one_phonon_mesh_qpoints = getattr(S, "incoherent_one_phonon_mesh_qpoints")
     incoherent_one_phonon_mesh_weights = getattr(S, "incoherent_one_phonon_mesh_weights")
@@ -1901,6 +1928,7 @@ def _cfa_assemble_outputs(S):
         "max_mode_energy_meV": max_mode_energy_mev,
         "estimated_one_phonon_beta_support": estimated_one_phonon_beta_support,
         "estimated_multiphonon_beta_support": estimated_multiphonon_beta_support,
+        "needed_multiphonon_beta_support": needed_multiphonon_beta_support,
         "requested_beta_max": requested_beta_max,
         "actual_beta_support": actual_beta_support,
         "coverage_warning": coverage_warning,

@@ -5,6 +5,17 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The multiphonon energy-coverage warning for modes 1 and 2 now compares
+  the reach of the truncated sum, the order times the highest phonon
+  energy, with the recoil ridge at the largest Q plus six thermal widths,
+  instead of with the top of the energy grid. The old comparison fired for
+  heavy atoms at orders that already converge the sum, where the grid top
+  lies far out on a negligible tail. Any order that meets the automatic
+  order rule passes the new check, so it fires only for a lower order; the
+  metadata gains `needed_multiphonon_beta_support`. The check on the
+  computed S(alpha,beta) array uses the same needed reach: it warns only
+  when the array goes to zero before it, instead of whenever it goes to
+  zero below the grid top.
 - User-trained MACE checkpoints in the MLIP front end. `--potential mace`
   or `mace-off` with `--model <file>` (the GUI's model field gains a
   Browse... button) loads the checkpoint once, from bytes verified
