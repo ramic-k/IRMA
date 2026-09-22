@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -22,8 +23,16 @@ from irma.core.constants import (
     AMASSN as NEUTRON_MASS_AMU,
 )
 
+from irma.core.grids import effective_temperature_bound_ratio
+
 ANG2_TO_BARN = 1e8
 KB_MEV_PER_K = _BK_EV_PER_K * 1.0e3
+
+# Margin shared by the multiphonon order rule and its energy-reach check:
+# the order covers the Poisson(2W) phonon count to this many standard
+# deviations, and the reach check asks for the recoil ridge plus this many
+# thermal widths. One constant keeps the two statements in step.
+MULTIPHONON_MARGIN_SIGMAS = 6.0
 
 # Single-element fallback tables for the STANDALONE CLI driver only. The
 # production engine path (mode 1/2 ENDF generation) always passes
@@ -236,7 +245,7 @@ def derive_required_multiphonon_order(
     max_q_ang_inv: float,
     thermal_mats: np.ndarray,
     requested_order: int,
-    margin_sigma: float = 6.0,
+    margin_sigma: float = MULTIPHONON_MARGIN_SIGMAS,
     hard_cap: int = 2000,
 ) -> tuple[int, int, float, float]:
     """Physically-required multiphonon order to converge the incoherent Poisson sum.
@@ -263,3 +272,75 @@ def derive_required_multiphonon_order(
     required = max(2, required)
     effective = min(max(requested_order, required), int(hard_cap))
     return effective, required, two_w_max, u_max
+
+
+@dataclass(frozen=True)
+class MultiphononReach:
+    """How far in energy transfer the truncated multiphonon sum reaches,
+    against how far the table needs it to (all energies in meV)."""
+    reach_mev: float        # largest transfer the truncated sum can produce
+    needed_mev: float       # recoil ridge + margin widths at Q_max, capped at the grid top
+    ridge_mev: float        # recoil energy of the atom that sets needed_mev
+    width_mev: float        # that atom's thermal width (an upper bound)
+    atom_index: int | None  # that atom; None when no reach is needed
+    capped: bool            # needed_mev was capped at the top of the energy grid
+
+    @property
+    def short(self) -> bool:
+        return self.reach_mev < self.needed_mev
+
+
+def multiphonon_energy_reach(
+    order: int,
+    max_mode_energy_mev: float,
+    max_q_ang_inv: float,
+    masses_amu,
+    temperature_k: float,
+    grid_top_mev: float,
+    margin_sigma: float = MULTIPHONON_MARGIN_SIGMAS,
+) -> MultiphononReach:
+    """Energy reach of the truncated multiphonon sum against what the table needs.
+
+    ``order`` phonons carry at most ``order * max_mode_energy_mev`` (one phonon
+    below order 2): the reach. At wavevector Q the incoherent law of an atom
+    of mass M is centred on its recoil energy E_R = hbar^2 Q^2 / 2M, with a
+    thermal width sqrt(2 E_R kT_eff), and the ridge is highest at the largest
+    Q in the table. The needed reach is the largest E_R + margin_sigma * width
+    over the atoms, capped at ``grid_top_mev``, the top of the requested
+    energy grid. Past it the law is a Gaussian tail too small for any cross
+    section to see, so comparing the reach with the grid top instead raises
+    false alarms for every atom heavier than a few mass units.
+
+    kT_eff uses the bound of ``effective_temperature_bound_ratio``, so the
+    width is never underestimated. With that bound, every order that meets
+    ``derive_required_multiphonon_order`` at the same Q and margin also meets
+    this reach, for every atom: E_R = 2W * e_bar and width^2 = 2W * 2 e_bar
+    kT_eff, where e_bar = 1 / <coth(E/2kT)/E> <= E_max tanh(E_max/2kT)
+    because coth(E/2kT)/E decreases with E; so E_R <= 2W E_max and
+    width <= sqrt(2W) E_max. The check is therefore a guard on the order
+    rule: it fires only when the order is below that rule's requirement.
+    """
+    e_max = float(max_mode_energy_mev)
+    reach = e_max * (int(order) if int(order) >= 2 else 1)
+    q = float(max_q_ang_inv)
+    temperature = float(temperature_k)
+    top = float(grid_top_mev)
+    masses = np.asarray(masses_amu, dtype=float).ravel()
+    if e_max <= 0.0 or q <= 0.0 or top <= 0.0 or masses.size == 0:
+        return MultiphononReach(reach, 0.0, 0.0, 0.0, None, False)
+    if np.any(~np.isfinite(masses)) or np.any(masses <= 0.0):
+        raise ValueError(f"atomic masses must be positive and finite, got {masses}")
+    if temperature > 0.0:
+        kt_eff = (effective_temperature_bound_ratio(e_max * 1.0e-3, temperature)
+                  * KB_MEV_PER_K * temperature)
+    else:
+        kt_eff = 0.5 * e_max           # the zero-point limit of the same bound
+    ridge = HBAR2_OVER_2MN_MEV_A2 * q * q * NEUTRON_MASS_AMU / masses
+    width = np.sqrt(2.0 * ridge * kt_eff)
+    need = ridge + float(margin_sigma) * width
+    atom = int(np.argmax(need))
+    needed = float(need[atom])
+    return MultiphononReach(
+        reach_mev=reach, needed_mev=min(needed, top),
+        ridge_mev=float(ridge[atom]), width_mev=float(width[atom]),
+        atom_index=atom, capped=needed > top)
