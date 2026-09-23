@@ -127,9 +127,7 @@ from irma.core.noncubic_workers import (  # noqa: F401  (re-exported for callers
     build_star_averaged_projection_components,
     precompute_directional_multiphonon_orders,
     multiphonon_seed_area_deficit,
-    build_q_bin_sampling,
     set_worker_state,
-    build_q_vectors,
     principal_weighted_coherent_partition,
     _batched_qpoints_eigh,
     accumulate_coherent_block,
@@ -344,18 +342,10 @@ def compute_from_args(
         e_max_used = context["e_max_used"]
         de_used = context["de_used"]
         directions = context["directions"]
-        q_bin_sample_mags = context["q_bin_sample_mags"]
-        q_bin_sample_weights = context["q_bin_sample_weights"]
         mesh = context["mesh"]
         primitive = context["primitive"]
-        rec_lat_no_2pi = context["rec_lat_no_2pi"]
         frequency_factor_to_thz = context["frequency_factor_to_thz"]
-        q_red = context["q_red"]
-        q_shell_index = context["q_shell_index"]
-        sample_weights = context["sample_weights"]
-        q_cart_physical = context["q_cart_physical"]
-        unit_directions = context["unit_directions"]
-        q_mags_physical = context["q_mags_physical"]
+        direction_red_basis = context["direction_red_basis"]
         mev_to_joule = context["mev_to_joule"]
         unit_conversion = context["unit_conversion"]
         scattering_lengths = context["scattering_lengths"]
@@ -427,7 +417,7 @@ def compute_from_args(
         # The incoherent multiphonon sum is Poisson(2W = Q^2 u.U.u); at the grid's
         # largest Q it converges once the order reaches about 2W_max + 6 sqrt(2W_max).
         # Card 3 nphon is honored unless auto-sizing (Card 6g) raises it.
-        max_q_for_order = float(np.max(q_bin_sample_mags))
+        max_q_for_order = float(np.max(q_grid_ang_inv))
         order = args.multiphonon_max_order
         _, required_order, two_w_max, _ = derive_required_multiphonon_order(
             max_q_for_order, thermal_mats, order)
@@ -680,11 +670,9 @@ def compute_from_args(
             coherent_state = {
                 "num_q": len(q_grid_ang_inv),
                 "num_e": len(e_grid_mev),
-                "rec_lat_no_2pi": rec_lat_no_2pi,
-                "q_red": q_red,
-                "q_cart_physical": q_cart_physical,
-                "unit_directions": unit_directions,
-                "q_mags_physical": q_mags_physical,
+                "q_grid_ang_inv": q_grid_ang_inv,
+                "directions": directions,
+                "direction_red_basis": direction_red_basis,
                 "dynamical_matrix": mesh.dynamical_matrix,
                 "frequency_factor_to_thz": frequency_factor_to_thz,
                 "min_phonon_energy_mev": cutoff_mev,
@@ -693,11 +681,8 @@ def compute_from_args(
                 "coherent_atom_prefactors": coherent_atom_prefactors,
                 "unit_conversion": unit_conversion,
                 "temperature": args.temperature,
-                "q_shell_index": q_shell_index,
-                "e_grid_mev": e_grid_mev,
                 "e_edges_mev": e_edges_mev,
                 "e_bin_widths_mev": e_bin_widths_mev,
-                "sample_weights": sample_weights,
                 "mev_to_joule": mev_to_joule,
                 "one_phonon_creation_scale": one_phonon_creation_scale,
                 "coherent_partition_mode": coherent_partition_mode,
@@ -708,7 +693,6 @@ def compute_from_args(
             if emit_gain_side:
                 coherent_state.update({
                     "emit_gain_side": True,
-                    "e_gain_grid_mev": e_gain_grid_mev,
                     "e_gain_edges_mev": e_gain_edges_mev,
                     "e_gain_bin_widths_mev": e_gain_bin_widths_mev,
                 })
@@ -753,8 +737,7 @@ def compute_from_args(
                 "num_q": len(q_grid_ang_inv),
                 "num_e": len(e_grid_mev),
                 "directions": directions,
-                "q_bin_sample_mags": q_bin_sample_mags,
-                "q_bin_sample_weights": q_bin_sample_weights,
+                "q_grid_ang_inv": q_grid_ang_inv,
                 "thermal_mats": thermal_mats,
                 "e_grid_mev": e_grid_mev,
                 "e_edges_mev": e_edges_mev,
@@ -948,8 +931,7 @@ def compute_from_args(
                         "max_order": args.multiphonon_max_order,
                     "positive_slice": positive_slice,
                     "thermal_mats": thermal_mats,
-                    "q_bin_sample_mags": q_bin_sample_mags,
-                    "q_bin_sample_weights": q_bin_sample_weights,
+                    "q_grid_ang_inv": q_grid_ang_inv,
                     "multiphonon_sigma_total_scale": export_multiphonon_sigma_total_scale,
                     "num_total_dirs": len(multiphonon_directions),
                     "sigma0_emission_lookup": signed_emission_lookup,
@@ -1084,8 +1066,6 @@ def compute_from_args(
             "e_mev": e_grid_mev,
             "e_bin_edges_mev": e_edges_mev,
             "sampled_directions": directions,
-            "incoherent_q_bin_sample_mags_ang_inv": q_bin_sample_mags,
-            "incoherent_q_bin_sample_weights": q_bin_sample_weights,
         }
         for name, arr in loss.items():
             alpha, beta_downscatter_abs, sab = convert_sqe_to_asym_downscatter_sab(

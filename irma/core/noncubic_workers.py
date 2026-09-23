@@ -377,23 +377,6 @@ def multiphonon_seed_area_deficit(base_prefactors, mode_eigvecs, emission_prefac
     return float(np.max(np.abs(area[mask] - msd[mask]) / msd[mask]))
 
 
-def build_q_bin_sampling(
-    q_grid_ang_inv: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Single radial sample per finite Q bin: its nominal |Q| with unit weight.
-
-    Returns ``(mags, weights)`` shaped ``(num_q, 1)`` so the per-bin kernels keep
-    their trailing radial-sample axis. (Multi-sample within-bin quadrature was
-    governed by the ``incoherent_q_bin_samples`` knob; it was inert on the
-    converged production grid -- N=5 vs N=1 shifted each bin integral by ~1e-6 --
-    and has been removed.)
-    """
-    q = np.asarray(q_grid_ang_inv, dtype=float)
-    q_bin_sample_mags = q.reshape(-1, 1).copy()
-    q_bin_sample_weights = np.ones((len(q), 1), dtype=float)
-    return q_bin_sample_mags, q_bin_sample_weights
-
-
 def set_worker_state(state: dict) -> None:
     """Set the worker state in the parent before each compute stage.
 
@@ -559,38 +542,6 @@ def _dispatch_block(state_ref, kernel, block):
     return kernel(block)
 
 
-def build_q_vectors(
-    q_bin_sample_mags: np.ndarray,
-    q_bin_sample_weights: np.ndarray,
-    directions: np.ndarray,
-    rec_lat_no_2pi: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Convert sampled Q-shell points to reduced and physical coordinates.
-
-    The sampling layout is flattened as:
-    ``(shell index, radial sample index, direction index)``.
-    """
-    num_shells, num_radial_samples = q_bin_sample_mags.shape
-    num_directions = len(directions)
-
-    radial_mags = q_bin_sample_mags.reshape(-1)
-    radial_weights = q_bin_sample_weights.reshape(-1)
-    shell_index_per_radial = np.repeat(np.arange(num_shells, dtype=int), num_radial_samples)
-
-    # Reduced-coordinate direction basis is independent of Q magnitude, so solve
-    # the lattice system only once per direction instead of once per shell point.
-    direction_red_basis = np.linalg.solve(rec_lat_no_2pi, directions.T).T / (2.0 * np.pi)
-
-    q_red = (radial_mags[:, None, None] * direction_red_basis[None, :, :]).reshape(-1, 3)
-    q_cart_physical = (radial_mags[:, None, None] * directions[None, :, :]).reshape(-1, 3)
-    unit_dirs = np.broadcast_to(directions[None, :, :], (len(radial_mags), num_directions, 3)).reshape(-1, 3)
-    q_mags_physical = np.repeat(radial_mags, num_directions)
-    q_shell_index = np.repeat(shell_index_per_radial, num_directions)
-    sample_weights = np.repeat(radial_weights / num_directions, num_directions)
-
-    return q_red, q_shell_index, sample_weights, q_cart_physical, unit_dirs, q_mags_physical
-
-
 def principal_weighted_coherent_partition(
     group_amplitudes: np.ndarray,
     principal_group_index: int,
@@ -666,14 +617,9 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     """
 
     state = WORKER_STATE
-    sqe_total = np.zeros((state["num_q"], state["num_e"]), dtype=float)
-    sqe_diagonal = np.zeros_like(sqe_total)
-    sqe_interference = np.zeros_like(sqe_total)
-
-    q_red_all = state["q_red"]
-    q_cart_all = state["q_cart_physical"]
-    unit_dirs_all = state["unit_directions"]
-    q_mags_all = state["q_mags_physical"]
+    q_grid = state["q_grid_ang_inv"]
+    directions = state["directions"]
+    direction_red_basis = state["direction_red_basis"]
     dynamical_matrix = state["dynamical_matrix"]
     frequency_factor_to_thz = state["frequency_factor_to_thz"]
     min_phonon_energy_mev = float(state.get("min_phonon_energy_mev", 0.0))
@@ -682,10 +628,6 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     coherent_atom_prefactors = state["coherent_atom_prefactors"]
     unit_conversion = state["unit_conversion"]
     temperature = state["temperature"]
-    q_shell_index = state["q_shell_index"]
-    e_edges_mev = state["e_edges_mev"]
-    e_bin_widths_mev = state["e_bin_widths_mev"]
-    sample_weights = state["sample_weights"]
     mev_to_joule = state["mev_to_joule"]
     one_phonon_creation_scale = state["one_phonon_creation_scale"]
     coherent_partition_mode = state["coherent_partition_mode"]
@@ -693,10 +635,15 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     principal_group_index = state["principal_group_index"]
     group_coherent_weights = state["group_coherent_weights"]
 
-    q_red = q_red_all[indices]
-    q_cart_block = q_cart_all[indices]
-    unit_dirs_block = unit_dirs_all[indices]
-    q_mags_block = q_mags_all[indices]
+    # Sample index = Q shell * n_dirs + direction; each direction has weight
+    # 1/n_dirs in the powder average.
+    n_dirs = len(directions)
+    block_q_bins = indices // n_dirs
+    direction_index = indices % n_dirs
+    q_mags_block = q_grid[block_q_bins]
+    q_red = q_mags_block[:, None] * direction_red_basis[direction_index]
+    q_cart_block = q_mags_block[:, None] * directions[direction_index]
+    unit_dirs_block = directions[direction_index]
     # Parallelepiped fold to [-1/2, 1/2)^3 in reduced coordinates instead of
     # phonopy's Wigner-Seitz fold: any image choice
     # differs only by an integer G, and the explicit exp(2*pi*i G.r) phase
@@ -781,97 +728,32 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
         0.0, 700.0)
     bose_plus_one[valid_modes] = 1.0 / (-np.expm1(-exponent))
 
-    lw_total = total_w * bose_plus_one * creation_prefactor_scale    # (M, B)
-    lw_diagonal = diagonal_w * bose_plus_one * creation_prefactor_scale
-    lw_interference = interference_w * bose_plus_one * creation_prefactor_scale
     energy_mev = frequencies * THzToEv * 1000.0
-
-    block_q_bins = q_shell_index[indices]                            # (M,)
-    block_weights = sample_weights[indices]                         # (M,)
     direction_ok = q_mags_block >= 1e-12                            # (M,)
 
-    # ENERGY-GAIN (annihilation) line weights, computed independently of the
-    # loss `bose_plus_one` block so the loss weights/deposit stay byte-identical
-    # (the ENDF byte-exact gate). Same structure factors total_w/diagonal_w/
-    # interference_w and the same Bose-independent creation_prefactor_scale; only
-    # the occupancy differs -- n(omega) (= 1/expm1(x)) for absorption vs n+1 for
-    # emission -- and the lines deposit at -energy. Deposited AFTER the loss pass
-    # under a single emit_gain guard (never interleaved with loss accumulation).
-    emit_gain = state.get("emit_gain_side", False)
-    if emit_gain:
+    # Energy loss deposits the n+1 (emission) lines at +E; the optional gain
+    # side deposits the n (absorption) lines of the same structure factors at -E.
+    sides = [(energy_mev, bose_plus_one, state["e_edges_mev"], state["e_bin_widths_mev"])]
+    if state.get("emit_gain_side", False):
         bose_n = np.zeros_like(frequencies)
-        exponent_gain = np.clip(
-            frequencies[valid_modes] * THzToEv / (_BK_EV_PER_K * temperature),
-            0.0, 700.0)
-        bose_n[valid_modes] = 1.0 / np.expm1(exponent_gain)
-        lw_total_gain = total_w * bose_n * creation_prefactor_scale
-        lw_diagonal_gain = diagonal_w * bose_n * creation_prefactor_scale
-        lw_interference_gain = interference_w * bose_n * creation_prefactor_scale
-        gain_energy_mev = -energy_mev
-        e_gain_grid_mev = state["e_gain_grid_mev"]
-        e_gain_edges_mev = state["e_gain_edges_mev"]
-        e_gain_bin_widths_mev = state["e_gain_bin_widths_mev"]
-        num_e_gain = len(e_gain_grid_mev)
-        sqe_total_gain = np.zeros((state["num_q"], num_e_gain), dtype=float)
-        sqe_diagonal_gain = np.zeros_like(sqe_total_gain)
-        sqe_interference_gain = np.zeros_like(sqe_total_gain)
-
-    # Histogram deposition (production path): one masked scatter per array
-    # over the whole (M x B) grid instead of ~24000 np.add.at calls.
-    bin_indices = np.searchsorted(e_edges_mev, energy_mev,
-                                  side="right").astype(np.intp) - 1
-    bin_indices[energy_mev == e_edges_mev[-1]] = len(e_bin_widths_mev) - 1
-    good = (
-        valid_modes
-        & direction_ok[:, None]
-        & (energy_mev >= e_edges_mev[0])
-        & (energy_mev <= e_edges_mev[-1])
-        & (bin_indices >= 0)
-        & (bin_indices < len(e_bin_widths_mev))
-    )
-    if np.any(good):
-        rows = np.broadcast_to(block_q_bins[:, None], energy_mev.shape)[good]
-        cols = bin_indices[good]                       # in-range by `good`
-        # index widths on the masked bins only — bin_indices can be
-        # len(e_bin_widths) for an above-top-edge mode (dropped by `good`),
-        # which would be out of bounds if indexed over the full grid.
-        block_weights_b = np.broadcast_to(block_weights[:, None],
-                                          energy_mev.shape)
-        density = block_weights_b[good] / e_bin_widths_mev[cols]
-        np.add.at(sqe_total, (rows, cols), lw_total[good] * density)
-        np.add.at(sqe_diagonal, (rows, cols), lw_diagonal[good] * density)
-        np.add.at(sqe_interference, (rows, cols), lw_interference[good] * density)
-
-    if emit_gain:
-        # Mirror histogram deposit at -energy onto the gain grid; structurally
-        # identical to the loss scatter above (only the energies, edges and
-        # arrays differ). Runs strictly after the loss accumulation.
-        gbin = np.searchsorted(e_gain_edges_mev, gain_energy_mev,
-                               side="right").astype(np.intp) - 1
-        gbin[gain_energy_mev == e_gain_edges_mev[-1]] = len(e_gain_bin_widths_mev) - 1
-        ggood = (
-            valid_modes
-            & direction_ok[:, None]
-            & (gain_energy_mev >= e_gain_edges_mev[0])
-            & (gain_energy_mev <= e_gain_edges_mev[-1])
-            & (gbin >= 0)
-            & (gbin < len(e_gain_bin_widths_mev))
-        )
-        if np.any(ggood):
-            grows = np.broadcast_to(block_q_bins[:, None], gain_energy_mev.shape)[ggood]
-            gcols = gbin[ggood]
-            gblock_weights_b = np.broadcast_to(block_weights[:, None],
-                                               gain_energy_mev.shape)
-            gdensity = gblock_weights_b[ggood] / e_gain_bin_widths_mev[gcols]
-            np.add.at(sqe_total_gain, (grows, gcols), lw_total_gain[ggood] * gdensity)
-            np.add.at(sqe_diagonal_gain, (grows, gcols), lw_diagonal_gain[ggood] * gdensity)
-            np.add.at(sqe_interference_gain, (grows, gcols),
-                      lw_interference_gain[ggood] * gdensity)
-        return np.stack(
-            (sqe_total, sqe_diagonal, sqe_interference,
-             sqe_total_gain, sqe_diagonal_gain, sqe_interference_gain), axis=0)
-
-    return np.stack((sqe_total, sqe_diagonal, sqe_interference), axis=0)
+        bose_n[valid_modes] = 1.0 / np.expm1(exponent)
+        sides.append((-energy_mev, bose_n, state["e_gain_edges_mev"],
+                      state["e_gain_bin_widths_mev"]))
+    stack = []
+    for energies, occupancy, edges, widths in sides:
+        bins = np.searchsorted(edges, energies, side="right").astype(np.intp) - 1
+        bins[energies == edges[-1]] = len(widths) - 1
+        good = (valid_modes & direction_ok[:, None]
+                & (energies >= edges[0]) & (energies <= edges[-1]))
+        rows = np.broadcast_to(block_q_bins[:, None], energies.shape)[good]
+        cols = bins[good]
+        density = (1.0 / n_dirs) / widths[cols]
+        for weight in (total_w, diagonal_w, interference_w):
+            acc = np.zeros((state["num_q"], len(widths)), dtype=float)
+            line_weights = weight * occupancy * creation_prefactor_scale
+            np.add.at(acc, (rows, cols), line_weights[good] * density)
+            stack.append(acc)
+    return np.stack(stack, axis=0)
 
 
 def accumulate_incoherent_shell_block(shell_indices: np.ndarray) -> np.ndarray:
@@ -880,8 +762,7 @@ def accumulate_incoherent_shell_block(shell_indices: np.ndarray) -> np.ndarray:
     sqe_incoherent = np.zeros((state["num_q"], state["num_e"]), dtype=float)
 
     directions = state["directions"]
-    q_bin_sample_mags = state["q_bin_sample_mags"]
-    q_bin_sample_weights = state["q_bin_sample_weights"]
+    q_grid = state["q_grid_ang_inv"]
     thermal_mats = state["thermal_mats"]
     physical_q_prefactors = state["incoherent_prefactors"]
     mesh_mode_energies_mev = state["mesh_mode_energies_mev"]
@@ -905,40 +786,39 @@ def accumulate_incoherent_shell_block(shell_indices: np.ndarray) -> np.ndarray:
     projected_u2 = np.einsum("di,aij,dj->da", directions, thermal_mats, directions)
 
     for q_bin in shell_indices:
-        for q_mag, radial_weight in zip(q_bin_sample_mags[q_bin], q_bin_sample_weights[q_bin]):
-            if q_mag < 1e-12:
-                continue
+        q_mag = q_grid[q_bin]
+        if q_mag < 1e-12:
+            continue
 
-            debye_waller_sq = np.exp(-(q_mag**2) * projected_u2)
-            orientation_tensors = np.einsum(
-                "da,di,dj->aij",
-                debye_waller_sq,
-                directions,
-                directions,
-            ) / len(directions)
+        debye_waller_sq = np.exp(-(q_mag**2) * projected_u2)
+        orientation_tensors = np.einsum(
+            "da,di,dj->aij",
+            debye_waller_sq,
+            directions,
+            directions,
+        ) / len(directions)
 
-            mode_weights = np.zeros(len(mesh_mode_energies_mev), dtype=float)
-            for atom_index, atom_prefactor in enumerate(physical_q_prefactors):
-                weighted_tensor = (q_mag**2) * atom_prefactor * orientation_tensors[atom_index]
-                mode_weights += np.einsum(
-                    "mi,ij,mj->m",
-                    np.conjugate(mesh_mode_eigvecs[:, atom_index, :]),
-                    weighted_tensor,
-                    mesh_mode_eigvecs[:, atom_index, :],
-                    optimize=True,
-                ).real
-            line_weights = radial_weight * mesh_mode_bose_prefactors * mode_weights
-            if emit_gain:
-                line_weights_gain = (radial_weight
-                                     * mesh_mode_absorption_prefactors * mode_weights)
+        mode_weights = np.zeros(len(mesh_mode_energies_mev), dtype=float)
+        for atom_index, atom_prefactor in enumerate(physical_q_prefactors):
+            weighted_tensor = (q_mag**2) * atom_prefactor * orientation_tensors[atom_index]
+            mode_weights += np.einsum(
+                "mi,ij,mj->m",
+                np.conjugate(mesh_mode_eigvecs[:, atom_index, :]),
+                weighted_tensor,
+                mesh_mode_eigvecs[:, atom_index, :],
+                optimize=True,
+            ).real
+        line_weights = mesh_mode_bose_prefactors * mode_weights
+        if emit_gain:
+            line_weights_gain = mesh_mode_absorption_prefactors * mode_weights
 
-            if len(hist_bins) == 0:
-                continue
-            bincount_add(sqe_incoherent[q_bin], hist_bins, line_weights[hist_valid],
-                         hist_inv_widths)
-            if emit_gain and len(hist_gain_bins):
-                bincount_add(sqe_incoherent_gain[q_bin], hist_gain_bins,
-                             line_weights_gain[hist_gain_valid], hist_gain_inv_widths)
+        if len(hist_bins) == 0:
+            continue
+        bincount_add(sqe_incoherent[q_bin], hist_bins, line_weights[hist_valid],
+                     hist_inv_widths)
+        if emit_gain and len(hist_gain_bins):
+            bincount_add(sqe_incoherent_gain[q_bin], hist_gain_bins,
+                         line_weights_gain[hist_gain_valid], hist_gain_inv_widths)
 
     if emit_gain:
         return np.stack((sqe_incoherent, sqe_incoherent_gain), axis=0)
@@ -965,13 +845,12 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         sigma0_emission_lookup=state["sigma0_emission_lookup"],
         sigma0_absorption_lookup=state["sigma0_absorption_lookup"],
         emit_gain_side=emit_gain,
-        q2_max=float(np.max(state["q_bin_sample_mags"])) ** 2,
+        q2_max=float(np.max(state["q_grid_ang_inv"])) ** 2,
     )
     sqe_multiphonon_approx = np.zeros((state["num_q"], state["num_e"]), dtype=float)
     sqe_multiphonon_gain = np.zeros_like(sqe_multiphonon_approx) if emit_gain else None
 
-    q_bin_sample_mags = state["q_bin_sample_mags"]
-    q_bin_sample_weights = state["q_bin_sample_weights"]
+    q_grid = state["q_grid_ang_inv"]
     thermal_mats = state["thermal_mats"]
     projected_u2 = np.einsum("di,aij,dj->da", directions, thermal_mats, directions, optimize=True)
     sigma_total_scale = state["multiphonon_sigma_total_scale"]
@@ -1018,21 +897,14 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         if gain_orders_c is not None
         else None
     )
-    num_q_bins, num_radial_samples = q_bin_sample_mags.shape
-    flat_mags = q_bin_sample_mags.reshape(-1)
-    flat_weights = q_bin_sample_weights.reshape(-1)
-    row_scale = np.where(
-        (flat_mags >= 1.0e-12) & (flat_weights > 0.0),
-        flat_weights / total_num_dirs,
-        0.0,
-    )
+    num_q_bins = len(q_grid)
+    row_scale = np.where(q_grid >= 1.0e-12, 1.0 / total_num_dirs, 0.0)
     dao = kernel_matrix.shape[0]
-    chunk_bins = max(1, 20_000_000 // max(1, dao * num_radial_samples))
+    chunk_bins = max(1, 20_000_000 // max(1, dao))
     for q_start in range(0, num_q_bins, chunk_bins):
         q_stop = min(num_q_bins, q_start + chunk_bins)
-        rows = slice(q_start * num_radial_samples,
-                     q_stop * num_radial_samples)
-        q2 = flat_mags[rows] ** 2                                # (r,)
+        rows = slice(q_start, q_stop)
+        q2 = q_grid[rows] ** 2                                   # (r,)
         two_w = q2[:, None, None] * projected_u2[None, :, :]     # (r,d,a)
         positive_2w = two_w > 0.0
         # Order window. A Poisson weight whose log falls below the float64
@@ -1081,12 +953,10 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         term *= sigma_total_scale[None, None, :, None]
         term *= row_scale[rows][:, None, None, None]             # (r,d,a,o)
         n_rows = term.shape[0]
-        contrib = (term.reshape(n_rows, -1) @ k_mat).reshape(
-            q_stop - q_start, num_radial_samples, n_e_out).sum(axis=1)
+        contrib = term.reshape(n_rows, -1) @ k_mat
         sqe_multiphonon_approx[q_start:q_stop] += contrib
         if sqe_multiphonon_gain is not None:
-            gain_contrib = (term.reshape(n_rows, -1) @ k_gain).reshape(
-                q_stop - q_start, num_radial_samples, n_e_out).sum(axis=1)
+            gain_contrib = term.reshape(n_rows, -1) @ k_gain
             sqe_multiphonon_gain[q_start:q_stop] += gain_contrib
 
     if sqe_multiphonon_gain is not None:

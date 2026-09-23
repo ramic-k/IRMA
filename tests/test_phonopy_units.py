@@ -216,15 +216,13 @@ def test_reduced_q_at_a_physical_Q_agrees_across_calculators(twin_contexts):
     and the exp(2 pi i q.r) structure-factor phases are evaluated for a given
     |Q| in 1/Angstrom; with an unconverted bohr cell it came out 1.89x off, so
     the coherent one-phonon term sampled the wrong point in the zone."""
-    from irma.core.noncubic_workers import build_q_vectors
     ca, cb = twin_contexts
-    mags = np.array([[0.5, 1.0, 3.0, 10.0]])
-    weights = np.ones_like(mags)
     rng = np.random.default_rng(0)
     dirs = rng.normal(size=(7, 3))
     dirs /= np.linalg.norm(dirs, axis=1)[:, None]
-    qa = build_q_vectors(mags, weights, dirs, ca["rec_lat_no_2pi"])[0]
-    qb = build_q_vectors(mags, weights, dirs, cb["rec_lat_no_2pi"])[0]
+    # The coherent worker forms q_red = |Q| * solve(rec_lat_no_2pi, direction) / 2 pi.
+    qa = np.linalg.solve(ca["rec_lat_no_2pi"], dirs.T)
+    qb = np.linalg.solve(cb["rec_lat_no_2pi"], dirs.T)
     assert np.abs(qa - qb).max() < 1e-12
 
 

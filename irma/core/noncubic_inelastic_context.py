@@ -31,8 +31,6 @@ from irma.core.noncubic_engine import (
     THz,
     THzToEv,
     argparse,
-    build_q_bin_sampling,
-    build_q_vectors,
     build_star_averaged_projection_components,
     centers_to_edges,
     fibonacci_sphere,
@@ -450,8 +448,6 @@ def build_compute_context(
 
     directions = fibonacci_sphere(args.num_directions)
 
-    q_center_mags, q_center_weights = build_q_bin_sampling(q_grid_ang_inv)
-    q_bin_sample_mags, q_bin_sample_weights = build_q_bin_sampling(q_grid_ang_inv)
     finish_stage("grid sampling prepared")
 
     if model_context is None:
@@ -466,15 +462,14 @@ def build_compute_context(
     primitive = model_context["primitive"]
     rec_lat_no_2pi = model_context["rec_lat_no_2pi"]
 
-    q_red, q_shell_index, sample_weights, q_cart_physical, unit_directions, q_mags_physical = build_q_vectors(
-        q_center_mags,
-        q_center_weights,
-        directions,
-        rec_lat_no_2pi,
-    )
+    # Reduced-coordinate direction basis: the coherent worker forms each
+    # sample's reduced q as |Q| * direction_red_basis[direction].
+    direction_red_basis = np.linalg.solve(rec_lat_no_2pi, directions.T).T / (2.0 * np.pi)
+    num_coherent_samples = len(q_grid_ang_inv) * len(directions)
     finish_stage("coherent geometry prepared")
 
-    print(f"Evaluating coherent one-phonon dynamic structure factor for {len(q_red)} Q-vectors...")
+    print("Evaluating coherent one-phonon dynamic structure factor for "
+          f"{num_coherent_samples} Q-vectors...")
 
     mev_to_joule = EV * 1e-3
     unit_conversion = 1.0 / (AMU * (2 * np.pi * THz) ** 2)
@@ -560,8 +555,8 @@ def build_compute_context(
 
     print("  Context setup: partitioning coherent direction blocks...", flush=True)
     coherent_blocks = [
-        np.arange(start_index, min(len(q_red), start_index + chunk_size), dtype=int)
-        for start_index in range(0, len(q_red), chunk_size)
+        np.arange(start_index, min(num_coherent_samples, start_index + chunk_size), dtype=int)
+        for start_index in range(0, num_coherent_samples, chunk_size)
     ]
     print("  Context setup: partitioning incoherent shell blocks...", flush=True)
     shell_blocks = [
@@ -602,21 +597,12 @@ def build_compute_context(
         "e_max_used": e_max_used,
         "de_used": de_used,
         "directions": directions,
-        "q_center_mags": q_center_mags,
-        "q_center_weights": q_center_weights,
-        "q_bin_sample_mags": q_bin_sample_mags,
-        "q_bin_sample_weights": q_bin_sample_weights,
+        "direction_red_basis": direction_red_basis,
         # MODEL layer (shared by reference with model_context — see
         # build_model_context for the keys: mesh, primitive, rec_lat_no_2pi,
         # the incoherent_one_phonon_* arrays, max_mode_energy_mev and the
         # multiphonon_* mode/projection arrays).
         **model_context,
-        "q_red": q_red,
-        "q_shell_index": q_shell_index,
-        "sample_weights": sample_weights,
-        "q_cart_physical": q_cart_physical,
-        "unit_directions": unit_directions,
-        "q_mags_physical": q_mags_physical,
         "mev_to_joule": mev_to_joule,
         "unit_conversion": unit_conversion,
         "scattering_lengths": scattering_lengths,
