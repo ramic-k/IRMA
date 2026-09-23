@@ -137,15 +137,8 @@ GRID_EXPORT_KEYS = (tuple(key for _a, key, _p, _l in _AUTO_EXPORT_FIELDS)
                     + ("freq_max_eV", "alpha_grid", "beta_grid"))
 
 # attribute name -> default (strings, ready for LabeledEntry)
-AUTO_GRID_ENTRY_DEFAULTS = {
-    "n_lower": str(_D["n_lower"]),
-    "n_phonon": str(_D["n_phonon"]),
-    "n_upper": str(_D["n_upper"]),
-    "beta_max": str(_D["beta_max_eV"]),
-    "alpha_dq": str(_D["alpha_dq_invA"]),
-    "alpha_qcut": str(_D["alpha_qcut_invA"]),
-    "alpha_nlog": str(_D["alpha_nlog"]),
-}
+AUTO_GRID_ENTRY_DEFAULTS = {attr: str(_D[key])
+                            for attr, key, _p, _l in _AUTO_EXPORT_FIELDS}
 
 
 def build_auto_grid_entries(parent, width=12):
@@ -155,7 +148,7 @@ def build_auto_grid_entries(parent, width=12):
     :class:`~irma.gui.widgets.LabeledEntry` (packed ``fill=X, pady=2``) with
     the shared label, help text, and default from :data:`AUTO_GRID_FIELDS` /
     :data:`AUTO_GRID_ENTRY_DEFAULTS`. Returns ``{name: LabeledEntry}`` in
-    field order; callers assign the entries to their own attribute names.
+    field order.
     """
     entries = {}
     for name, label, help_title, help_text in AUTO_GRID_FIELDS:
@@ -244,14 +237,8 @@ class SabGridForm(ttk.Frame):
                                      default="", width=12,
                                      help_text=HELP["freq_max_eV"])
         self.freq_max.pack(fill=tk.X, pady=2)
-        _knobs = build_auto_grid_entries(self._auto_frame)
-        self.n_lower = _knobs["n_lower"]
-        self.n_phonon = _knobs["n_phonon"]
-        self.n_upper = _knobs["n_upper"]
-        self.beta_max = _knobs["beta_max"]
-        self.alpha_dq = _knobs["alpha_dq"]
-        self.alpha_qcut = _knobs["alpha_qcut"]
-        self.alpha_nlog = _knobs["alpha_nlog"]
+        for name, w in build_auto_grid_entries(self._auto_frame).items():
+            setattr(self, name, w)
 
         # EXPLICIT: dimensionless alpha/beta float lists (blank by default).
         self._explicit_frame = ttk.Frame(self)
@@ -263,12 +250,6 @@ class SabGridForm(ttk.Frame):
                                       default="",
                                       width=28, help_text=HELP["beta_grid"])
         self.beta_grid.pack(fill=tk.X, pady=2)
-
-        # ordered for the disable sweep
-        self._auto_entries = (self.freq_max, self.n_lower, self.n_phonon,
-                              self.n_upper, self.beta_max, self.alpha_dq,
-                              self.alpha_qcut, self.alpha_nlog)
-        self._explicit_entries = (self.alpha_grid, self.beta_grid)
         self._sync_enabled()
 
     # ------------------------------------------------------------------ mode --
