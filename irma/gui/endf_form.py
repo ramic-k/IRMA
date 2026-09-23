@@ -2321,7 +2321,8 @@ class EndfFormMixin:
         """Compute and display the alpha/beta grids for the current settings."""
         try:
             if self.grid_mode.get() == "auto":
-                from irma.core.grids import (generate_beta_grid_for_iint,
+                from irma.core.grids import (describe_beta_grid,
+                                             generate_beta_grid,
                                              generate_alpha_grid,
                                              grid_reference_temperature_K)
                 temps = self._parse_temperatures()
@@ -2330,29 +2331,25 @@ class EndfFormMixin:
                 # fixed 0.0253 eV units, independent of temps[0].
                 t_ref = grid_reference_temperature_K(self._parse_lat(), temps[0])
                 awr = parse_float("AWR", self.awr.get())
-                # generate_beta_grid_for_iint wires the lin-lin (iint=1)
-                # step-capped tail vs the log-lin pure-log tail, so the GUI and
-                # library callers share one safe pairing.
                 iint = self._parse_combo_int(self.iint)
-                beta, grid_details = generate_beta_grid_for_iint(
+                beta = generate_beta_grid(
                     freq_max, t_ref, iint=iint, awr=awr,
                     n_lower=parse_int("N lower (log)", self.n_lower.get()),
                     n_phonon=parse_int("N phonon (linear)", self.n_phonon.get()),
                     n_upper=parse_int("N upper (log)", self.n_upper.get()),
                     beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()),
-                    evaluation_temperatures_K=temps, return_details=True)
+                    evaluation_temperatures_K=temps)
                 alpha = generate_alpha_grid(
                     beta, awr, t_ref,
                     dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),
                     q_cut_ang_inv=parse_float("Alpha Q cut [1/A]",
                                               self.alpha_qcut.get()),
                     n_log=parse_int("Alpha N log", self.alpha_nlog.get()))
-                from irma.core.grids import describe_beta_grid
                 self.grid_info_var.set(
                     f"nalpha={len(alpha)}, nbeta={len(beta)}, "
                     f"alpha=[{alpha[0]:.4e}..{alpha[-1]:.4e}], "
                     f"beta=[{beta[0]:.1f}..{beta[-1]:.4e}]\n"
-                    + describe_beta_grid(grid_details))
+                    + describe_beta_grid(beta, t_ref, iint))
             else:
                 alpha = self._parse_manual_array(self.alpha_text, "alpha grid")
                 beta = self._parse_manual_array(self.beta_text, "beta grid")
@@ -2989,7 +2986,7 @@ class EndfFormMixin:
 
         # Card 7: alpha, beta
         if self.grid_mode.get() == "auto":
-            from irma.core.grids import (generate_beta_grid_for_iint,
+            from irma.core.grids import (generate_beta_grid,
                                          generate_alpha_grid,
                                          grid_reference_temperature_K)
             freq_max = parse_float("Max phonon freq [eV]", self.freq_max.get())
@@ -2999,11 +2996,9 @@ class EndfFormMixin:
             # rescaled by kT(T0)/0.0253 -- 3.8x too coarse at T0=77 K).
             t_ref = grid_reference_temperature_K(lat, temps[0])
             awr = parse_float("AWR", self.awr.get())
-            # generate_beta_grid_for_iint wires the lin-lin (iint=1)
-            # step-capped tail vs the log-lin pure-log tail (byte-identical to
-            # existing decks for iint=0 at the same n_upper).
+            # iint=1 gets the step-capped lin-lin tail, iint=0 the pure log tail.
             iint = self._parse_combo_int(self.iint)
-            beta = generate_beta_grid_for_iint(
+            beta = generate_beta_grid(
                 freq_max, t_ref, iint=iint, awr=awr,
                 n_lower=parse_int("N lower (log)", self.n_lower.get()),
                 n_phonon=parse_int("N phonon (linear)", self.n_phonon.get()),
