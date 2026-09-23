@@ -362,9 +362,16 @@ def test_sevennet_branch_with_stubs(monkeypatch, fake_torch):
     assert made == {"model": "7net-mf-ompa", "modal": "mpa", "device": "cpu"}
     assert fake_torch.default_dtype == "float32"
 
+    assert meta["modal"] == "mpa"
+
     made.clear()
     calc, _ = make_calculator(CalculatorSpec("sevennet", model="7net-0"))
     assert made == {"model": "7net-0", "modal": None, "device": "cpu"}
+
+    # the multi-fidelity default named explicitly still gets a fidelity
+    made.clear()
+    calc, meta = make_calculator(CalculatorSpec("sevennet", model="7net-mf-ompa"))
+    assert made["modal"] == "mpa" and meta["modal"] == "mpa"
 
 
 def _stub_orb(monkeypatch, calculator_cls, **builders):
