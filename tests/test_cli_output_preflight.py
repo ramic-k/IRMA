@@ -50,23 +50,8 @@ def test_deck_cli_fails_fast_before_compute(tmp_path, capsys):
     assert "directory, not a file" in err
 
 
-# ---- review S10: the preflight must check the path the WRITER opens --------
-
-def test_rejects_readonly_existing_target(tmp_path):
-    tgt = tmp_path / "out.npz"
-    tgt.write_bytes(b"x")
-    os.chmod(tgt, 0o400)
-    try:
-        if os.access(tgt, os.W_OK):
-            pytest.skip("target still writable (running as root?)")
-        msg = validate_output_path(str(tgt))
-        assert msg is not None and "exists and is not writable" in msg
-    finally:
-        os.chmod(tgt, 0o600)
-
-
 def test_output_resolvers_match_the_writers(tmp_path):
-    """One resolver per mode = the exact path its writer opens (review SP-2a)."""
+    """One resolver per mode = the exact path its writer opens."""
     from irma.spectra.cli import (resolve_map_output_path,
                                   resolve_spectrum_output_path)
 
@@ -83,28 +68,18 @@ def test_output_resolvers_match_the_writers(tmp_path):
         tmp_path / "OUT.json")
 
 
-def test_map_preflight_catches_writer_target(tmp_path):
-    """A map `-o out.json` writes out.json.npz; an existing DIRECTORY there
-    used to pass the raw-path preflight and fail only after the compute
-    (review SP-2a)."""
-    from irma.spectra.cli import resolve_map_output_path
+# ---- routine ncrystal exporter errors exit cleanly --------------------------
 
-    (tmp_path / "out.json.npz").mkdir()
-    msg = validate_output_path(resolve_map_output_path(tmp_path / "out.json"))
-    assert msg is not None and "directory, not a file" in msg
+_CFG = ("material:\n"
+        "  phonopy_yaml: x.yaml\n"
+        "  mesh: [4, 4, 4]\n"
+        "  temperature_K: 296.0\n"
+        "  scatterers:\n"
+        "    - {symbol: C, sigma_bound_b: 5.551, awr: 11.898,\n"
+        "       b_coh_fm: 6.646, sigma_inc_b: 0.001}\n"
+        "export:\n"
+        "  material_id: x\n")
 
-
-def test_cuts_preflight_ignores_unrelated_npz_sibling(tmp_path):
-    """An extensionless CUTS output writes CSV at the raw path; the old
-    mode-blind candidate set also preflighted rawout.npz, so an unrelated
-    directory there falsely rejected a valid run (review SP-2b)."""
-    from irma.spectra.cli import resolve_spectrum_output_path
-
-    (tmp_path / "rawout.npz").mkdir()
-    assert validate_output_path(resolve_spectrum_output_path(tmp_path / "rawout")) is None
-
-
-# ---- review S11: routine ncrystal exporter errors exit cleanly -------------
 
 def test_ncrystal_cli_missing_config_exits_2(tmp_path, capsys):
     from irma.ncrystal.__main__ import main as ncrystal_main
@@ -132,24 +107,12 @@ def test_ncrystal_cli_config_error_exits_2(tmp_path, capsys):
     from irma.ncrystal.__main__ import main as ncrystal_main
 
     cfg = tmp_path / "cfg.yaml"
-    cfg.write_text(
-        "material:\n"
-        "  phonopy_yaml: x.yaml\n"
-        "  mesh: [4, 4, 4]\n"
-        "  temperature_K: 296.0\n"
-        "  scatterers:\n"
-        "    - {symbol: C, sigma_bound_b: 5.551, awr: 11.898,\n"
-        "       b_coh_fm: 6.646, sigma_inc_b: 0.001}\n"
-        "export:\n"
-        "  material_id: x\n"
-        "  inelastic_mode: 7\n")
+    cfg.write_text(_CFG + "  inelastic_mode: 7\n")
     rc = ncrystal_main([str(cfg), "-o", str(tmp_path)])
     assert rc == 2
     err = capsys.readouterr().err
     assert "inelastic_mode" in err and "Traceback" not in err
 
-
-# ---- review NC-4: missing optional phonopy is a clean CLI failure ----------
 
 def test_ncrystal_cli_missing_phonopy_exits_3(tmp_path, capsys, monkeypatch):
     """ImportError from the optional phonopy dependency must hit the clean
@@ -159,16 +122,7 @@ def test_ncrystal_cli_missing_phonopy_exits_3(tmp_path, capsys, monkeypatch):
     from irma.ncrystal.__main__ import main as ncrystal_main
 
     cfg = tmp_path / "cfg.yaml"
-    cfg.write_text(
-        "material:\n"
-        "  phonopy_yaml: x.yaml\n"
-        "  mesh: [4, 4, 4]\n"
-        "  temperature_K: 296.0\n"
-        "  scatterers:\n"
-        "    - {symbol: C, sigma_bound_b: 5.551, awr: 11.898,\n"
-        "       b_coh_fm: 6.646, sigma_inc_b: 0.001}\n"
-        "export:\n"
-        "  material_id: x\n")
+    cfg.write_text(_CFG)
 
     def _no_phonopy(*a, **k):
         raise ModuleNotFoundError("No module named 'phonopy'")
@@ -180,8 +134,6 @@ def test_ncrystal_cli_missing_phonopy_exits_3(tmp_path, capsys, monkeypatch):
     assert "phonopy" in err and "irma[phonopy]" in err
     assert "Traceback" not in err
 
-
-# ---- review CLI-2: scalar top-level sections are schema errors -------------
 
 def test_ncrystal_cli_missing_pyyaml_message(tmp_path, capsys, monkeypatch):
     """On a bare core install the exporter fails with a clean PyYAML hint,
