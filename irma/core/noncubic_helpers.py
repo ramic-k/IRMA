@@ -174,25 +174,6 @@ def convert_sqe_to_asym_downscatter_sab(
     return alpha, beta_downscatter_abs, sab_asym_downscatter
 
 
-def compute_last_nonzero_beta(
-    sab_alpha_beta: np.ndarray,
-    beta_downscatter_abs: np.ndarray,
-    tol: float = 0.0,
-) -> float | None:
-    """Return the last beta row carrying nonzero weight in an ``(alpha, beta)`` SAB array."""
-    sab_arr = np.asarray(sab_alpha_beta, dtype=float)
-    beta_arr = np.asarray(beta_downscatter_abs, dtype=float)
-    if sab_arr.ndim != 2:
-        raise ValueError("Expected a 2D (n_alpha, n_beta) SAB array.")
-    if sab_arr.shape[1] != len(beta_arr):
-        raise ValueError("Beta-axis length does not match the SAB array.")
-    row_max = np.max(sab_arr, axis=0)
-    nz = np.flatnonzero(row_max > tol)
-    if nz.size == 0:
-        return None
-    return float(beta_arr[nz[-1]])
-
-
 def parse_scattering_lengths(
     symbols: list[str],
     scattering_lengths_json: str | None,

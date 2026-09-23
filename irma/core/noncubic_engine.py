@@ -111,28 +111,8 @@ import argparse
 import json
 import math
 import multiprocessing as mp
-import os
-import sys
 import time
 from pathlib import Path
-
-# Pin native thread pools to one thread BEFORE numpy (and therefore BLAS/OMP)
-# is imported below: the env-var mechanism only binds if it is set prior to the
-# pool initializing. The engine import path does this early too (engine.py), but
-# the standalone diagnostic CLI (python -m irma.core.noncubic_engine) imports
-# numpy here without pulling in engine, so without this the only effective clamp
-# would be the OPTIONAL threadpoolctl (see limit_native_threads_to_one). Mirrors
-# the early setup in engine.py but covers every native-thread variable. Workers
-# re-force these (overriding inherited values) via the pool initializer.
-for _name in (
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-    "BLIS_NUM_THREADS",
-):
-    os.environ.setdefault(_name, "1")
 
 import numpy as np
 
@@ -161,7 +141,6 @@ from irma.core.noncubic_helpers import (  # re-exported for back-compat
     infer_sigma_barn,
     normalize_site_groups,
     convert_sqe_to_asym_downscatter_sab,
-    compute_last_nonzero_beta,
     parse_scattering_lengths,
     parse_incoherent_cross_sections,
     reshape_mesh_eigenvectors,
@@ -407,11 +386,7 @@ def compute_from_args(
     try:
         # --- Mesh, Q/E grids, thermal displacements and the direction quadrature.
         start = time.time()
-        multiphonon_num_directions = (
-            max(1, int(args.num_directions))
-            if args.multiphonon_num_directions is None
-            else max(1, int(args.multiphonon_num_directions))
-        )
+        multiphonon_num_directions = int(args.multiphonon_num_directions)
 
         if q_grid_ang_inv is None or e_grid_mev is None:
             if args.grid_from_oclimax_csv:
@@ -453,8 +428,6 @@ def compute_from_args(
         e_max_used = context["e_max_used"]
         de_used = context["de_used"]
         directions = context["directions"]
-        q_center_mags = context["q_center_mags"]
-        q_center_weights = context["q_center_weights"]
         q_bin_sample_mags = context["q_bin_sample_mags"]
         q_bin_sample_weights = context["q_bin_sample_weights"]
         mesh = context["mesh"]
@@ -497,106 +470,38 @@ def compute_from_args(
         shell_blocks = context["shell_blocks"]
         multiphonon_dir_chunk_size = context["multiphonon_dir_chunk_size"]
 
-        phase_start = time.time()
-        # Filled when a user phonon-energy cutoff is active; carried into the
-        # run metadata and printed once per temperature.
-        phonon_cutoff_summary = None
-        precomputed_tdm = getattr(args, "precomputed_thermal_mats", None)
-        if precomputed_tdm is not None:
-            # The engine's MT4 step already ran ThermalDisplacementMatrices on the
-            # SAME full mesh at the SAME temperature with the SAME mode floor
-            # (irma.core.phonopy_io.compute_thermal_displacement_matrices); reuse
-            # its arrays instead of repeating the run.
-            thermal_mats = np.asarray(precomputed_tdm, dtype=float)
-            print("Reusing the engine's thermal displacement matrices "
-                  "(same mesh, same temperature)...", flush=True)
+        # Thermal-displacement tensors on the full mesh. The ENDF driver passes
+        # the tensors it already computed for this temperature; the spectra and
+        # NCrystal paths compute them here. The cutoff summary reports what a
+        # user phonon-energy cutoff removed.
+        thermal_mats = getattr(args, "precomputed_thermal_mats", None)
+        # The diagnostic CLI (parse_args) has no cutoff option.
+        cutoff_mev = float(getattr(args, "min_phonon_energy_mev", 0.0))
+        if thermal_mats is None or cutoff_mev > 0.0:
+            from irma.core.phonopy_io import PhonopyMeshData
+            mesh_data = PhonopyMeshData(
+                qpoints=np.asarray(mesh.qpoints, dtype=float),
+                frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
+                eigenvectors=reshape_mesh_eigenvectors(
+                    np.asarray(mesh.eigenvectors), len(primitive.masses)),
+                weights=np.asarray(mesh.weights, dtype=float),
+                masses_amu=np.asarray(primitive.masses, dtype=float),
+                atom_symbols=[str(s) for s in primitive.symbols],
+                atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
+                min_phonon_energy_mev=cutoff_mev,
+                phonopy_mesh_object=mesh,
+            )
+        if thermal_mats is None:
+            from irma.core.phonopy_io import compute_thermal_displacement_matrices
+            print("Precomputing anisotropic thermal displacement matrices...", flush=True)
+            thermal_mats = compute_thermal_displacement_matrices(mesh_data, args.temperature)
         else:
-            # The TDMs depend only on the mesh eigenvectors, temperature, and
-            # atomic masses — all species-independent — so they are cached in
-            # the reusable model context keyed by temperature: a multi-species
-            # pack bake computes the tensor once for all principals, and lat=0
-            # multi-temperature decks compute each temperature once.
-            _model_ctx = (context.get("_model_context")
-                          if isinstance(context, dict) else None)
-            _tdm_cache = (_model_ctx.setdefault("thermal_mats_by_temperature", {})
-                          if isinstance(_model_ctx, dict) else None)
-            _tdm_key = round(float(args.temperature), 9)
-            if _tdm_cache is not None and _tdm_key in _tdm_cache:
-                thermal_mats = _tdm_cache[_tdm_key]
-                print("Reusing cached thermal displacement matrices "
-                      "(same mesh, same temperature)...", flush=True)
-            else:
-                print("Precomputing anisotropic thermal displacement matrices...",
-                      flush=True)
-                # Same per-q two-tier Debye-Waller mode floor as the MT2/driver
-                # path (phonopy_io.compute_thermal_displacement_matrices): the
-                # per-q sum keeps the off-Gamma soft modes in
-                # [1 ueV, GAMMA_ACOUSTIC_FLOOR] that the one-phonon and
-                # multiphonon mode sums also keep, so the Poisson/DW 2W is built
-                # from the same mode set as the kernels.
-                from irma.core.phonopy_io import (
-                    PhonopyMeshData,
-                    compute_thermal_displacement_matrices,
-                )
-                _mesh_data = PhonopyMeshData(
-                    qpoints=np.asarray(mesh.qpoints, dtype=float),
-                    frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
-                    # Transient (N_q, N_branches, N_atoms, 3) layout copy,
-                    # consumed by the per-q sum.
-                    eigenvectors=reshape_mesh_eigenvectors(
-                        np.asarray(mesh.eigenvectors), len(primitive.masses)),
-                    weights=np.asarray(
-                        getattr(mesh, "weights", np.ones(len(mesh.qpoints))),
-                        dtype=float),
-                    masses_amu=np.asarray(primitive.masses, dtype=float),
-                    atom_symbols=[str(s) for s in primitive.symbols],
-                    atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
-                    min_phonon_energy_mev=float(
-                        getattr(args, "min_phonon_energy_mev", 0.0)),
-                    phonopy_mesh_object=mesh,
-                )
-                thermal_mats = compute_thermal_displacement_matrices(
-                    _mesh_data, args.temperature)
-                del _mesh_data
-                if _tdm_cache is not None:
-                    _tdm_cache[_tdm_key] = thermal_mats
-                print(
-                    f"Thermal displacement matrices ready in {time.time() - phase_start:.1f} s",
-                    flush=True,
-                )
-        _cutoff_mev = float(getattr(args, "min_phonon_energy_mev", 0.0))
-        if _cutoff_mev > 0.0:
-            # Report what the cutoff removed, whichever branch supplied the
-            # displacement matrices: the summary rebuilds both mode populations
-            # on the mesh at this temperature (two cheap per-mode sums), so a
-            # truncated model announces itself and records itself in the
-            # metadata. Cached per temperature with the model context.
+            thermal_mats = np.asarray(thermal_mats, dtype=float)
+        phonon_cutoff_summary = None
+        if cutoff_mev > 0.0:
             from irma.core.phonopy_io import (
-                PhonopyMeshData, format_phonon_cutoff_summary,
-                phonon_cutoff_summary as _summary)
-            _summary_ctx = (context.get("_model_context")
-                            if isinstance(context, dict) else None)
-            _summary_cache = (_summary_ctx.setdefault("phonon_cutoff_summary_by_temperature", {})
-                              if isinstance(_summary_ctx, dict) else None)
-            _summary_key = round(float(args.temperature), 9)
-            if _summary_cache is not None and _summary_key in _summary_cache:
-                phonon_cutoff_summary = _summary_cache[_summary_key]
-            else:
-                phonon_cutoff_summary = _summary(PhonopyMeshData(
-                    qpoints=np.asarray(mesh.qpoints, dtype=float),
-                    frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
-                    eigenvectors=reshape_mesh_eigenvectors(
-                        np.asarray(mesh.eigenvectors), len(primitive.masses)),
-                    weights=np.asarray(
-                        getattr(mesh, "weights", np.ones(len(mesh.qpoints))), dtype=float),
-                    masses_amu=np.asarray(primitive.masses, dtype=float),
-                    atom_symbols=[str(s) for s in primitive.symbols],
-                    atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
-                    min_phonon_energy_mev=_cutoff_mev,
-                    phonopy_mesh_object=mesh,
-                ), args.temperature)
-                if _summary_cache is not None:
-                    _summary_cache[_summary_key] = phonon_cutoff_summary
+                format_phonon_cutoff_summary, phonon_cutoff_summary as _summary)
+            phonon_cutoff_summary = _summary(mesh_data, args.temperature)
             for _line in format_phonon_cutoff_summary(phonon_cutoff_summary):
                 print(_line, flush=True)
         if args.temperature <= BOSE_T0_LIMIT_K:
@@ -616,11 +521,11 @@ def compute_from_args(
 
         # --- Site groups, principal-scatterer bookkeeping and the multiphonon order.
         requested_order = args.multiphonon_max_order
-        max_q_for_order = float(np.max(q_bin_sample_mags)) if np.size(q_bin_sample_mags) else 0.0
+        max_q_for_order = float(np.max(q_bin_sample_mags))
         _, required_order, two_w_max, u_max = derive_required_multiphonon_order(
             max_q_for_order, thermal_mats, requested_order
         )
-        auto_multiphonon_order = bool(getattr(args, "auto_multiphonon_order", False))
+        auto_multiphonon_order = bool(args.auto_multiphonon_order)
         if auto_multiphonon_order:
             # Auto-size UP to the requirement, capped at the 2000 safety limit, but NEVER below
             # the deck nphon (a deliberately high deck order is still honored).
@@ -713,7 +618,7 @@ def compute_from_args(
                 f"{energy_reach.reach_mev / 1e3:.2f} eV of energy transfer; "
                 f"{need_text}. The law is truncated past the reach. {remedy}.")
             print(f"WARNING: {coverage_warning}")
-        represented_principal_site_count = getattr(args, "represented_principal_site_count", None)
+        represented_principal_site_count = args.represented_principal_site_count
         if represented_principal_site_count is None:
             represented_principal_site_count = len(primitive.symbols)
         represented_principal_site_count = int(represented_principal_site_count)
@@ -734,7 +639,7 @@ def compute_from_args(
             [float(np.sum(sigma_coh_by_atom[group])) for group in site_groups],
             dtype=float,
         )
-        coherent_partition_mode = str(getattr(args, "coherent_partition_mode", "auto") or "auto")
+        coherent_partition_mode = str(args.coherent_partition_mode)
         if coherent_partition_mode == "auto":
             coherent_partition_mode = "exact-total" if len(site_groups) == 1 else "principal-xs-weighted"
         if coherent_partition_mode not in ("exact-total", "principal-xs-weighted"):
@@ -801,7 +706,7 @@ def compute_from_args(
         # Energy-gain (annihilation) one-phonon prefactor: the creation prefactor
         # with (occ+1) -> occ; everything else identical. Built only when the gain
         # side is requested; consumed by the incoherent worker at -energy.
-        emit_gain_side = bool(getattr(args, "emit_gain_side", False))
+        emit_gain_side = bool(args.emit_gain_side)
         incoherent_one_phonon_mode_absorption_prefactors = (
             (incoherent_one_phonon_mode_occupancies
              * unit_conversion
@@ -975,8 +880,7 @@ def compute_from_args(
                 "q_mags_physical": q_mags_physical,
                 "dynamical_matrix": mesh.dynamical_matrix,
                 "frequency_factor_to_thz": frequency_factor_to_thz,
-                "min_phonon_energy_mev": float(
-                    getattr(args, "min_phonon_energy_mev", 0.0)),
+                "min_phonon_energy_mev": cutoff_mev,
                 "thermal_mats": thermal_mats,
                 "positions_t": primitive.scaled_positions.T,
                 "coherent_atom_prefactors": coherent_atom_prefactors,
@@ -1151,7 +1055,7 @@ def compute_from_args(
             e_signed_grid_mev, positive_slice = build_signed_energy_grid(e_work_grid_mev)
             e_signed_edges_mev = centers_to_edges(e_signed_grid_mev)
             e_signed_bin_widths_mev = np.diff(e_signed_edges_mev)
-            multiphonon_directions = fibonacci_sphere(max(1, multiphonon_num_directions))
+            multiphonon_directions = fibonacci_sphere(multiphonon_num_directions)
             signed_emission_lookup = precompute_histogram_lookup(
                 multiphonon_mode_energies_mev,
                 e_signed_edges_mev,
@@ -1329,27 +1233,43 @@ def compute_from_args(
                         sqe_incoherent_approx_n1_term_gain_out + sqe_multiphonon_gain)
 
         # --- Conversion of the S(Q,E) maps to asymmetric downscatter S(alpha,beta).
-        for _name, _arr in (
-            ("sqe_coherent", sqe_coherent),
-            ("sqe_coherent_diagonal", sqe_coherent_diagonal),
-            ("sqe_coherent_interference", sqe_coherent_interference),
-            ("sqe_incoherent", sqe_incoherent),
-            ("sqe_incoherent_approx_n1_term", sqe_incoherent_approx_n1_term),
-            ("sqe_multiphonon_incoherent_approx", sqe_multiphonon_incoherent_approx),
-            ("sqe_one_phonon_total", sqe_one_phonon_total),
-        ):
-            if _arr is None:
-                continue
-            _bad = np.size(_arr) - int(np.count_nonzero(np.isfinite(_arr)))
-            if _bad:
+        # Components by name: output keys are sqe_<name>_barn_per_meV and
+        # sab_asym_downscatter_<name>; gain-side keys sqe_<name>_gain_barn_per_meV.
+        loss = {
+            "coherent": sqe_coherent,
+            "coherent_diagonal": sqe_coherent_diagonal,
+            "coherent_interference": sqe_coherent_interference,
+            "incoherent": sqe_incoherent,
+            "one_phonon_total": sqe_one_phonon_total,
+            "incoherent_approx_n1_term": sqe_incoherent_approx_n1_term,
+            "multiphonon_incoherent_approx": sqe_multiphonon_incoherent_approx,
+            "one_phonon_total_plus_incoherent_approx_multiphonon":
+                sqe_one_phonon_total_plus_incoherent_approx_multiphonon,
+            "incoherent_approx_n1_term_plus_incoherent_approx_multiphonon":
+                sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon,
+        }
+        loss = {k: v for k, v in loss.items() if v is not None}
+        gain = {}
+        if emit_gain_side:
+            gain = {
+                "coherent": sqe_coherent_gain_out,
+                "incoherent": sqe_incoherent_gain_out,
+                "one_phonon_total": sqe_one_phonon_total_gain_out,
+                "incoherent_approx_n1_term": sqe_incoherent_approx_n1_term_gain_out,
+                "multiphonon_incoherent_approx": sqe_multiphonon_gain,
+                "one_phonon_total_plus_incoherent_approx_multiphonon":
+                    sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain,
+                "incoherent_approx_n1_term_plus_incoherent_approx_multiphonon":
+                    sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain,
+            }
+            gain = {k: v for k, v in gain.items() if v is not None}
+        for name, arr in list(loss.items()) + [(k + "_gain", v) for k, v in gain.items()]:
+            if not np.all(np.isfinite(arr)):
                 raise RuntimeError(
-                    f"{_name} contains {_bad} non-finite value(s) after the "
-                    f"accumulation phase; refusing to convert to S(alpha,beta). "
-                    f"This usually indicates numerical overflow inside a worker "
-                    f"block (check the mode floor, the phonon model, and the "
-                    f"temperature).")
+                    f"sqe_{name} contains non-finite values after the accumulation "
+                    "phase (numerical overflow in a worker block).")
 
-        sab_sigma_barn_override = getattr(args, "sab_sigma_barn", None)
+        sab_sigma_barn_override = args.sab_sigma_barn
         if sab_sigma_barn_override is None:
             if scattering_lengths is None or sigma_inc is None:
                 raise ValueError(
@@ -1362,14 +1282,9 @@ def compute_from_args(
                 sigma_inc,
             )
         else:
-            # PER-ATOM convention: the override is the per-atom principal-type
-            # sigma (engine.py passes sigma_coh + sigma_inc of the principal
-            # atom TYPE) and the sqe arrays already carry the
-            # 1/represented_principal_site_count normalization. The diagnostic
-            # coherent/incoherent channel sigmas must use the same per-atom
-            # convention — a raw site sum left the channel SAB arrays a factor
-            # N_sites below the per-atom production arrays and recorded
-            # coherent sigma > total sigma in the sab_output metadata.
+            # Per-atom convention: the override is the principal type's
+            # sigma_coh + sigma_inc, and the sqe arrays already carry the
+            # 1/represented_principal_site_count normalization.
             sigma_coh_barn = float(
                 np.sum(sigma_coh_by_atom[principal_site_indices])
             ) / float(represented_principal_site_count)
@@ -1378,187 +1293,46 @@ def compute_from_args(
             ) / float(represented_principal_site_count)
             sigma_total_barn = float(sab_sigma_barn_override)
         mass_ratio = infer_mass_ratio(primitive.masses, args.sab_mass_ratio)
-        alpha, beta_downscatter_abs, sab_asym_downscatter_coherent = convert_sqe_to_asym_downscatter_sab(
-            sqe_coherent,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_coh_barn,
-            mass_ratio,
-        )
-        _, _, sab_asym_downscatter_coherent_diagonal = convert_sqe_to_asym_downscatter_sab(
-            sqe_coherent_diagonal,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_coh_barn,
-            mass_ratio,
-        )
-        _, _, sab_asym_downscatter_coherent_interference = convert_sqe_to_asym_downscatter_sab(
-            sqe_coherent_interference,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_coh_barn,
-            mass_ratio,
-        )
-        _, _, sab_asym_downscatter_incoherent = convert_sqe_to_asym_downscatter_sab(
-            sqe_incoherent,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_inc_barn,
-            mass_ratio,
-        )
-        if sqe_incoherent_approx_n1_term is not None:
-            _, _, sab_asym_downscatter_incoherent_approx_n1_term = convert_sqe_to_asym_downscatter_sab(
-                sqe_incoherent_approx_n1_term,
-                q_grid_ang_inv,
-                e_grid_mev,
-                args.temperature,
-                sigma_total_barn,
-                mass_ratio,
-            )
-        else:
-            sab_asym_downscatter_incoherent_approx_n1_term = None
-        _, _, sab_asym_downscatter_one_phonon_total = convert_sqe_to_asym_downscatter_sab(
-            sqe_one_phonon_total,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_total_barn,
-            mass_ratio,
-        )
-
+        sigma_for = {
+            "coherent": sigma_coh_barn,
+            "coherent_diagonal": sigma_coh_barn,
+            "coherent_interference": sigma_coh_barn,
+            "incoherent": sigma_inc_barn,
+        }
         output_arrays: dict[str, object] = {
             "q_ang_inv": q_grid_ang_inv,
             "q_bin_edges_ang_inv": q_edges_ang_inv,
             "e_mev": e_grid_mev,
             "e_bin_edges_mev": e_edges_mev,
-            "alpha": alpha,
-            "beta_downscatter_abs": beta_downscatter_abs,
             "sampled_directions": directions,
-            "coherent_compute_q_ang_inv": q_grid_ang_inv,
-            "coherent_compute_q_bin_edges_ang_inv": q_edges_ang_inv,
-            "coherent_q_bin_sample_mags_ang_inv": q_center_mags,
-            "coherent_q_bin_sample_weights": q_center_weights,
             "incoherent_q_bin_sample_mags_ang_inv": q_bin_sample_mags,
             "incoherent_q_bin_sample_weights": q_bin_sample_weights,
-            "sqe_coherent_barn_per_meV": sqe_coherent,
-            "sqe_coherent_diagonal_barn_per_meV": sqe_coherent_diagonal,
-            "sqe_coherent_interference_barn_per_meV": sqe_coherent_interference,
-            "sqe_incoherent_barn_per_meV": sqe_incoherent,
-            "sqe_one_phonon_total_barn_per_meV": sqe_one_phonon_total,
-            "sab_asym_downscatter_coherent": sab_asym_downscatter_coherent,
-            "sab_asym_downscatter_coherent_diagonal": sab_asym_downscatter_coherent_diagonal,
-            "sab_asym_downscatter_coherent_interference": sab_asym_downscatter_coherent_interference,
-            "sab_asym_downscatter_incoherent": sab_asym_downscatter_incoherent,
-            "sab_asym_downscatter_one_phonon_total": sab_asym_downscatter_one_phonon_total,
         }
-        if sqe_incoherent_approx_n1_term is not None:
-            output_arrays["sqe_incoherent_approx_n1_term_barn_per_meV"] = sqe_incoherent_approx_n1_term
-            output_arrays["sab_asym_downscatter_incoherent_approx_n1_term"] = sab_asym_downscatter_incoherent_approx_n1_term
-
-        if sqe_multiphonon_incoherent_approx is not None:
-            _, _, sab_asym_downscatter_multiphonon_incoherent_approx = convert_sqe_to_asym_downscatter_sab(
-                sqe_multiphonon_incoherent_approx,
-                q_grid_ang_inv,
-                e_grid_mev,
-                args.temperature,
-                sigma_total_barn,
-                mass_ratio,
-            )
-            output_arrays["sqe_multiphonon_incoherent_approx_barn_per_meV"] = sqe_multiphonon_incoherent_approx
-            output_arrays["sab_asym_downscatter_multiphonon_incoherent_approx"] = sab_asym_downscatter_multiphonon_incoherent_approx
-        if sqe_one_phonon_total_plus_incoherent_approx_multiphonon is not None:
-            _, _, sab_asym_downscatter_total_plus_approx = convert_sqe_to_asym_downscatter_sab(
-                sqe_one_phonon_total_plus_incoherent_approx_multiphonon,
-                q_grid_ang_inv,
-                e_grid_mev,
-                args.temperature,
-                sigma_total_barn,
-                mass_ratio,
-            )
-            output_arrays["sqe_one_phonon_total_plus_incoherent_approx_multiphonon_barn_per_meV"] = sqe_one_phonon_total_plus_incoherent_approx_multiphonon
-            output_arrays["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"] = sab_asym_downscatter_total_plus_approx
-        if sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon is not None:
-            _, _, sab_asym_downscatter_approx_n1_plus_approx_multi = convert_sqe_to_asym_downscatter_sab(
-                sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon,
-                q_grid_ang_inv,
-                e_grid_mev,
-                args.temperature,
-                sigma_total_barn,
-                mass_ratio,
-            )
-            output_arrays["sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_barn_per_meV"] = sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon
-            output_arrays["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"] = sab_asym_downscatter_approx_n1_plus_approx_multi
-
-        # Energy-gain (E<0) outputs: the directly-computed annihilation side, on the
-        # strictly-negative e_gain_mev grid. NS-bridge-only -- no SAB / tape
-        # conversion, so the loss-side ENDF outputs are byte-identical. Each key
-        # mirrors a loss `sqe_*_barn_per_meV` with `_gain` inserted; the spectra
-        # bridge derives the gain key from the loss key it selected.
+        for name, arr in loss.items():
+            alpha, beta_downscatter_abs, sab = convert_sqe_to_asym_downscatter_sab(
+                arr, q_grid_ang_inv, e_grid_mev, args.temperature,
+                sigma_for.get(name, sigma_total_barn), mass_ratio)
+            output_arrays[f"sqe_{name}_barn_per_meV"] = arr
+            output_arrays[f"sab_asym_downscatter_{name}"] = sab
+        output_arrays["alpha"] = alpha
+        output_arrays["beta_downscatter_abs"] = beta_downscatter_abs
+        # Energy-gain (E<0) outputs for the spectra bridge only; they are not
+        # converted to S(alpha,beta) or written to tapes.
+        for name, arr in gain.items():
+            output_arrays[f"sqe_{name}_gain_barn_per_meV"] = arr
         if emit_gain_side:
-            for _gname, _garr in (
-                ("sqe_coherent_gain_barn_per_meV", sqe_coherent_gain_out),
-                ("sqe_incoherent_gain_barn_per_meV", sqe_incoherent_gain_out),
-                ("sqe_one_phonon_total_gain_barn_per_meV", sqe_one_phonon_total_gain_out),
-                ("sqe_incoherent_approx_n1_term_gain_barn_per_meV",
-                 sqe_incoherent_approx_n1_term_gain_out),
-                ("sqe_multiphonon_incoherent_approx_gain_barn_per_meV", sqe_multiphonon_gain),
-                ("sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain_barn_per_meV",
-                 sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain),
-                ("sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain_barn_per_meV",
-                 sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain),
-            ):
-                if _garr is None:
-                    continue
-                _bad = np.size(_garr) - int(np.count_nonzero(np.isfinite(_garr)))
-                if _bad:
-                    raise RuntimeError(
-                        f"{_gname} contains {_bad} non-finite value(s) after the "
-                        "energy-gain accumulation phase.")
-                output_arrays[_gname] = _garr
-            if e_gain_out_mev is not None:
-                output_arrays["e_gain_mev"] = e_gain_out_mev
+            output_arrays["e_gain_mev"] = e_gain_out_mev
 
         # --- Run metadata and the elastic state.
-        actual_beta_support = {
-            "sab_asym_downscatter_one_phonon_total": compute_last_nonzero_beta(
-                sab_asym_downscatter_one_phonon_total,
-                beta_downscatter_abs,
-            ),
-        }
-        if sab_asym_downscatter_incoherent_approx_n1_term is not None:
-            actual_beta_support["sab_asym_downscatter_incoherent_approx_n1_term"] = compute_last_nonzero_beta(
-                sab_asym_downscatter_incoherent_approx_n1_term,
-                beta_downscatter_abs,
-            )
-        if "sab_asym_downscatter_multiphonon_incoherent_approx" in output_arrays:
-            actual_beta_support["sab_asym_downscatter_multiphonon_incoherent_approx"] = compute_last_nonzero_beta(
-                output_arrays["sab_asym_downscatter_multiphonon_incoherent_approx"],
-                beta_downscatter_abs,
-            )
-        if "sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon" in output_arrays:
-            actual_beta_support["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"] = compute_last_nonzero_beta(
-                output_arrays["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"],
-                beta_downscatter_abs,
-            )
-        if "sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon" in output_arrays:
-            actual_beta_support["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"] = compute_last_nonzero_beta(
-                output_arrays["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"],
-                beta_downscatter_abs,
-            )
-
         metadata = {
             "material_name": args.material_name,
             "phonopy_yaml": str(Path(args.phonopy_yaml).resolve()),
             "force_constants": (
-                None if getattr(args, "force_constants", None) is None
+                None if args.force_constants is None
                 else str(Path(args.force_constants).resolve())
             ),
             "force_sets": (
-                None if getattr(args, "force_sets", None) is None
+                None if args.force_sets is None
                 else str(Path(args.force_sets).resolve())
             ),
             "temperature_K": args.temperature,
@@ -1592,7 +1366,7 @@ def compute_from_args(
             # The user phonon-energy cutoff (0 = the automatic floors only) and,
             # when active, what it removed: a truncated vibrational model must
             # say so in its own metadata.
-            "min_phonon_energy_meV": float(getattr(args, "min_phonon_energy_mev", 0.0)),
+            "min_phonon_energy_meV": cutoff_mev,
             "phonon_cutoff": phonon_cutoff_summary,
             # The multiphonon tail (orders n>=2) is the incoherent-APPROXIMATION model
             # (sigma_total-scaled per-atom self kernel), NOT exact coherent multiphonon
@@ -1605,7 +1379,6 @@ def compute_from_args(
             "estimated_multiphonon_beta_support": estimated_multiphonon_beta_support,
             "needed_multiphonon_beta_support": needed_multiphonon_beta_support,
             "requested_beta_max": requested_beta_max,
-            "actual_beta_support": actual_beta_support,
             "coverage_warning": coverage_warning,
             "one_phonon_energy_jacobian_meV_per_THz": one_phonon_energy_jacobian_mev_per_thz,
             "represented_principal_site_count": represented_principal_site_count,
@@ -1845,11 +1618,6 @@ def run_noncubic_sab_inprocess(
     return result
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point: parse arguments, compute, write the result files."""
-    # Clamp native thread pools on the direct CLI entry path before any heavy
-    # numpy/BLAS work. The module-top env setdefault makes the env mechanism
-    # effective; this also runs the threadpoolctl clamp for pools an earlier
-    # numpy import may already have spun up.
-    limit_native_threads_to_one()
     args = parse_args(argv)
     output_arrays, metadata, _elastic_state = compute_from_args(args)
     write_results(args.output_prefix, output_arrays, metadata)
