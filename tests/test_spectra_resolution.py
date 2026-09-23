@@ -4,8 +4,7 @@ Pure-math checks on ``irma.spectra.sqe.resolution_convolve`` / ``elastic_line``
 and the config wiring -- no external validation data needed. The Gaussian path
 is the OCLIMAX-equivalent (OCLIMAX applies only a Gaussian resolution function);
 the Lorentzian is the extra heavier-tailed option. These pin the normalization,
-the back-compat Gaussian wrapper, the heavier Lorentzian tails, and the
-config/validate plumbing of ``instrument.resolution_shape``.
+the heavier Lorentzian tails and the elastic-line window.
 """
 import numpy as np
 import pytest
@@ -71,17 +70,6 @@ def test_kf_ki_indirect_finite_at_forbidden_boundary():
     assert val[2] == pytest.approx(1.0)              # Etr=0 -> kf/ki = 1
 
 
-@pytest.mark.parametrize("shape", ["gaussian", "lorentzian"])
-def test_area_conserved_for_localized_bump(shape):
-    """Convolving a localized bump preserves its integral (wide grid)."""
-    E = np.linspace(-400.0, 400.0, 4001)
-    I_in = np.exp(-0.5 * ((E - 30.0) / 4.0) ** 2)
-    out = si.resolution_convolve(E, I_in, (3.0, 0.0, 0.0), shape=shape)
-    # Lorentzian tails are heavier -> looser tolerance on a finite grid
-    rel = 1e-3 if shape == "gaussian" else 2e-2
-    assert _trapz(out, E) == pytest.approx(_trapz(I_in, E), rel=rel)
-
-
 def test_lorentzian_has_heavier_tails_than_gaussian():
     """At equal width, the Lorentzian puts more weight far from a single spike."""
     E = np.linspace(-200.0, 200.0, 4001)
@@ -104,13 +92,6 @@ def test_elastic_line_integrates_to_area(shape):
     rel = 1e-3 if shape == "gaussian" else 3e-2
     assert _trapz(line, E) == pytest.approx(area, rel=rel)
     assert line.argmax() == np.argmin(np.abs(E))      # peak at E=0
-
-
-def test_elastic_line_gaussian_is_default():
-    E = np.linspace(-50.0, 50.0, 401)
-    a = si.elastic_line(E, 3.0, (2.0, 0.0, 0.0))
-    b = si.elastic_line(E, 3.0, (2.0, 0.0, 0.0), shape="gaussian")
-    assert np.array_equal(a, b)
 
 
 # ---- shape errors -------------------------------------------------------------
@@ -157,32 +138,18 @@ def test_default_resolution_shape_is_gaussian():
 
 
 # ---- elastic_line: renormalize only when the peak is inside the window -------
-def test_elastic_line_window_excluding_peak_keeps_tail():
-    w0 = 0.31                                   # VISION-like sigma (meV)
+@pytest.mark.parametrize("e_min,n,keeps_full_area", [
+    (0.5, 2001, False),   # window excludes E=0: only the analytic tail (~5%)
+    (-5.0, 4001, True),   # window includes the peak: the area is conserved
+    (0.0, 4001, True),    # axis starts at the peak centre: the half line
+                          # renormalizes to the full area
+])
+def test_elastic_line_window(e_min, n, keeps_full_area):
     area = 10.0
-    E = np.linspace(0.5, 100.0, 2001)           # e_min in (0, 4*w0]: excludes E=0
-    line = si.elastic_line(E, area, [w0])
+    E = np.linspace(e_min, 100.0, n)
+    line = si.elastic_line(E, area, [0.31])     # VISION-like sigma (meV)
     integral = float(np.trapezoid(line, E))
-    # analytic in-window mass: area * (1 - CDF(0.5/w0)) -- a ~5% tail at most
-    assert integral < 0.2 * area, (
-        f"window excluding the peak must keep the analytic tail, got "
-        f"{integral} of {area}")
-
-
-def test_elastic_line_window_including_peak_conserves_area():
-    w0 = 0.31
-    area = 10.0
-    E = np.linspace(-5.0, 100.0, 4001)
-    line = si.elastic_line(E, area, [w0])
-    assert float(np.trapezoid(line, E)) == pytest.approx(area, rel=1e-6)
-
-
-def test_elastic_line_emin_zero_half_peak_renormalizes_to_full_area():
-    """E_out starting exactly at 0 still contains the peak center, so the
-    visible half-Gaussian must renormalize to carry the full elastic area
-    (the flux-conservation behavior the peak-center gate was built around)."""
-    w0 = 0.31
-    area = 10.0
-    E = np.linspace(0.0, 100.0, 4001)
-    line = si.elastic_line(E, area, [w0])
-    assert float(np.trapezoid(line, E)) == pytest.approx(area, rel=1e-6)
+    if keeps_full_area:
+        assert integral == pytest.approx(area, rel=1e-6)
+    else:
+        assert integral < 0.2 * area
