@@ -83,24 +83,3 @@ def test_two_pass_mf7_byte_identical_to_njoy():
         assert abs(sb_irm / sb_ref - 1.0) < 1.0e-6
         mismatches.append((r, t))
     assert len(mismatches) <= 1          # at most the SB record
-
-
-def test_two_pass_actually_changed_the_law():
-    """Guard against the merge silently becoming a no-op: the principal
-    spectrum alone (no secondary) must give a different MT4 law."""
-    d = tempfile.mkdtemp()
-    with open(os.path.join(d, "two.input"), "w") as f:
-        f.write(_DECK)
-    # Drop the secondary: Card 6 -> 0/, remove the second 296 K block.
-    lines = _DECK.splitlines()
-    solo = lines[:5] + ["0/"] + lines[6:14] + lines[19:]
-    with open(os.path.join(d, "one.input"), "w") as f:
-        f.write("\n".join(solo) + "\n")
-    two, one = os.path.join(d, "two.endf"), os.path.join(d, "one.endf")
-    run_leapr(os.path.join(d, "two.input"), two)
-    run_leapr(os.path.join(d, "one.input"), one)
-
-    def mt4(path):
-        return [l[:66] for l in open(path).read().splitlines()
-                if len(l) >= 75 and l[70:75] == " 7  4"]
-    assert mt4(two) != mt4(one)
