@@ -116,25 +116,9 @@ def show_help_dialog(anchor, title, message):
     return top
 
 
-class HelpButton(ttk.Button):
-    """A small '?' button that shows a help popup when clicked."""
-
-    _MAX_VISIBLE_LINES = _HELP_MAX_VISIBLE_LINES
-
-    def __init__(self, parent, title, message):
-        super().__init__(parent, text="?", width=2, command=self._show)
-        self._title = title
-        self._message = message
-
-    def _show(self):
-        """Open the help popup, sized to its wrapped content."""
-        show_help_dialog(self, self._title, self._message)
-
-
 class InfoLabel(ttk.Label):
     """A flat 'ⓘ' glyph: hover previews the help text, click opens the full
-    scrollable dialog. A quieter alternative to :class:`HelpButton` for
-    dense forms, where a boxed button per field reads as visual noise."""
+    scrollable dialog."""
 
     def __init__(self, parent, title, message):
         super().__init__(parent, text="ⓘ", padding=(2, 0))
@@ -324,107 +308,81 @@ def check_with_help(parent, text, var, help_text):
     return row
 
 
-class LabeledEntry(ttk.Frame):
-    """A label + entry field + optional help ('?' button or 'ⓘ' glyph).
+class _Field(ttk.Frame):
+    """Label, StringVar and get/set shared by the labeled field classes.
 
     ``label_width`` fixes the label column (right-aligned) so stacked fields
-    align; 0 gives a natural-width label for inline sub-fields.
-    ``compact_help=False`` renders the help as the boxed
-    :class:`HelpButton` instead of the flat :class:`InfoLabel` default."""
+    align; 0 gives a natural-width label for inline sub-fields."""
 
-    def __init__(self, parent, label, default="", width=12, tooltip=None,
-                 help_title=None, help_text=None, label_width=20,
-                 compact_help=True):
+    def __init__(self, parent, label, value, label_width):
         super().__init__(parent)
         self.label = ttk.Label(self, text=label, width=label_width or None,
                                anchor="e" if label_width else "w")
         self.label.pack(side=tk.LEFT, padx=(0, 5))
-        self.var = tk.StringVar(value=str(default))
+        self.var = tk.StringVar(value=value)
+
+    def _add_help(self, label, help_title, help_text):
+        if help_text:
+            InfoLabel(self, help_title or label.rstrip(":"),
+                      help_text).pack(side=tk.LEFT, padx=(4, 0))
+
+    def get(self):
+        """Return the current value."""
+        return self.var.get()
+
+    def set(self, value):
+        """Set the value."""
+        self.var.set(str(value))
+
+
+class LabeledEntry(_Field):
+    """A label, an entry field and an optional 'ⓘ' help glyph."""
+
+    def __init__(self, parent, label, default="", width=12, tooltip=None,
+                 help_title=None, help_text=None, label_width=20):
+        super().__init__(parent, label, str(default), label_width)
         self.entry = ttk.Entry(self, textvariable=self.var, width=width)
         self.entry.pack(side=tk.LEFT)
-        if help_text:
-            helper = InfoLabel if compact_help else HelpButton
-            helper(self, help_title or label.rstrip(":"),
-                   help_text).pack(side=tk.LEFT, padx=(4, 0))
+        self._add_help(label, help_title, help_text)
         if tooltip:
             ToolTip(self.entry, tooltip)
             ToolTip(self.label, tooltip)
 
-    def get(self):
-        """Return the current value."""
-        return self.var.get()
 
-    def set(self, value):
-        """Set the value."""
-        self.var.set(str(value))
-
-
-class LabeledCombobox(ttk.Frame):
-    """A label + combobox + optional help ('?' button or 'ⓘ' glyph).
-
-    ``label_width`` / ``compact_help`` as in :class:`LabeledEntry`."""
+class LabeledCombobox(_Field):
+    """A label, a read-only combobox and an optional 'ⓘ' help glyph."""
 
     def __init__(self, parent, label, values, default=None, width=None,
-                 tooltip=None, help_title=None, help_text=None,
-                 label_width=20, compact_help=True):
-        super().__init__(parent)
-        self.label = ttk.Label(self, text=label, width=label_width or None,
-                               anchor="e" if label_width else "w")
-        self.label.pack(side=tk.LEFT, padx=(0, 5))
+                 help_title=None, help_text=None, label_width=20):
+        super().__init__(parent, label, str(default or values[0]), label_width)
         if width is None:
             # fit the longest option so neither the field nor the
             # dropdown list truncates its text
             width = max(12, max(len(str(v)) for v in values) + 1)
-        self.var = tk.StringVar(value=str(default or values[0]))
         self.combo = ttk.Combobox(
             self, textvariable=self.var, values=values,
             width=width, state="readonly")
         self.combo.pack(side=tk.LEFT)
-        if help_text:
-            helper = InfoLabel if compact_help else HelpButton
-            helper(self, help_title or label.rstrip(":"),
-                   help_text).pack(side=tk.LEFT, padx=(4, 0))
-        if tooltip:
-            ToolTip(self.combo, tooltip)
-
-    def get(self):
-        """Return the current value."""
-        return self.var.get()
-
-    def set(self, value):
-        """Set the value."""
-        self.var.set(str(value))
+        self._add_help(label, help_title, help_text)
 
 
-class FileSelector(ttk.Frame):
-    """A label + entry + browse button + optional help ('?' or 'ⓘ').
-
-    ``label_width`` / ``compact_help`` as in :class:`LabeledEntry`."""
+class FileSelector(_Field):
+    """A label, an entry, a Browse button and an optional 'ⓘ' help glyph."""
 
     def __init__(self, parent, label, mode="open", filetypes=None,
-                 defaultextension=None, tooltip=None, help_title=None,
-                 help_text=None, label_width=20, compact_help=True):
-        super().__init__(parent)
+                 defaultextension=None, help_title=None, help_text=None,
+                 label_width=20):
         self.mode = mode
         self.filetypes = filetypes or [("All files", "*.*")]
         # save-dialog extension follows the offered filetypes unless given
         self.defaultextension = (defaultextension if defaultextension is not None
                                  else self._default_extension(self.filetypes))
-
-        self.label = ttk.Label(self, text=label, width=label_width or None,
-                               anchor="e" if label_width else "w")
-        self.label.pack(side=tk.LEFT, padx=(0, 5))
-        self.var = tk.StringVar()
+        super().__init__(parent, label, "", label_width)
         self.entry = ttk.Entry(self, textvariable=self.var, width=40)
         self.entry.pack(side=tk.LEFT, padx=(0, 5))
         self.btn = ttk.Button(self, text="Browse...", command=self._browse)
         self.btn.pack(side=tk.LEFT)
-        if help_text:
-            helper = InfoLabel if compact_help else HelpButton
-            helper(self, help_title or label.rstrip(":"),
-                   help_text).pack(side=tk.LEFT, padx=(4, 0))
-        if tooltip:
-            ToolTip(self.entry, tooltip)
+        self._add_help(label, help_title, help_text)
 
     @staticmethod
     def _default_extension(filetypes):
@@ -450,14 +408,6 @@ class FileSelector(ttk.Frame):
                 defaultextension=self.defaultextension)
         if path:
             self.var.set(path)
-
-    def get(self):
-        """Return the current value."""
-        return self.var.get()
-
-    def set(self, value):
-        """Set the value."""
-        self.var.set(str(value))
 
 
 class ToolTip:

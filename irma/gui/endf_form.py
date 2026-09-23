@@ -445,7 +445,7 @@ class EndfFormMixin:
             self._nc_subframe, "phonopy.yaml:",
             mode="open",
             filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")],
-            label_width=LBL, compact_help=True,
+            label_width=LBL,
             help_title="phonopy.yaml",
             help_text="Path to the phonopy.yaml file describing the phonon "
                       "model.\n\n"
@@ -499,7 +499,7 @@ class EndfFormMixin:
 
         self.nc_min_phonon_energy = LabeledEntry(
             self._nc_subframe, "Minimum phonon energy [meV]:", "",
-            width=10, label_width=LBL, compact_help=True,
+            width=10, label_width=LBL,
             help_title="Minimum Phonon Energy",
             help_text=MIN_PHONON_ENERGY_HELP)
         self.nc_min_phonon_energy.pack(fill=tk.X, pady=2)
@@ -509,7 +509,6 @@ class EndfFormMixin:
         dir_row.pack(fill=tk.X, pady=2)
         self.nc_ncpu = LabeledEntry(
             dir_row, "ncpu:", str(os.cpu_count() or 1), width=4, label_width=LBL,
-            compact_help=True,
             help_title="ncpu (Parallel CPUs)",
             help_text="Number of parallel worker processes for the phonopy-backed "
                       "workflow.\n\n"
@@ -524,7 +523,6 @@ class EndfFormMixin:
         ctrl_row.pack(fill=tk.X, pady=2)
         self.nc_num_directions = LabeledEntry(
             ctrl_row, "ndir:", "10000", width=6, label_width=LBL,
-            compact_help=True,
             help_title="ndir (One-Phonon Directions)",
             help_text="Number of directions used to powder-average the "
                       "one-phonon terms: the scattering is evaluated along "
@@ -537,7 +535,6 @@ class EndfFormMixin:
         self.nc_num_directions.pack(side=tk.LEFT, padx=(0, 10))
         self.nc_multiphonon_num_directions = LabeledEntry(
             ctrl_row, "mpdir:", "1000", width=6, label_width=0,
-            compact_help=True,
             help_title="mpdir (Multiphonon Directions)",
             help_text="Number of directions used to powder-average "
                       "(orientationally average) the multiphonon background "
@@ -641,7 +638,7 @@ class EndfFormMixin:
             self._nc_subframe, "BORN file:",
             mode="open",
             filetypes=[("BORN files", "BORN"), ("All files", "*.*")],
-            label_width=LBL, compact_help=True,
+            label_width=LBL,
             help_title="BORN File",
             help_text="Path to the phonopy BORN file with Born effective charges "
                       "and the macroscopic dielectric tensor.\n\n"
@@ -678,7 +675,7 @@ class EndfFormMixin:
             ["1 — SEF (Single-channel Elastic Format)",
              "2 — MEF (Mixed Elastic Format)"],
             default="1 — SEF (Single-channel Elastic Format)",
-            label_width=LBL, compact_help=True,
+            label_width=LBL,
             help_title="Elastic Format",
             help_text="Determines how the coherent and incoherent elastic "
                       "scattering components are stored in the output ENDF "
@@ -915,34 +912,34 @@ class EndfFormMixin:
         self.ext_enable_var.trace_add("write", _toggle_ext_fields)
         self.ext_model = LabeledCombobox(
             ext_fields, "model:", list(EXTINCTION_MODELS), default="BC_mix",
-            label_width=LBL, compact_help=True,
+            label_width=LBL,
             help_title="Extinction model", help_text=EXT_HELP["model"])
         self.ext_model.pack(fill=tk.X, pady=2)
         self.ext_model.combo.bind("<<ComboboxSelected>>",
                                   self._on_ext_model_change)
         self.ext_l = LabeledEntry(ext_fields, "l — crystallite (Å):", "8550",
                                   width=12, label_width=LBL,
-                                  compact_help=True, help_text=EXT_HELP["l"])
+                                  help_text=EXT_HELP["l"])
         self.ext_l.pack(fill=tk.X, pady=2)
         self.ext_g = LabeledEntry(ext_fields, "g — mosaic (rad⁻¹):", "170",
                                   width=12, label_width=LBL,
-                                  compact_help=True, help_text=EXT_HELP["g"])
+                                  help_text=EXT_HELP["g"])
         self.ext_g.pack(fill=tk.X, pady=2)
         self.ext_L = LabeledEntry(ext_fields, "L — grain (Å):", "75750",
                                   width=12, label_width=LBL,
-                                  compact_help=True, help_text=EXT_HELP["L"])
+                                  help_text=EXT_HELP["L"])
         self.ext_L.pack(fill=tk.X, pady=2)
         self.ext_dist = LabeledCombobox(
             ext_fields, "distribution:", _EXT_DISTS, default="Gauss",
-            label_width=LBL, compact_help=True, help_text=EXT_HELP["dist"])
+            label_width=LBL, help_text=EXT_HELP["dist"])
         self.ext_dist.pack(fill=tk.X, pady=2)
         self.ext_recipe = LabeledCombobox(
             ext_fields, "recipe:", ["std", "cls"], default="std",
-            label_width=LBL, compact_help=True, help_text=EXT_HELP["recipe"])
+            label_width=LBL, help_text=EXT_HELP["recipe"])
         self.ext_recipe.pack(fill=tk.X, pady=2)
         self.ext_rmse_tol = LabeledEntry(
             ext_fields, "rmse_tol:", "1e-3", width=12, label_width=LBL,
-            compact_help=True, help_text=EXT_HELP["rmse_tol"])
+            help_text=EXT_HELP["rmse_tol"])
         self.ext_rmse_tol.pack(fill=tk.X, pady=2)
         ext_attr = ttk.Frame(ext_body)
         ext_attr.pack(fill=tk.X, pady=(4, 0))

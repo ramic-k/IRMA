@@ -1,6 +1,6 @@
 """GUI widget behavior.
 
-Covers the HelpButton popup sizing -- a fixed 12-line, non-resizable,
+Covers the help popup sizing -- a fixed 12-line, non-resizable,
 scrollbar-less Text would clip the longest help texts (Bragg-edge grouping,
 mpdir, ilog, ...) mid-sentence -- and the fresh form's two-part contract:
 
@@ -21,7 +21,7 @@ import pytest
 tk = pytest.importorskip("tkinter")
 from tkinter import ttk  # noqa: E402
 
-from irma.gui.widgets import HelpButton  # noqa: E402
+from irma.gui.widgets import InfoLabel, _HELP_MAX_VISIBLE_LINES  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -36,7 +36,7 @@ def root():
 
 
 def _open_popup(root, message):
-    btn = HelpButton(root, "Test Help", message)
+    btn = InfoLabel(root, "Test Help", message)
     btn._show()
     top = next(w for w in btn.winfo_children() if isinstance(w, tk.Toplevel))
     top.update_idletasks()
@@ -63,7 +63,7 @@ def _resizable_flags(top):
     return tuple(int(v) for v in res)
 
 
-# ---------------- HelpButton popup sizing ----------------
+# ---------------- help popup sizing ----------------
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Tk display-line metrics differ on Windows; the popup sizing is cosmetic and pinned on X11/aqua")
 def test_short_help_stays_compact(root):
@@ -87,12 +87,12 @@ def test_medium_help_sized_to_content_not_12_lines(root):
 
 def test_long_help_caps_height_and_gets_scrollbar(root):
     # Far beyond the cap (and wider than the wrap width, so display lines
-    # exceed logical lines): height caps at _MAX_VISIBLE_LINES and a
+    # exceed logical lines): height caps at _HELP_MAX_VISIBLE_LINES and a
     # scrollbar appears so the rest is discoverable.
     msg = "\n".join(f"line {i} " + "word " * 12 for i in range(1, 61))
     top = _open_popup(root, msg)
     txt = _find_all(top, tk.Text)[0]
-    assert int(txt.cget("height")) == HelpButton._MAX_VISIBLE_LINES
+    assert int(txt.cget("height")) == _HELP_MAX_VISIBLE_LINES
     assert _find_all(top, ttk.Scrollbar), "long help text needs a scrollbar"
     top.destroy()
 
