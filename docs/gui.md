@@ -337,7 +337,7 @@ This part supplies the scalar phonon input used by the **legacy cubic** treatmen
 
 A radio pair chooses the DOS source, and only the selected source's fields appear directly beneath its button:
 
-- **From phonopy total_dos.dat** (default) — a file selector for a phonopy `total_dos.dat` (two columns: frequency in THz and DOS). IRMA converts THz→eV and normalizes the spectrum.
+- **From phonopy total_dos.dat** (default) — a file selector for a phonopy `total_dos.dat` (two columns: frequency in THz and DOS). IRMA converts THz→eV and normalizes the spectrum. A file whose grid does not start at 0 (phonopy's default range starts below 0) is resampled onto 0, Δ, 2Δ, … with the file's spacing Δ; write it with `--fmin=0` to use the file's own grid.
 - **Manual entry**: `delta_e` (uniform energy spacing, eV) plus a space-separated `rho` list on the equidistant grid starting at E = 0.
 
 ### Translational Mode
