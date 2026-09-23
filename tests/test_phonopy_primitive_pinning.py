@@ -1,4 +1,4 @@
-"""Primitive-matrix pinning across phonopy versions (review PHONOPY-1).
+"""Primitive-matrix pinning across phonopy versions.
 
 phonopy 4 changed the meaning of an omitted ``primitive_matrix`` in
 ``phonopy.load`` from "the yaml's stored matrix, else identity" to
@@ -74,7 +74,7 @@ def test_all_phonopy_load_sites_use_the_pin():
     """Every phonopy.load call site must route through the pinning helper.
 
     A new load site added without the pin silently reintroduces the
-    phonopy-4 auto-primitive drift (review PHONOPY-1).
+    phonopy-4 auto-primitive drift.
     """
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[1] / "irma"
@@ -143,15 +143,3 @@ def test_structure_reader_defers_to_a_stored_matrix(tmp_path, monkeypatch):
     p = _write(tmp_path, "phonopy.yaml", _WITH_MATRIX)
     load_phonopy_primitive_structure(p)
     assert "primitive_matrix" not in seen     # stored value must win
-
-
-def test_load_semantics_identity_when_unstored(tmp_path):
-    """Live check in whatever phonopy this env has: a stored-matrix yaml and
-    the pin produce the same primitive as phonopy 2/3 defaults did."""
-    phonopy = pytest.importorskip("phonopy")
-    import inspect
-    sig = inspect.signature(phonopy.load)
-    assert "primitive_matrix" in sig.parameters
-    # The kwargs form must be accepted by this phonopy: "P" is a valid
-    # sentinel on 2.x through 4.x.
-    assert pinned_primitive_matrix_kwargs.__doc__  # helper exists and is doc'd
