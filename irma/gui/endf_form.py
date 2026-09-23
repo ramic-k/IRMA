@@ -192,8 +192,8 @@ def _phase_from_log_line(line):
     if not s.endswith("...") or s.startswith("==="):
         return None
     # Upper bound guards against a stray long line being pinned as a phase; 120
-    # clears the longest real marker ("Evaluating coherent one-phonon dynamic
-    # structure factor for {N} Q-vectors..." reaches ~85 chars).
+    # clears the longest real marker ("Running phonopy mesh (...) again with
+    # symmetry reduction for incoherent one-phonon mode sums..." is ~105 chars).
     if not (3 < len(s) <= 120):
         return None
     # Every real engine marker is a multi-word sentence; requiring a space

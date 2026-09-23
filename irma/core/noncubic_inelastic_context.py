@@ -1,26 +1,14 @@
 """Temperature-independent setup for the noncubic inelastic driver.
 
-Two cache layers:
-
-* MODEL layer (:func:`build_model_context`) — a pure function of the phonon
-  model and mesh dimensions (phonopy.yaml + force constants + BORN + mesh):
-  the phonopy load, both mesh eigensolves, the reduced-mesh mode arrays and
-  the star-averaged projection tensors. Independent of temperature, of the
-  Q/E grids, and of the sampling/job controls.
-* GRID layer (the rest of :func:`build_compute_context`) — the Q/E edges,
-  direction quadrature, Q-vector geometry, scattering prefactors and block
-  partitions. Cheap numpy work, rebuilt per grid digest.
-
-A lat=1 deck has temperature-independent (alpha, beta)-scaled grids, so the
-whole context is reused across temperature cards. A lat=0 deck's physical
-Q/E grids change with kT, so every temperature is a full-context miss — but
-the model layer is grid-independent, so only the grid layer is rebuilt
-(see ``standalone_sab.get_or_build_context`` for the keying/eviction).
+The context has two layers. The model layer (:func:`build_model_context`)
+depends only on the phonon model and the mesh: the phonopy load, both mesh
+eigensolves, the reduced-mesh mode arrays and the star-averaged projections.
+The grid layer (the rest of :func:`build_compute_context`) holds the Q/E
+edges, directions, scattering prefactors and block partitions, and is cheap
+to rebuild. ``standalone_sab.get_or_build_context`` caches both.
 """
 
 from __future__ import annotations
-
-import time
 
 import numpy as np
 
@@ -40,39 +28,9 @@ from irma.core.noncubic_engine import (
     reshape_mesh_eigenvectors,
 )
 
-# Fixed multiphonon direction-block size. The multiphonon blocks overlap on
-# the full (Q, E) grid and are accumulated in fixed order with one BLAS
-# contraction per block, so the PARTITION — not just the accumulation order —
-# determines the floating-point summation tree. The chunk size must
-# therefore be a CONSTANT, never derived from Card 6f ncpu (or from the
-# machine's core count through the ncpu clamp): a jobs-dependent chunk
-# would move tape bytes at the last bit with the worker count, and the
-# ENDF writer's 6-significant-figure rounding leaves only ~1e-15 of
-# margin over that drift. A fixed, jobs-independent chunk makes
-# parallel == serial structurally bitwise-identical. 25 keeps every
-# pinned test configuration on its pinned partition (mpdir<=25 decks are
-# a single block; the tape-gauge small profile splits at exactly
-# ceil(100/4)=25) and still yields 40 blocks at the
-# validation campaign's mpdir=1000 for pool balance (8 at the 200 default). The engine's 2-GiB
-# kernel-table memory cap can only shrink the block further and is itself
-# jobs-independent.
+# Fixed so that the multiphonon block partition, and with it the floating-point
+# summation order, does not depend on the number of jobs.
 _MULTIPHONON_DIR_CHUNK = 25
-
-
-def _stage_printer(setup_start: float):
-    """Return a finish_stage(label) closure printing elapsed stage times."""
-    state = {"t": setup_start}
-
-    def finish_stage(label: str) -> None:
-        """Print the elapsed time of the setup stage that just finished."""
-        now = time.perf_counter()
-        print(
-            f"  Context setup: {label} in {now - state['t']:.2f} s",
-            flush=True,
-        )
-        state["t"] = now
-
-    return finish_stage
 
 
 def build_model_context(
@@ -96,7 +54,6 @@ def build_model_context(
     """
     import phonopy
 
-    finish_stage = _stage_printer(time.perf_counter())
     from irma.core.phonopy_io import validate_min_phonon_energy_mev
     min_phonon_energy_mev = validate_min_phonon_energy_mev(
         getattr(args, "min_phonon_energy_mev", 0.0))
@@ -192,7 +149,6 @@ def build_model_context(
                 f"Reusing the MT2 full phonopy mesh {tuple(args.mesh)} "
                 "(eigenvectors shared; skipping the duplicate eigensolve)..."
             )
-            finish_stage("full phonopy mesh reused")
         else:
             print(
                 f"NOTE: preloaded full mesh has {_freqs_pre.shape[0]} q-points, "
@@ -208,7 +164,6 @@ def build_model_context(
                             is_mesh_symmetry=False)
         mesh = phonon.mesh
         assert mesh is not None
-        finish_stage("full phonopy mesh loaded")
         # The full-mesh arrays are extracted into plain numpy BEFORE re-running
         # the mesh, so the second (symmetry-reduced) run can reuse the SAME
         # phonopy object: one phonopy.load / force-constants parse instead of
@@ -228,7 +183,6 @@ def build_model_context(
         )
     incoherent_one_phonon_mesh = phonon.mesh
     assert incoherent_one_phonon_mesh is not None
-    finish_stage("incoherent/mode-sum mesh loaded")
 
     # UNITS. phonopy keeps the cell in the CALCULATOR's native length unit and
     # phonopy.load never converts it, so `phonon.primitive.cell` is bohr for a
@@ -310,13 +264,7 @@ def build_model_context(
         incoherent_one_phonon_valid_modes
     ]
 
-    # Full-mesh mode bookkeeping. Only max_mode_energy_mev (the one-phonon
-    # spectrum ceiling, with the same per-q mode floor as the live mode
-    # sums) goes into the context. Flattened full-mesh mode arrays or a
-    # fancy-indexed full-mesh eigenvector copy would cost O(100 MB) per
-    # context and have no consumer — the live mode sums all read the
-    # incoherent_one_phonon_* reduced-mesh arrays — so they are never
-    # built.
+    # The one-phonon spectrum ceiling, with the same mode floor as the mode sums.
     n_branches = mesh_frequencies.shape[1]
     mesh_mode_energies_mev = (mesh_frequencies * THzToEv * 1000.0).reshape(-1)
     valid_modes = mode_floor_mask(
@@ -324,11 +272,7 @@ def build_model_context(
         min_phonon_energy_mev)
     mesh_mode_energies_mev = mesh_mode_energies_mev[valid_modes]
     max_mode_energy_mev = float(np.max(mesh_mode_energies_mev)) if len(mesh_mode_energies_mev) else 0.0
-    finish_stage("mesh mode arrays prepared")
 
-    # NOTE: only the q-weight norm is kept (it seeds multiphonon_q_weight_norm
-    # below). The per-temperature histogram lookups, signed work grids and
-    # multiphonon direction set are built by compute_from_args, not here.
     incoherent_one_phonon_q_weight_norm = float(np.sum(incoherent_one_phonon_mesh_weights))
     multiphonon_mode_energies_mev = incoherent_one_phonon_mode_energies_mev
     multiphonon_mode_frequencies_thz = incoherent_one_phonon_mode_frequencies_thz
@@ -351,13 +295,7 @@ def build_model_context(
             "Using star-averaged projection tensors for reduced-mesh multiphonon "
             f"(star count range {int(np.min(multiphonon_star_counts))}..{int(np.max(multiphonon_star_counts))})."
         )
-    finish_stage("multiphonon projection data prepared")
 
-    # NOTE: the full-mesh frequency/weight/eigenvector arrays (and the
-    # flattened mesh_mode_* views of them) are deliberately NOT exported:
-    # no compute phase reads them (the live mode sums use the
-    # incoherent_one_phonon_* reduced-mesh arrays), and the eigenvector
-    # copies alone would be O(100 MB)+ of dead state per cached context.
     # The MODEL's own eigenvalue->THz factor. phonopy already applies it to
     # mesh.frequencies, but the coherent one-phonon path solves the dynamical
     # matrix itself (noncubic_workers._batched_qpoints_eigh) and so must be
@@ -418,14 +356,6 @@ def build_compute_context(
     The returned dict carries the model layer under ``"_model_context"`` so
     cache owners can store/reuse it without rebuilding.
     """
-    setup_start = time.perf_counter()
-    finish_stage = _stage_printer(setup_start)
-
-    print(
-        "  Context setup: preparing reusable phonopy/mesh state...",
-        flush=True,
-    )
-
     q_grid_ang_inv = np.asarray(q_grid_ang_inv, dtype=float)
     e_grid_mev = np.asarray(e_grid_mev, dtype=float)
     q_edges_ang_inv = centers_to_edges(q_grid_ang_inv, lower_bound=0.0)
@@ -448,8 +378,6 @@ def build_compute_context(
 
     directions = fibonacci_sphere(args.num_directions)
 
-    finish_stage("grid sampling prepared")
-
     if model_context is None:
         model_context = build_model_context(
             args, preloaded_full_mesh=preloaded_full_mesh)
@@ -466,10 +394,6 @@ def build_compute_context(
     # sample's reduced q as |Q| * direction_red_basis[direction].
     direction_red_basis = np.linalg.solve(rec_lat_no_2pi, directions.T).T / (2.0 * np.pi)
     num_coherent_samples = len(q_grid_ang_inv) * len(directions)
-    finish_stage("coherent geometry prepared")
-
-    print("Evaluating coherent one-phonon dynamic structure factor for "
-          f"{num_coherent_samples} Q-vectors...")
 
     mev_to_joule = EV * 1e-3
     unit_conversion = 1.0 / (AMU * (2 * np.pi * THz) ** 2)
@@ -525,14 +449,6 @@ def build_compute_context(
     )
     sigma_inc_by_atom = np.asarray(site_incoherent_cross_sections, dtype=float)
     sigma_total_by_atom = sigma_coh_by_atom + sigma_inc_by_atom
-    # NOTE: the authoritative multiphonon sigma_total scale is rebuilt downstream
-    # per CARD-6d ATOM-TYPE GROUP (export_multiphonon_sigma_total_scale in
-    # noncubic_engine.compute_from_args, using 1/len(group_indices)), and that
-    # per-group version is what the worker reads.
-    # An element-SYMBOL-multiplicity normalization is NOT the contract and would
-    # diverge from the per-group convention whenever two inequivalent Card 6d
-    # groups share one element symbol, so it is deliberately not computed/exported
-    # here to avoid a future-edit footgun.
     incoherent_prefactors = np.array(
         [
             sigma_inc_atom / (4.0 * np.pi * ANG2_TO_BARN) / (2.0 * mass)
@@ -547,18 +463,15 @@ def build_compute_context(
         ],
         dtype=float,
     )
-    finish_stage("scattering prefactors prepared")
 
     num_jobs = max(1, args.jobs)
     chunk_size = max(1, args.q_chunk_size)
     shell_chunk_size = max(1, min(chunk_size, int(np.ceil(len(q_grid_ang_inv) / num_jobs))))
 
-    print("  Context setup: partitioning coherent direction blocks...", flush=True)
     coherent_blocks = [
         np.arange(start_index, min(num_coherent_samples, start_index + chunk_size), dtype=int)
         for start_index in range(0, num_coherent_samples, chunk_size)
     ]
-    print("  Context setup: partitioning incoherent shell blocks...", flush=True)
     shell_blocks = [
         np.arange(start_index, min(len(q_grid_ang_inv), start_index + shell_chunk_size), dtype=int)
         for start_index in range(0, len(q_grid_ang_inv), shell_chunk_size)
@@ -568,21 +481,8 @@ def build_compute_context(
         if args.multiphonon_num_directions is None
         else max(1, int(args.multiphonon_num_directions))
     )
-    # Jobs-INDEPENDENT partition (see _MULTIPHONON_DIR_CHUNK above): tape
-    # bytes must not vary with Card 6f ncpu, so the chunk is a fixed constant
-    # rather than ceil(mpdir/num_jobs).
     multiphonon_dir_chunk_size = max(
         1, min(multiphonon_num_directions, _MULTIPHONON_DIR_CHUNK))
-    # The multiphonon direction set, work/signed grids, signed histogram
-    # lookups and base prefactors are built by compute_from_args, not cached
-    # here.
-    finish_stage("block partitions prepared")
-
-    print(
-        f"  Context setup: complete in {time.perf_counter() - setup_start:.2f} s",
-        flush=True,
-    )
-    print("  Context setup: returning cached arrays to compute phase.", flush=True)
 
     return {
         "q_grid_ang_inv": q_grid_ang_inv,
