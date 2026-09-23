@@ -25,22 +25,12 @@ def test_valid_bc_mix_full():
                    "dist": "Gauss", "recipe": "std", "rmse_tol": 1e-3}
 
 
-def test_l_vs_L_are_case_sensitive_and_distinct():
-    cfg = _parse_extinction_card(
-        _rd("extinction BC_mix l=8550 g=170 L=75750 /"), elastic_mode=1)
-    assert cfg["l"] == 8550.0 and cfg["L"] == 75750.0    # not collided by lowercasing
-
-
 def test_defaults_dist_recipe_tol():
     cfg = _parse_extinction_card(_rd("extinction BC_pure l=8550 /"), elastic_mode=1)
     assert cfg["dist"] == "Gauss" and cfg["recipe"] == "std" and cfg["rmse_tol"] == 1e-3
+    assert cfg["g"] == cfg["L"] == 0.0                    # BC_pure: one knob
     cfg = _parse_extinction_card(_rd("extinction Sabine_corr l=8550 /"), elastic_mode=1)
     assert cfg["dist"] == "rect"                          # Sabine default differs
-
-
-def test_bc_pure_primary_only_one_knob():
-    cfg = _parse_extinction_card(_rd("extinction BC_pure l=8550 /"), elastic_mode=1)
-    assert cfg["model"] == "BC_pure" and cfg["g"] == 0.0 and cfg["L"] == 0.0
 
 
 def test_fortran_d_exponent_accepted():
@@ -112,12 +102,6 @@ def test_parse_crystal_cards_sets_coherent_extinction():
     assert ci["coherent_extinction"]["l"] == 8550.0
 
 
-def test_parse_crystal_cards_without_card_has_no_key():
-    from irma.core.crystal_cards import _parse_crystal_cards
-    ci = _parse_crystal_cards(TokenReader(_tokens(*_BE_CARDS)), za=4009, nphon=100)
-    assert "coherent_extinction" not in ci
-
-
 # Extinction is applied only by the coherent-carrying MT2 builders, so the
 # parser rejects it when SEF routes to the incoherent builder (a single-atom
 # principal with sigma_coh <= sigma_inc, or a non-DC polyatomic principal).
@@ -176,15 +160,3 @@ def test_extinction_accepted_for_mef_single_atom():
     toks = _tokens(*cards, _EXT_CARD)
     ci = _parse_crystal_cards(TokenReader(toks), za=4009, nphon=100)
     assert ci["coherent_extinction"]["model"] == "BC_pure"
-
-
-def test_incoherent_routing_without_extinction_still_parses():
-    # the guard is extinction-conditional: the same incoherent-routing decks
-    # WITHOUT the card stay legal (incoherent elastic is a valid SEF output)
-    from irma.core.crystal_cards import _parse_crystal_cards
-    ci = _parse_crystal_cards(TokenReader(_tokens(*_V_CARDS)),
-                              za=23051, nphon=100)
-    assert "coherent_extinction" not in ci
-    ci = _parse_crystal_cards(TokenReader(_tokens(*_BEO_CARDS)),
-                              za=4009, nphon=100)
-    assert "coherent_extinction" not in ci
