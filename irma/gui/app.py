@@ -10,9 +10,7 @@ from tkinter import ttk, messagebox
 
 from irma.gui.runner import ComputationRunner
 
-from irma.gui.endf_form import (   # noqa: F401  (re-exported for tests)
-    EndfFormMixin, _phase_from_log_line,
-)
+from irma.gui.endf_form import EndfFormMixin
 
 
 
@@ -170,12 +168,10 @@ class IrmaApp(EndfFormMixin):
                 pass
 
     def _on_close(self):
-        """WM_DELETE_WINDOW / Quit: confirm, then shut the runner down and
-        destroy. shutdown() (not cancel()) is required here: a plain cancel
-        runs the SIGTERM->SIGKILL escalation on a daemon thread that dies
-        with the interpreter, and the compute child is a detached session
-        leader -- it would outlive the GUI at full CPU. shutdown() blocks
-        (bounded) until the process tree is actually reaped."""
+        """WM_DELETE_WINDOW / Quit: confirm, stop the run, remove the temp
+        files, destroy. shutdown(), not cancel(): cancel kills on a daemon
+        thread that dies with the interpreter, and the child (its own
+        session leader) would outlive the GUI."""
         if self.runner.is_running:
             if not messagebox.askyesno(
                     "Quit IRMA",
@@ -184,19 +180,9 @@ class IrmaApp(EndfFormMixin):
                     "worker processes."):
                 return
             self.runner.shutdown()
-        # GUI-owned temp files must not survive the window (review GUI-2):
-        # the unlink callbacks queued via after() die with the Tk
-        # interpreter, so clean synchronously on every close path. The ENDF
-        # form is a mixin on the app itself.
-        for panel in (self, getattr(self, "ns_panel", None),
-                      getattr(self, "ncrystal_panel", None),
-                      getattr(self, "mlip_panel", None)):
-            cleanup = getattr(panel, "cleanup_temp_files", None)
-            if cleanup is not None:
-                try:
-                    cleanup()
-                except Exception:
-                    pass
+        # the ENDF form is a mixin on the app itself
+        for panel in (self, self.ns_panel, self.ncrystal_panel, self.mlip_panel):
+            panel.cleanup_temp_files()
         self.root.destroy()
 
     def _show_about(self):

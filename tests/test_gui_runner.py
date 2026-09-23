@@ -259,7 +259,7 @@ def test_run_command_success_with_written_output_passes(tmp_path):
 # ---- #12: phase markers extracted from streamed child log lines --------------
 def test_phase_from_log_line_extracts_markers():
     pytest.importorskip("tkinter")
-    from irma.gui.app import _phase_from_log_line as phase
+    from irma.gui.endf_form import _phase_from_log_line as phase
     assert (phase("Accumulating coherent one-phonon contribution...")
             == "Accumulating coherent one-phonon contribution...")
     assert phase("  Writing ENDF output...") == "Writing ENDF output..."
@@ -271,7 +271,7 @@ def test_phase_from_log_line_extracts_markers():
 
 def test_phase_from_log_line_ignores_non_markers():
     pytest.importorskip("tkinter")
-    from irma.gui.app import _phase_from_log_line as phase
+    from irma.gui.endf_form import _phase_from_log_line as phase
     assert phase("=== IRMA Calculation ===") is None
     assert phase("0.123  4.56  7.89") is None
     assert phase("") is None
