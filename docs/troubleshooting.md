@@ -158,8 +158,8 @@ otherwise silently write a wrong tape:
 
 | You wrote | With | IRMA says (paraphrased) |
 |---|---|---|
-| `nss > 0` and `b7 = 0` (Card 6) | `iel=10` (Card 5) | "a bound two-pass secondary scatterer … is not supported with generalized elastic (Card 5 iel=10): … MF7/MT2 would be built from the secondary scatterer's Debye-Waller data instead of the principal's" |
-| an `extinction` card | SEF (`elastic_mode=1`) routed to the incoherent-elastic builder | "extinction would be a silent no-op: … writes MF7/MT2 from the incoherent elastic builder, which does not apply extinction" |
+| `nss > 0` and `b7 = 0` (Card 6) | `iel=10` (Card 5) | "a bound two-pass secondary scatterer … is not supported with iel=10, which has no secondary-scatterer Debye-Waller path; use b7=1 or 2, or drop the secondary" |
+| an `extinction` card | SEF (`elastic_mode=1`) routed to the incoherent-elastic builder | "extinction would be a silent no-op: SEF writes this principal through the incoherent elastic builder …; use elastic_mode=2 (MEF)" |
 
 The first: the generalized elastic writer uses the most recently
 computed Debye–Waller data, and the bound (`b7=0`) two-pass merge leaves

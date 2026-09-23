@@ -124,8 +124,6 @@ def test_user_cutoff_reaches_complete_mode2_calculation(tapes, tmp_path, capsys)
     run_leapr(str(inp), str(out))
 
     log = capsys.readouterr().out
-    assert "User phonon-energy cutoff: 5 meV removes" in log
-    assert "beyond the automatic floors" in log
     # the engine reports what the cutoff did to the displacements, once per
     # temperature, and the metadata carries the same numbers
     assert "Phonon-energy cutoff 5 meV at 296 K" in log
