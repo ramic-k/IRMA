@@ -212,44 +212,31 @@ def _parse_born(phonon, born_path):
 
 
 def check_born_rows(born_path, relaxed_atoms) -> str | None:
-    """Fail-fast BORN <-> relaxed-symmetry compatibility check.
+    """Parse the BORN file against the relaxed structure, as phonopy will,
+    before the displacement loop.
 
-    phonopy's BORN format carries one tensor row per SYMMETRY-INDEPENDENT
-    atom, judged at phonopy's own tolerance against the structure the
-    file is parsed with. A file written for the input symmetry therefore
-    stops matching when relaxation drifts the positions off the exact
-    Wyckoff sites (spacegroup falls to P1 -> one row per atom expected).
-    Returning the problem BEFORE the displacement loop turns an
-    after-everything parse error into an immediate, actionable one.
-    Returns None when compatible, else the error message.
+    phonopy's BORN format carries one tensor row per symmetry-independent
+    atom, so a file written for the input symmetry stops matching when
+    relaxation drifts the positions off the exact Wyckoff sites. Reporting
+    that here turns an error after every displacement into an immediate one.
+    Returns None when the file parses, else the error message.
     """
+    from phonopy.file_IO import parse_BORN
     from phonopy.structure.atoms import PhonopyAtoms
-    from phonopy.structure.symmetry import Symmetry
-
-    rows = 0
-    try:
-        with open(born_path) as fh:
-            lines = [ln.strip() for ln in fh
-                     if ln.strip() and not ln.strip().startswith("#")]
-        rows = max(0, len(lines) - 2)      # factor line + dielectric line
-    except OSError as exc:
-        return f"cannot read BORN file {born_path}: {exc}"
 
     pa = PhonopyAtoms(symbols=relaxed_atoms.get_chemical_symbols(),
                       cell=relaxed_atoms.get_cell().array,
                       scaled_positions=relaxed_atoms.get_scaled_positions(),
                       masses=relaxed_atoms.get_masses())
-    symmetry = Symmetry(pa)                # phonopy's own tolerance
-    n_indep = len(symmetry.get_independent_atoms())
-    if rows == n_indep:
-        return None
-    sg = symmetry.get_international_table()
-    return (f"BORN file {born_path} has {rows} Born-tensor row(s), but "
-            f"the RELAXED structure has {n_indep} symmetry-independent "
-            f"atom(s) (spacegroup {sg} at phonopy's tolerance). If "
-            f"relaxation drifted the positions off the ideal Wyckoff "
-            f"sites, rebuild with --snap-symmetry, or supply one Born "
-            f"row per atom ({len(pa)} rows).")
+    try:
+        parse_BORN(pa, filename=born_path)
+    except OSError as exc:
+        return f"cannot read BORN file {born_path}: {exc}"
+    except Exception as exc:
+        return (f"BORN file {born_path} does not fit the RELAXED structure "
+                f"({exc}). If relaxation drifted the positions off the ideal "
+                f"Wyckoff sites, rebuild with --snap-symmetry.")
+    return None
 
 
 def preflight_bundle_outdir(outdir, overwrite=False):
