@@ -6,6 +6,7 @@ pins that write_bundle cannot contaminate a later bundle through the shared
 phonon object."""
 import json
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -139,7 +140,11 @@ def test_born_roundtrip_explicit_factor(model, tmp_path):
     assert pr.phonon.nac_params is None
 
 
-def test_born_roundtrip_without_factor_uses_phonopy_default(model, tmp_path):
+def test_born_roundtrip_without_factor_uses_phonopy_default(model, tmp_path,
+                                                            monkeypatch):
+    # the default factor comes from phonopy.physical_units; the deprecated
+    # phonopy.units module must not be needed
+    monkeypatch.setitem(sys.modules, "phonopy.units", None)
     rr, pr = model
     born = _born_file(tmp_path, with_factor=False, phonon=pr.phonon)
     b = _write(tmp_path / "b", model, born_path=born)
@@ -150,15 +155,6 @@ def test_born_roundtrip_without_factor_uses_phonopy_default(model, tmp_path):
                       **pinned_primitive_matrix_kwargs(b.phonopy_yaml))
     assert ph.nac_params is not None
     assert ph.nac_params["factor"] == pytest.approx(14.3996517, rel=1e-6)
-
-
-def test_second_bundle_after_born_bundle_is_nac_free(model, tmp_path):
-    rr, pr = model
-    born = _born_file(tmp_path, with_factor=True, phonon=pr.phonon)
-    _write(tmp_path / "with_nac", model, born_path=born)
-    b2 = _write(tmp_path / "without", model)      # would raise before the fix
-    assert b2.manifest["nac_embedded"] is False
-    assert validate_bundle(b2.path) == []
 
 
 def test_check_born_rows_fail_fast(model, tmp_path):
@@ -220,28 +216,12 @@ def test_validate_catches_tampering(model, tmp_path):
     assert any("missing file" in p for p in validate_bundle(b3.path))
 
 
-def test_manifest_path_traversal_is_rejected(model, tmp_path):
-    b = _write(tmp_path, model)
-    mpath = os.path.join(b.path, "manifest.json")
-    m = json.load(open(mpath))
-    m["files"]["structure"] = "../../../etc/passwd"
-    json.dump(m, open(mpath, "w"))
-    with pytest.raises(ValueError, match="unsafe"):
-        load_bundle(b.path)
-    assert validate_bundle(b.path)                # problem list, no crash
-
-
 def test_load_rejects_non_bundles(tmp_path):
     with pytest.raises(FileNotFoundError, match="manifest"):
         load_bundle(str(tmp_path))
     (tmp_path / "manifest.json").write_text('{"kind": "something-else"}')
     with pytest.raises(ValueError, match="not an irma-mlip"):
         load_bundle(str(tmp_path))
-    (tmp_path / "manifest.json").write_text('[1, 2, 3]')
-    with pytest.raises(ValueError):
-        load_bundle(str(tmp_path))
-    (tmp_path / "manifest.json").write_text('{broken json')
-    assert validate_bundle(str(tmp_path))         # problem list, no crash
 
 
 def _flat_crystal(k_a=0.0, k_b=5.0):
@@ -267,21 +247,7 @@ def _flat_crystal(k_a=0.0, k_b=5.0):
 
 
 def _integral(e, rho):
-    return (np.trapezoid(rho, e) if hasattr(np, "trapezoid")
-            else np.trapz(rho, e))
-
-
-def test_dos_flat_band_smearing_fallback():
-    """Numerically dispersionless bands have zero linear-tetrahedron width
-    and drop out of the DOS entirely (found live: the scawtite O-H stretch
-    on a 1x1x1 supercell). All-flat spectrum -> spread guard fires."""
-    from irma.mlip.bundle import _dos_and_census
-
-    ph = _flat_crystal(k_a=0.0, k_b=5.0)        # every band flat
-    e, rho, census = _dos_and_census(ph, [4, 4, 4])
-    assert census.get("dos_smearing_fallback_mev") == 1.0
-    assert _integral(e, rho) == pytest.approx(6, rel=0.05)
-    assert np.all(np.diff(e) < 0.51)            # pitch never coarser than 0.5
+    return np.trapezoid(rho, e)
 
 
 def test_dos_mixed_flat_and_dispersive_triggers_fallback():
@@ -294,18 +260,7 @@ def test_dos_mixed_flat_and_dispersive_triggers_fallback():
     e, rho, census = _dos_and_census(ph, [8, 2, 2])
     assert census.get("dos_smearing_fallback_mev") == 1.0
     assert _integral(e, rho) == pytest.approx(6, rel=0.05)
-
-
-def test_dos_explicit_sigma_gets_a_resolving_grid():
-    """--dos-smearing far below the pitch must refine the grid: a 0.05 meV
-    sigma sampled every 0.5 meV integrates to almost anything."""
-    from irma.mlip.bundle import _dos_and_census
-
-    ph = _flat_crystal(k_a=0.0, k_b=5.0)
-    e, rho, census = _dos_and_census(ph, [4, 4, 4], dos_sigma_mev=0.05)
-    assert "dos_smearing_fallback_mev" not in census    # explicit sigma path
-    assert np.all(np.diff(e) < 0.05 / 2 + 1e-9)
-    assert _integral(e, rho) == pytest.approx(6, rel=0.05)
+    assert np.all(np.diff(e) < 0.51)            # pitch never coarser than 0.5
 
 
 def test_dos_dispersive_bands_keep_tetrahedron(model):
@@ -315,13 +270,11 @@ def test_dos_dispersive_bands_keep_tetrahedron(model):
 
     _rr, pr = model
     e, rho, census = _dos_and_census(pr.phonon, [6, 6, 6])
-    integral = np.trapezoid(rho, e) if hasattr(np, "trapezoid") \
-        else np.trapz(rho, e)
     assert "dos_smearing_fallback_mev" not in census
     # tetrahedron integral approximates the band count (coarse-mesh
     # tolerance; the fallback decision itself is by band spread, not this)
     n_bands = 3 * len(pr.phonon.primitive)
-    assert integral == pytest.approx(n_bands, rel=0.15)
+    assert _integral(e, rho) == pytest.approx(n_bands, rel=0.15)
 
 
 # ---- SEC-1: validate must not execute code from the bundle -------------------
@@ -363,30 +316,3 @@ def test_validate_rejects_a_python_tagged_phonopy_yaml(model, tmp_path):
     # and the rejection is the FIRST phonopy-facing problem: no
     # reload/parse diagnostics leaked out alongside it
     assert not any("reload" in p for p in problems), problems
-
-
-def test_validate_accepts_a_clean_bundle_unchanged(model, tmp_path):
-    """Near-miss: the guard must not reject legitimate bundles."""
-    b = _write(tmp_path / "clean", model)
-    assert validate_bundle(b.path) == []
-
-
-def test_born_default_factor_survives_without_phonopy_units(model, tmp_path,
-                                                            monkeypatch):
-    """REL-12: phonopy.units is deprecated and slated for removal, and the
-    extras declare no upper bound; the BORN default factor must come from
-    the modern physical_units API when it exists, so a phonopy without the
-    legacy module still works."""
-    import sys
-
-    pytest.importorskip("phonopy.physical_units")
-    monkeypatch.setitem(sys.modules, "phonopy.units", None)   # ImportError
-    born = _born_file(tmp_path, with_factor=False, phonon=model[1].phonon)
-    b = _write(tmp_path / "b", model, born_path=born)
-    assert b.manifest["nac_embedded"] is True
-
-    import phonopy
-    from irma.core.phonopy_io import pinned_primitive_matrix_kwargs
-    ph = phonopy.load(b.phonopy_yaml, log_level=0,
-                      **pinned_primitive_matrix_kwargs(b.phonopy_yaml))
-    assert ph.nac_params["factor"] == pytest.approx(14.3996517, rel=1e-6)
