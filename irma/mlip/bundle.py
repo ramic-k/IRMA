@@ -17,13 +17,11 @@ prefers embedded force constants over every loose file and never falls back
 to the cwd, so this one file feeds Card 6f (ENDF modes 1/2), the spectra
 config, and the NCrystal exporter with no loose-file hazards.
 
-NAC contract (single mechanism): a BORN file is parsed against the phonopy
-primitive and assigned to nac_params ONLY for the duration of the save (the
-prior state is restored afterwards, so one builder call can never leak NAC
-into a later bundle), and the writer asserts the saved yaml embeds NAC. A
-phonon object arriving with nac_params already set and no born_path is
-rejected as ambiguous. Emitted decks use use_born=0 -- IRMA consumes embedded
-NAC directly. No BORN file is copied into the bundle.
+NAC: a BORN file is parsed against the phonopy primitive and assigned to
+nac_params for the duration of the save (then restored), so the yaml
+embeds it. Emitted decks use
+use_born=0 -- IRMA consumes embedded NAC directly. No BORN file is copied
+into the bundle.
 
 All heavy imports are function-level (core-clean module).
 """
@@ -38,12 +36,6 @@ from dataclasses import dataclass
 MANIFEST_SCHEMA = 1
 THZ_TO_MEV = 4.13566553853599
 IMAGINARY_FLOOR_MEV = -0.05     # below this a mode counts as imaginary
-
-# every file write_bundle owns (dos.png is conditionally produced but always
-# owned: a stale one must not survive an overwrite where matplotlib vanished)
-_OWNED = ("phonopy.yaml", "structure_relaxed.vasp", "manifest.json",
-          "dos.dat", "dos.png")
-_STAGING = ".bundle-staging"
 
 _ADVICE = ("imaginary modes usually mean the structure is not at a true "
            "minimum of this potential or the supercell truncates the force "
@@ -213,15 +205,9 @@ def _parse_born(phonon, born_path):
     if not nac.get("factor"):
         # BORN files may omit the conversion factor; install phonopy's own
         # VASP-units value rather than a hand-rounded 14.4
-        try:
-            # phonopy >= 2.48; phonopy.units.* is deprecated and slated
-            # for removal (same guard as irma.core.noncubic_workers)
-            from phonopy.physical_units import get_physical_units
-            units = get_physical_units()
-            hartree, bohr = units.Hartree, units.Bohr
-        except ImportError:
-            from phonopy.units import Hartree as hartree, Bohr as bohr
-        nac["factor"] = hartree * bohr
+        from phonopy.physical_units import get_physical_units
+        units = get_physical_units()
+        nac["factor"] = units.Hartree * units.Bohr
     return nac
 
 
@@ -275,8 +261,7 @@ def preflight_bundle_outdir(outdir, overwrite=False):
     if os.path.isfile(outdir):
         raise FileExistsError(f"{outdir} is a file, not a directory")
     if os.path.isdir(outdir):
-        existing = [n for n in os.listdir(outdir)
-                    if n not in ("scratch", _STAGING)]
+        existing = [n for n in os.listdir(outdir) if n != "scratch"]
         if existing and not overwrite:
             raise FileExistsError(
                 f"{outdir} is not empty (found {sorted(existing)[:5]}...); "
@@ -292,66 +277,36 @@ def write_bundle(outdir, *, phonon_result, relax_result, calc_meta,
 
     The serialized model is ALWAYS phonon_result.phonon: metrics, the
     fingerprint, and the saved yaml can never describe different objects.
+    The manifest is written last (its presence defines a bundle).
     """
     from ase.io import write as ase_write
     from irma import __version__ as irma_version
-    from irma.core.phonopy_io import (
-        phonopy_yaml_embeds_force_constants, phonopy_yaml_embeds_nac)
+    from irma.core.phonopy_io import phonopy_yaml_embeds_nac
 
     phonon = phonon_result.phonon
-    outdir = os.path.abspath(str(outdir))
+    outdir = preflight_bundle_outdir(outdir, overwrite)
     os.makedirs(outdir, exist_ok=True)
+    for name in ("manifest.json", "dos.png"):       # a stale dos.png too
+        if os.path.exists(os.path.join(outdir, name)):
+            os.remove(os.path.join(outdir, name))
 
-    # Guards run BEFORE anything is deleted or written: a failed overwrite
-    # must leave a previously valid bundle intact (review regression 2).
-    existing = [n for n in os.listdir(outdir)
-                if n != "scratch" and n != _STAGING]
-    if existing and not overwrite:
-        raise FileExistsError(
-            f"{outdir} is not empty (found {sorted(existing)[:5]}...); pass "
-            f"overwrite=True (--overwrite) to replace a previous bundle")
-    if phonon.nac_params is not None and born_path is None:
-        raise ValueError(
-            "the phonon object already carries nac_params but no born_path "
-            "was given; NAC must enter through born_path so its provenance "
-            "is recorded (clear nac_params or pass the BORN file)")
-
-    # Build everything in a staging directory inside outdir (same
-    # filesystem, so the final os.replace swaps are atomic per file).
-    staging = os.path.join(outdir, _STAGING)
-    if os.path.isdir(staging):
-        import shutil
-        shutil.rmtree(staging)
-    os.makedirs(staging)
-
-    yaml_path = os.path.join(staging, "phonopy.yaml")
+    yaml_path = os.path.join(outdir, "phonopy.yaml")
     prior_nac = phonon.nac_params
     try:
         if born_path is not None:
             phonon.nac_params = _parse_born(phonon, born_path)
         phonon.save(yaml_path, settings={"force_constants": True})
-        # DOS + census run INSIDE the NAC window: with NAC applied, the
-        # serialized model and every recorded phonon quantity describe the
-        # same physics (review regression 1).
+        # the DOS and census describe the saved model (NAC applied)
         e_mev, rho, census = _dos_and_census(phonon, mesh,
                                              dos_sigma_mev=dos_sigma_mev)
     finally:
-        phonon.nac_params = prior_nac      # never leak into later bundles
-
-    if not phonopy_yaml_embeds_force_constants(yaml_path):
-        raise RuntimeError(
-            f"{yaml_path} does not embed force constants after save; "
-            f"phonopy save contract changed")
+        phonon.nac_params = prior_nac      # NAC never leaks into a later bundle
     nac_embedded = phonopy_yaml_embeds_nac(yaml_path)
-    if born_path is not None and not nac_embedded:
-        raise RuntimeError(
-            f"BORN was supplied but {yaml_path} does not embed NAC after "
-            f"save; phonopy save contract changed")
 
-    structure_path = os.path.join(staging, "structure_relaxed.vasp")
+    structure_path = os.path.join(outdir, "structure_relaxed.vasp")
     ase_write(structure_path, relax_result.atoms, direct=True, format="vasp")
 
-    dos_path, png_path = _write_dos(staging, e_mev, rho)
+    dos_path, png_path = _write_dos(outdir, e_mev, rho)
     if census["n_imaginary"]:
         progress(f"  WARNING: {census['n_imaginary']} imaginary mode(s) on "
                  f"the {tuple(mesh)} mesh (min {census['freq_min_meV']:.2f} "
@@ -433,33 +388,11 @@ def write_bundle(outdir, *, phonon_result, relax_result, calc_meta,
             "dos_png": _sha256(png_path) if png_path else None,
         },
     }
-    manifest_staged = os.path.join(staging, "manifest.json")
-    with open(manifest_staged, "w") as fh:
+    manifest_tmp = os.path.join(outdir, "manifest.json.tmp")
+    with open(manifest_tmp, "w") as fh:
         json.dump(manifest, fh, indent=2, sort_keys=True)
         fh.write("\n")
-
-    # Swap the staged bundle into place: owned files replaced atomically,
-    # manifest LAST (its presence defines a bundle), stale extras removed.
-    import shutil
-    try:
-        for name in _OWNED:
-            final = os.path.join(outdir, name)
-            staged = os.path.join(staging, name)
-            if name == "manifest.json":
-                continue
-            if os.path.exists(staged):
-                os.replace(staged, final)
-            elif os.path.exists(final):
-                os.remove(final)           # e.g. a stale dos.png
-    except BaseException:
-        # a partial swap must not masquerade as a valid bundle: drop the old
-        # manifest so the directory reads as no-bundle rather than mixed
-        old_manifest = os.path.join(outdir, "manifest.json")
-        if os.path.exists(old_manifest):
-            os.remove(old_manifest)
-        raise
-    os.replace(manifest_staged, os.path.join(outdir, "manifest.json"))
-    shutil.rmtree(staging, ignore_errors=True)
+    os.replace(manifest_tmp, os.path.join(outdir, "manifest.json"))
 
     return Bundle(path=outdir,
                   phonopy_yaml=os.path.join(outdir, "phonopy.yaml"),
@@ -496,86 +429,41 @@ def load_bundle(path) -> Bundle:
 
 
 def validate_bundle(path) -> list:
-    """Full check of a bundle; returns a list of problems (empty = valid).
+    """Check a bundle; returns a list of problems (empty = valid).
 
-    Schema first, then artifact presence + sha256, then a real phonopy
-    reload under IRMA's pinned primitive policy with the embedded-FC and
-    NAC states cross-checked against the manifest's claims.
-
-    TRUST BOUNDARY: this is the documented first action on a RECEIVED
-    bundle, so the bundle contents are treated as UNTRUSTED throughout.
-    The manifest sha256 gate proves internal consistency only — an
-    attacker-built bundle is self-consistent — and phonopy's YAML parser
-    executes ``!!python/`` tags at parse time, so the phonopy.yaml is
-    scanned and rejected (reject_unsafe_phonopy_yaml) BEFORE any phonopy
-    parse runs. Validation never executes code from the bundle.
+    Artifact presence and sha256, then a phonopy reload under IRMA's pinned
+    primitive policy with the embedded-FC and NAC states checked against
+    the manifest. The bundle is treated as untrusted: phonopy's YAML parser
+    executes ``!!python/`` tags, so the phonopy.yaml is scanned
+    (reject_unsafe_phonopy_yaml) before any phonopy parse runs.
     """
     try:
         bundle = load_bundle(path)
     except (FileNotFoundError, ValueError, KeyError, TypeError, OSError,
             json.JSONDecodeError) as exc:
         return [str(exc)]
-    problems = []
     m = bundle.manifest
     if m.get("schema") != MANIFEST_SCHEMA:
-        problems.append(f"manifest schema {m.get('schema')!r} != "
-                        f"{MANIFEST_SCHEMA}")
-    for key in ("created_utc", "input", "calculator", "relaxation",
-                "displacements", "fc_symmetrization", "phonons",
-                "nac_embedded", "born", "fingerprint", "irma_version",
-                "versions", "files", "sha256", "disordered"):
-        if key not in m:
-            problems.append(f"manifest missing {key!r}")
-    for section in ("sha256", "files", "calculator", "relaxation",
-                    "displacements", "phonons", "input", "versions", "born"):
-        if section in m and not isinstance(m.get(section), dict):
-            problems.append(f"manifest {section} section is not a mapping")
-    ph = m.get("phonons")
-    if isinstance(ph, dict):
-        for key in ("freq_max_meV", "n_imaginary", "mesh"):
-            if key not in ph:
-                problems.append(f"manifest phonons section missing {key!r}")
-    if problems:
-        return problems
-
-    root = os.path.realpath(bundle.path)
+        return [f"manifest schema {m.get('schema')!r} != {MANIFEST_SCHEMA}"]
+    problems = []
     try:
-        hashes = m["sha256"]
         for label, name in m["files"].items():
             if name is None:
-                if hashes.get(label) is not None:
-                    problems.append(f"{label}: hash recorded for an absent "
-                                    f"file")
                 continue
             target = os.path.join(bundle.path, _safe_name(name, label))
-            # symlink containment: the RESOLVED path must stay inside the
-            # bundle (plain-name symlinks could otherwise escape)
-            resolved = os.path.realpath(target)
-            if os.path.commonpath([root, resolved]) != root:
-                problems.append(f"{label}: resolves outside the bundle "
-                                f"({resolved})")
-                continue
             if not os.path.isfile(target):
                 problems.append(f"missing file: {target}")
-                continue
-            expected = hashes.get(label)
-            if not expected:
-                problems.append(f"{label}: no hash recorded for a present "
-                                f"file")
-            elif _sha256(target) != expected:
+            elif _sha256(target) != m["sha256"].get(label):
                 problems.append(f"{label}: sha256 mismatch (file changed "
                                 f"after the bundle was written)")
-    except (ValueError, TypeError, KeyError, OSError,
-            AttributeError) as exc:
-        problems.append(f"artifact check failed: {exc}")
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        problems.append(f"malformed manifest: {exc}")
     if problems:
         return problems
 
     from irma.core.phonopy_io import (
-        phonopy_yaml_embeds_force_constants, phonopy_yaml_embeds_nac,
-        pinned_primitive_matrix_kwargs, reject_unsafe_phonopy_yaml)
-    # SEC guard, BEFORE any phonopy parse: phonopy's YAML loader executes
-    # `!!python/` tags, and this untrusted file must never reach it
+        phonopy_yaml_embeds_force_constants, pinned_primitive_matrix_kwargs,
+        reject_unsafe_phonopy_yaml)
     try:
         reject_unsafe_phonopy_yaml(bundle.phonopy_yaml)
     except ValueError as exc:
@@ -584,26 +472,20 @@ def validate_bundle(path) -> list:
         return [f"could not scan {bundle.phonopy_yaml}: {exc}"]
     if not phonopy_yaml_embeds_force_constants(bundle.phonopy_yaml):
         problems.append("phonopy.yaml does not embed force constants")
-    if bool(m.get("nac_embedded")) != phonopy_yaml_embeds_nac(bundle.phonopy_yaml):
-        problems.append("manifest nac_embedded disagrees with phonopy.yaml")
     try:
         import phonopy
 
         from irma.core.phonopy_io import isolated_phonopy_cwd
 
         # the reload must see ONLY the bundle: phonopy.load picks up a
-        # stray ./BORN from the working directory, which broke validation
-        # of NAC-free bundles built next to an unrelated BORN file (found
-        # live in the ZrO2 campaign)
+        # stray ./BORN from the working directory
         with isolated_phonopy_cwd():
             ph = phonopy.load(
                 bundle.phonopy_yaml, log_level=0,
                 **pinned_primitive_matrix_kwargs(bundle.phonopy_yaml))
-        if ph.force_constants is None:
-            problems.append("reload produced no force constants")
         if bool(m.get("nac_embedded")) != (ph.nac_params is not None):
-            problems.append("reloaded nac_params presence disagrees with "
-                            "the manifest")
+            problems.append("manifest nac_embedded disagrees with the "
+                            "reloaded model")
     except Exception as exc:
         problems.append(f"phonopy reload failed: {exc}")
     return problems

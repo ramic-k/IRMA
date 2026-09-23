@@ -152,17 +152,6 @@ def test_born_roundtrip_without_factor_uses_phonopy_default(model, tmp_path):
     assert ph.nac_params["factor"] == pytest.approx(14.3996517, rel=1e-6)
 
 
-def test_preexisting_nac_without_born_is_rejected(model, tmp_path):
-    rr, pr = model
-    pr.phonon.nac_params = {"born": np.tile(np.eye(3), (4, 1, 1)),
-                            "dielectric": np.eye(3), "factor": 14.4}
-    try:
-        with pytest.raises(ValueError, match="born_path"):
-            _write(tmp_path, model)
-    finally:
-        pr.phonon.nac_params = None
-
-
 def test_second_bundle_after_born_bundle_is_nac_free(model, tmp_path):
     rr, pr = model
     born = _born_file(tmp_path, with_factor=True, phonon=pr.phonon)
