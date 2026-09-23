@@ -398,10 +398,9 @@ effectively unsupported for the MLIP front end.** torch stopped
 shipping Intel-mac wheels at 2.2.2 (April 2024), so every potential
 that needs a newer torch fails to install there, and the torch that
 does install was built against NumPy 1.x, which breaks next to the
-NumPy 2 that current packages pull in. `env create` states this up
-front on such machines, and its NumPy fallback (below) can rescue
-`nequip`; for the rest, use Linux or an Apple-Silicon Mac. Everything
-else in IRMA works normally on Intel Macs. The two e3nn camps (`mace-torch` versus everything
+NumPy 2 that current packages pull in (`nequip` can work after
+installing `numpy<2` in its env, below); use Linux or an Apple-Silicon
+Mac. Everything else in IRMA works normally on Intel Macs. The two e3nn camps (`mace-torch` versus everything
 else that uses e3nn)
 were both demonstrated to break in live installs, in either direction;
 this is not a
@@ -426,9 +425,9 @@ packages lag new Python releases, and on the newest interpreter the
 resolver is forced onto bleeding-edge builds of torch. The probe
 catches the one failure an import cannot: a torch wheel built against
 NumPy 1.x sitting next to NumPy 2, which imports cleanly and then
-fails when a tensor first crosses to NumPy; when that signature is
-detected, `env create` reinstalls the environment's NumPy as `numpy<2`
-and re-verifies before registering anything. On Debian-family
+fails when a tensor first crosses to NumPy. A failed check registers
+nothing; for this NumPy case the error says to install `numpy<2` in the
+env and point `IRMA_MLIP_PYTHON_<POTENTIAL>` at its interpreter. On Debian-family
 distributions the stdlib-`venv` fallback needs the `python3-venv`
 system package; installing `uv` sidesteps that. From then
 on, `--potential mace` transparently runs its force calls in that
