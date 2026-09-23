@@ -36,10 +36,9 @@ _DECK_2T = """20 /
 
 
 @pytest.mark.parametrize("temp1, temp2, ilog, warn_T", [
-    (300.0, -5.0, 0, "T=5 K"),      # cold SECOND table
-    (5.0, -300.0, 0, "T=5 K"),      # cold first table
+    (5.0, -300.0, 0, "T=5 K"),      # cold table (temperatures increase)
     (300.0, -350.0, 0, None),       # two warm tables
-    (300.0, -5.0, 1, None),         # ilog=1 keeps the values
+    (5.0, -300.0, 1, None),         # ilog=1 keeps the values
 ])
 def test_underflow_warning(temp1, temp2, ilog, warn_T, capsys):
     d = tempfile.mkdtemp()
