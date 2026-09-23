@@ -5,11 +5,9 @@ temperature's scattering-law inputs (continuous phonon spectrum, translational
 and oscillator data, Skold/cold-hydrogen data) unchanged, and only recompute
 the law at the new |T|." The deck omits the detail block for those temperatures.
 
-IRMA historically reset that state to ``p1=None`` on every iteration, so the
-first negative-temperature card crashed ``contin``/``start``. These tests pin
-the fix: a deck using the negative-temperature shorthand must (a) run, and
-(b) produce byte-for-byte the same inelastic law as an equivalent deck that
-spells the repeated detail block out explicitly with positive temperatures.
+A deck using the negative-temperature shorthand must produce the same
+inelastic law as a deck that spells the repeated detail block out with
+positive temperatures, recomputed at each new |T|.
 
 This is the exact convention used throughout the reference tsl-*.leapr decks
 (graphite, Fe, Al, CH2), so it underpins the deck-level validation in
@@ -79,8 +77,7 @@ def _mt4_S_all_temps(path):
     out = []
     T0 = np.zeros((nbeta, nalpha))
     for j in range(1, nbeta + 1):
-        T0[j - 1] = [st[j]["S"][k] for k in sorted(st[j]["S"].keys())] \
-            if isinstance(st[j]["S"], dict) else st[j]["S"]
+        T0[j - 1] = st[j]["S"]
     out.append(T0)
     extra = mt4.get("T", {})
     if extra:
@@ -94,14 +91,9 @@ def _mt4_S_all_temps(path):
     return out
 
 
-def test_negative_temperature_runs_without_crash():
-    """A deck with a negative-temperature card must run end to end."""
-    out = _run(_DECK_NEG)
-    assert os.path.getsize(out) > 0
-
-
 def test_negative_temperature_matches_explicit_block():
-    """Reuse-via-negative-T must equal an explicit repeated positive-T block."""
+    """Reuse-via-negative-T must equal an explicit repeated positive-T block,
+    and the reused spectrum is evaluated at the new |T| (the laws differ)."""
     neg = _mt4_S_all_temps(_run(_DECK_NEG))
     exp = _mt4_S_all_temps(_run(_DECK_EXPLICIT))
     assert len(neg) == len(exp) == 2
@@ -110,11 +102,5 @@ def test_negative_temperature_matches_explicit_block():
         np.testing.assert_allclose(
             a, b, rtol=0, atol=0,
             err_msg=f"temperature index {it}: negative-T reuse != explicit block")
-
-
-def test_negative_temperature_recomputes_at_new_temperature():
-    """The reused spectrum must still be evaluated at the NEW |T|, so the two
-    temperatures' laws differ (the law is temperature dependent)."""
-    S = _mt4_S_all_temps(_run(_DECK_NEG))
-    assert not np.allclose(S[0], S[1]), \
+    assert not np.allclose(neg[0], neg[1]), \
         "300 K and 400 K laws are identical — temperature was not reapplied"
