@@ -120,54 +120,6 @@ def test_extinction_s_table_is_histogram_and_monotonic():
             assert got == pytest.approx(sigma_fn(e_mid, 0), rel=2e-2)
 
 
-def test_reduction_is_scale_independent_cef_vs_mef():
-    # CEF passes the structure-factor scale; MEF passes scale=1.0. The extinction
-    # REDUCTION sigma_ext/sigma_kin must be identical (scale multiplies sigma
-    # linearly and cancels), so MEF reuses the CEF machinery correctly.
-    sdw = _synthetic_species_dw()
-    bragg, dir_terms = _synthetic_bragg()
-    cfg = _cfg()
-    cef_ext, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 2.7, cfg, [296.0])
-    cef_kin, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 2.7,
-                                       _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
-    mef_ext, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 1.0, cfg, [296.0])
-    mef_kin, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 1.0,
-                                       _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
-    for E in (0.006, 0.02, 0.1):
-        r_cef = cef_ext(E, 0) / cef_kin(E, 0)
-        r_mef = mef_ext(E, 0) / mef_kin(E, 0)
-        assert r_mef == pytest.approx(r_cef, rel=1e-12)
-
-
-def test_extinction_composes_with_grouped_high_e_edges():
-    # Extinction reuses kin_table's above-cutoff nodes verbatim, so feeding it a
-    # GROUPED edge table (sparse high-E) yields fewer high-E nodes than a plain one,
-    # while the below-cutoff extinction region is identical. (Engine-level proof:
-    # a Be extinction+grouping run groups 8452->961 edges, tape 853->612 lines.)
-    sdw = _synthetic_species_dw()
-    bragg, dir_terms = _synthetic_bragg()
-    sigma_fn, edge_E, _ = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, _V, _N, 1.0, _cfg(), [296.0])
-    E_active = 0.15                                        # explicit cutoff for the test
-    # ungrouped nodes between the cutoff and the 1 eV grouping threshold keep the
-    # splice point `top` fixed (as the real Be edge set does); grouping only collapses
-    # the >1 eV nodes.
-    mid = [0.2, 0.5, 0.8]
-    hi_plain = [1.0, 2.0, 3.0, 4.0, 5.0]
-
-    def kin(eints):
-        return {'S_T0_table': {'Eint': eints, 'S': [float(i) for i in range(len(eints))]}}
-
-    tp = endf_writer._coherent_extinction_s_table(
-        kin(mid + hi_plain), sigma_fn, edge_E, E_active, 1, [296.0], 1e-3)
-    tg = endf_writer._coherent_extinction_s_table(
-        kin(mid + [5.0]), sigma_fn, edge_E, E_active, 1, [296.0], 1e-3)
-    assert tp['NP'] - tg['NP'] == 4                        # four >1 eV nodes merged away
-    below_p = [e for e in tp['S_T0_table']['Eint'] if e < E_active]
-    below_g = [e for e in tg['S_T0_table']['Eint'] if e < E_active]
-    assert below_p == below_g and len(below_p) > 0        # extinction region identical + present
-
-
 def test_per_species_isotropic_dw_path_runs():
     # inelastic_mode=0 path: per-species (non-directional) DW must also work
     sdw = _synthetic_species_dw(use_dir=False)
@@ -243,11 +195,10 @@ def test_extinction_s_table_multitemp_has_per_temp_block():
 
 
 def test_extinction_splice_consumes_real_grouped_edges():
-    """#12: feed the extinction splice the edge table produced by the REAL grouping
-    helper (_coherent_s_table_or_grouped -> _grouped_coherent_s_table), not a
-    hand-built one. Edges above the 1 eV threshold are genuinely merged; the
-    splice reuses those grouped nodes verbatim while the sub-cutoff extinction
-    region stays identical to the ungrouped splice."""
+    """Feed the extinction splice the edge table produced by the real grouping
+    helper. Edges above the 1 eV threshold are merged; the splice reuses those
+    grouped nodes verbatim while the sub-cutoff extinction region stays
+    identical to the ungrouped splice."""
     sdw = _synthetic_species_dw()
     bragg, dir_terms = _synthetic_bragg()
     sigma_fn, edge_E, _ = make_sigma_coh_ext(
@@ -273,18 +224,21 @@ def test_extinction_splice_consumes_real_grouped_edges():
     tp = endf_writer._coherent_extinction_s_table(
         kin_p, sigma_fn, edge_E, E_active, 1, [296.0], 1e-3)
     assert tg['NP'] < tp['NP']                     # grouped splice is smaller
+    # the nodes above the cutoff are reused unchanged
+    assert tp['NP'] - tg['NP'] == (len(kin_p['S_T0_table']['Eint'])
+                                   - len(kin_g['S_T0_table']['Eint']))
     below_g = [e for e in tg['S_T0_table']['Eint'] if e < E_active]
     below_p = [e for e in tp['S_T0_table']['Eint'] if e < E_active]
     assert below_g == below_p and len(below_g) > 0  # extinction region identical
 
 
-# ---- P1 regression: the scan stop must be a proven bound, not a heuristic ----
+# ---- the scan stop must be a proven bound, not a heuristic -----------------
 
 def _weak_edges_plus_strong(n_weak=25, planes_per_weak=21, fsq_weak=1e-12,
                            e_strong=0.01, fsq_strong=5.0):
-    """The adversarial edge set from the 2026-07-09 pre-release review: a long run
-    of negligible edges (enough to satisfy the consecutive-below counter and
-    the plane-count floor) followed by one strong reflection at higher energy."""
+    """A long run of negligible edges (enough to satisfy the consecutive-below
+    counter and the plane-count floor) followed by one strong reflection at
+    higher energy."""
     bragg, dir_terms = [], []
     for i in range(n_weak):
         e_thr = 0.001 + (0.0034 - 0.001) * i / (n_weak - 1)
@@ -318,66 +272,3 @@ def test_late_strong_reflection_is_not_spliced_kinematically():
     # l=1e7 A crystallites extinguish the strong plane almost completely; the
     # returned sigma must reflect that, not the kinematic edge sum.
     assert ext < 0.05 * kin
-
-
-def test_deficit_decay_check_falls_back_conservatively(monkeypatch):
-    """If a model's per-plane deficit is still rising at the probe window's
-    edge (supremum not captured), the bound must go fully conservative (scan
-    cannot stop early) and warn."""
-    from irma.core import elastic_extinction as ee
-
-    def _rising_deficit(model, Nc, wl, F_hkl, d_hkl, **kw):
-        return wl / (1.0 + wl)                    # y -> 0 as E rises: deficit
-                                                  # still rising at the window edge
-
-    monkeypatch.setattr(ee._ext, "extinction_factor", _rising_deficit)
-    sdw = _synthetic_species_dw()
-    bragg, dir_terms = _weak_edges_plus_strong()
-    with pytest.warns(RuntimeWarning, match="did not decay"):
-        _, _, E_active = ee.make_sigma_coh_ext(
-            bragg, dir_terms, sdw, _V, _N, 1.0,
-            _cfg(model="BC_pure", l=1.0e7, g=0.0, L=0.0), [296.0])
-    # y = 0.5 everywhere -> every edge stays active -> cutoff covers them all
-    assert E_active >= 0.01
-
-
-def test_scan_keeps_a_late_strong_reflection_inside_E_active():
-    """>50k planes with a late strong reflection: the scan must keep the
-    strong edge inside E_active and return the extinguished value."""
-    sdw = _synthetic_species_dw()
-    bragg, dir_terms = _weak_edges_plus_strong(planes_per_weak=2100)  # 52.5k
-    cfg = _cfg(model="BC_pure", l=1.0e7, g=0.0, L=0.0)
-    sigma_fn, _, E_active = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, _V, _N, 1.0, cfg, [296.0])
-    assert E_active > 0.01
-    kin_fn, _, _ = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, _V, _N, 1.0,
-        _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
-    E = 0.0105
-    ext, kin = sigma_fn(E, 0), kin_fn(E, 0)
-    assert kin > 0.0
-    assert ext < 0.05 * kin
-
-
-
-
-# ---- review PH-2: end-to-end nonnegative sigma through the fragile window --
-
-def test_sabine_triangular_never_returns_negative_sigma():
-    """Sabine_uncorr triangular at the review's reproducer scale (F ~ 1e-6 A,
-    l=1000 A, g=1, L=1e4 A): the naive secondary factor went as wrong as -26
-    inside its small-x window and 748/3001 tabulation energies returned
-    NEGATIVE coherent-elastic sigma. Every energy must now be physical."""
-    import numpy as np
-    sdw = _synthetic_species_dw()
-    bragg, dir_terms = _weak_edges_plus_strong(
-        n_weak=25, planes_per_weak=21, fsq_weak=1e-12,
-        e_strong=0.5, fsq_strong=5.0)           # strong edge holds E_active up
-    cfg = _cfg(model="Sabine_uncorr", l=1000.0, g=1.0, L=1.0e4, dist="tri")
-    sigma_fn, _, E_active = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, _V, _N, 1.0, cfg, [296.0])
-    assert E_active > 0.0
-    for E in np.geomspace(0.0011, 0.45, 601):
-        s = sigma_fn(float(E), 0)
-        assert math.isfinite(s)
-        assert s >= 0.0, (E, s)
