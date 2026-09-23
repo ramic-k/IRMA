@@ -4,7 +4,7 @@ write_endf_output assembles the tape via endf-parserpy. The MF7/MT2 elastic
 section comes from one of the builders: the classic LEAPR coherent table
 (_build_coherent_elastic, iel=1-6), the generalized CEF/MEF builders
 (iel=10), or the inline incoherent-elastic branch (iel<0). MF7/MT4 stores
-the symmetric law S*exp(-beta/2) via _compute_endf_s (isym/ilog variants).
+the symmetric law S*exp(-beta/2) via _endf_s (isym/ilog variants).
 
 Terminology: "CEF" throughout this module (and the ``_build_cef_*`` helper
 names, kept to avoid an API/identifier break) is the single-channel elastic
@@ -178,8 +178,6 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, ncold, nss,
                       bragg, nedge, isym, ilog, smin, iprint,
                       iint=0, comments=None, crystal_info=None):
     """Write ENDF-6 output file using endf-parserpy."""
-    small = 1.0e-9
-
     # iint selects the MF7/MT4 S(alpha,beta) interpolation law for BOTH the
     # alpha (per-beta TAB1) and beta (TAB2) tables: 0 -> log-lin (ENDF INT=4,
     # the classic/NJOY-faithful default); 1 -> lin-lin (INT=2). Coherent
@@ -424,17 +422,9 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, ncold, nss,
         if lat == 1:
             sc_vals[nt] = THERM / (BK * tempr[nt])
 
-    # --- low-temperature underflow detector (symmetric storage, ilog=0) ------
-    # With ilog=0 the symmetric law is stored linearly as S*exp(-beta/2). At low
-    # temperature beta grows like 1/T, so exp(-beta/2) at high energy transfer
-    # becomes ~1e-100, and those points are written as 0 even though the PHYSICAL
-    # scattering there is significant -- silently losing the high-E (e.g. optic)
-    # phonon structure on read-back. We count such losses and warn; ilog=1 (LLN
-    # log storage) preserves them. Harmless at room T, corrupts cryogenic tapes.
-    # Per-temperature counters: beta ~ 1/T, so a LATER cryogenic temperature on
-    # a multi-T tape can underflow even when T0 is warm -- checking only T0
-    # (the original behavior) silently zeroed the cold table's high-E structure
-    # with no warning (pre-release review P5).
+    # Low-temperature underflow detector (isym=0, ilog=0): beta grows like 1/T,
+    # so S*exp(-beta/2) at large transfer can fall below what ENDF can hold
+    # while the scattering there is significant. Counted per temperature.
     _lln_loss_n = [0] * ntempr
     _lln_loss_emax = [0.0] * ntempr
     _lln_check = (isym == 0 and ilog == 0 and ssm is not None
@@ -443,77 +433,48 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, ncold, nss,
     _ENDF_S_FLOOR = 1.0e-90
 
     for ii in range(1, nbt + 1):
-        # Determine beta value
+        # Beta row ii: isym 1/3 store -beta (from ssm) then +beta (from ssp).
         if isym % 2 == 0:
-            i_beta = ii - 1  # 0-based index into beta array
-            beta_val = beta[i_beta]
+            src, i_beta, beta_val = ssm, ii - 1, beta[ii - 1]
+        elif ii < nbeta:
+            src, i_beta, beta_val = ssm, nbeta - ii, -beta[nbeta - ii]
         else:
-            if ii < nbeta:
-                i_beta = nbeta - ii  # reversed
-                beta_val = -beta[i_beta]
-            else:
-                i_beta = ii - nbeta  # 0-based
-                beta_val = beta[i_beta]
+            src, i_beta, beta_val = ssp, ii - nbeta, beta[ii - nbeta]
 
         mf7mt4['beta'][ii] = beta_val
         mf7mt4['LT'][ii] = ntempr - 1
 
-        # S values for T0 (first temperature)
-        nt = 0
-        be = beta_val * sc_vals[nt]
-        s_values = np.zeros(nalpha)
-
-        for j in range(nalpha):
-            s_val = _compute_endf_s(ssm, ssp, isym, ilog, ii, nbeta, j, nt,
-                                     be, smin, small,
-                                     beta_card=beta_val, temp_k=tempr[nt])
-            s_values[j] = s_val
-            # flag points whose physical scattering is significant but whose
-            # linear symmetric storage underflows the ENDF representation
+        for nt in range(ntempr):
+            be = beta_val * sc_vals[nt]
+            vals = [_endf_s(src[i_beta, j, nt], be, isym, ilog, smin,
+                            beta_card=beta_val, temp_k=tempr[nt])
+                    for j in range(nalpha)]
+            # Points with significant scattering that the linear symmetric
+            # storage underflows.
             if _lln_sig > 0.0:
-                phys = ssm[ii - 1, j, nt]
-                if phys > _lln_sig and 0.0 <= s_val < _ENDF_S_FLOOR:
-                    _lln_loss_n[nt] += 1
-                    _lln_loss_emax[nt] = max(_lln_loss_emax[nt],
-                                             abs(be) * BK * tempr[nt] * 1000.0)
-
-        mf7mt4['S_table'][ii] = {
-            'NBT': [nalpha],
-            'INT': [coh_int],
-            'alpha': alpha.tolist(),
-            'S': s_values.tolist()
-        }
-
-        # Additional temperatures: S[q][i][j] = S[alpha][beta][temp]
-        if ntempr > 1:
-            for j_temp in range(1, ntempr):
-                be = beta_val * sc_vals[j_temp]
+                for j in range(nalpha):
+                    if ssm[i_beta, j, nt] > _lln_sig and 0.0 <= vals[j] < _ENDF_S_FLOOR:
+                        _lln_loss_n[nt] += 1
+                        _lln_loss_emax[nt] = max(_lln_loss_emax[nt],
+                                                 abs(be) * BK * tempr[nt] * 1000.0)
+            if nt == 0:
+                mf7mt4['S_table'][ii] = {
+                    'NBT': [nalpha],
+                    'INT': [coh_int],
+                    'alpha': alpha.tolist(),
+                    'S': [float(v) for v in vals],
+                }
+            else:
                 for q in range(nalpha):
-                    s_val = _compute_endf_s(ssm, ssp, isym, ilog, ii, nbeta,
-                                            q, j_temp, be, smin, small,
-                                            beta_card=beta_val,
-                                            temp_k=tempr[j_temp])
-                    if _lln_sig > 0.0:
-                        phys = ssm[ii - 1, q, j_temp]
-                        if phys > _lln_sig and 0.0 <= s_val < _ENDF_S_FLOOR:
-                            _lln_loss_n[j_temp] += 1
-                            _lln_loss_emax[j_temp] = max(
-                                _lln_loss_emax[j_temp],
-                                abs(be) * BK * tempr[j_temp] * 1000.0)
-                    if ii not in mf7mt4['S'][q + 1]:
-                        mf7mt4['S'][q + 1][ii] = {}
-                    mf7mt4['S'][q + 1][ii][j_temp] = s_val
+                    mf7mt4['S'][q + 1].setdefault(ii, {})[nt] = vals[q]
 
     for _nt in range(ntempr):
         if _lln_loss_n[_nt] > 0:
             print(
-                f"WARNING: ilog=0 (linear symmetric-law storage) at "
-                f"T={tempr[_nt]:g} K: {_lln_loss_n[_nt]} S(alpha,beta) points with "
-                f"significant scattering (up to E~{_lln_loss_emax[_nt]:.0f} meV transfer) "
-                f"underflow the ENDF symmetric law [S*exp(-beta/2) < 1e-90] and are "
-                f"written as 0 -- the high-energy phonon structure (e.g. optic modes) "
-                f"will be LOST on read-back. Set ilog=1 (LLN log storage) on Card 4 "
-                f"to preserve it. (Harmless at room T; corrupts cryogenic tapes.)",
+                f"WARNING: at T={tempr[_nt]:g} K, {_lln_loss_n[_nt]} S(alpha,beta) "
+                f"points with significant scattering (up to "
+                f"{_lln_loss_emax[_nt]:.0f} meV transfer) underflow the linear "
+                f"ilog=0 storage and are written as 0; set ilog=1 on Card 4.",
                 flush=True,
             )
 
@@ -679,138 +640,28 @@ def _asym_overflow_s(s_stored, be, beta_card, temp_k, smin):
             f"in linear (ilog=0) storage -- {remedy}") from None
 
 
-def _compute_endf_s(ssm, ssp, isym, ilog, ii, nbeta, j, nt, be, smin, small,
-                    beta_card=0.0, temp_k=0.0):
-    """Compute the ENDF S value for a given (beta, alpha, temperature) point.
+def _endf_s(s, be, isym, ilog, smin, beta_card=0.0, temp_k=0.0):
+    """The MF7/MT4 value written for S(alpha, beta) = ``s`` at scaled beta ``be``.
 
-    ``beta_card``/``temp_k`` are diagnostic context (the Card 9 beta value in
-    card units and the temperature in K) for the isym=1 overflow DeckError;
-    they do not affect any computed value.
+    isym 0 stores S*exp(-be/2), isym 1 S*exp(be/2) (``be`` is signed), isym 2
+    and 3 store S itself; ilog=1 stores the logarithm. ``beta_card`` and
+    ``temp_k`` only label the isym=1 overflow error.
+
+    Deliberate NJOY divergence: zero S is written as ln S = -999 at every
+    temperature. NJOY writes 0 in its isym=0 additional-temperature records
+    (leapr.f90:3482), which THERMR reads as S = exp(0) = 1.
     """
-    # DELIBERATE NJOY DIVERGENCE: the ln-S sentinel for zero-S points is
-    # -999 at EVERY temperature. NJOY's endout uses -999 in the
-    # first-temperature TAB1 and the isym=1/2/3 LIST branches, but its
-    # isym=0 additional-temperature LIST branch writes 0 instead
-    # (leapr.f90:3482) — and THERMR stores ilog values verbatim as ln(S)
-    # (thermr.f90:1754), so NJOY's 0 sentinel resurrects those zero-S
-    # points as S = exp(0) = 1 downstream. A demonstrable NJOY bug; the
-    # uniform -999 keeps S ~ 0 (below THERMR's sabflg = -225 floor).
-    tiny = -999.0
+    shift = (-be / 2.0, be / 2.0, 0.0, 0.0)[isym]
+    if ilog:
+        return sigfig(log(s) + shift, 7, 0) if s > 0.0 else -999.0
+    try:
+        v = s * exp(shift)
+    except OverflowError:
+        # isym=1 only: exp(be/2) overflows, the product usually does not.
+        v = _asym_overflow_s(s, be, beta_card, temp_k, smin)
+    v = sigfig(v, 7 if v >= 1.0e-9 else 6, 0)
+    return 0.0 if v < smin else v
 
-    if isym == 0:
-        # Symmetric S(a,b): store S*exp(-b/2)
-        i_beta = ii - 1  # 0-based
-        if ilog == 0:
-            s_val = ssm[i_beta, j, nt] * exp(-be / 2.0)
-            if s_val >= small:
-                s_val = sigfig(s_val, 7, 0)
-            else:
-                s_val = sigfig(s_val, 6, 0)
-        else:
-            if ssm[i_beta, j, nt] > 0.0:
-                s_val = log(ssm[i_beta, j, nt]) - be / 2.0
-                s_val = sigfig(s_val, 7, 0)
-            else:
-                s_val = tiny
-
-    elif isym == 1:
-        # Asymmetric S for +/- beta (cold hydrogen)
-        if ii < nbeta:
-            i_beta = nbeta - ii  # 0-based
-            if ilog == 0:
-                try:
-                    s_val = ssm[i_beta, j, nt] * exp(be / 2.0)
-                except OverflowError:
-                    # exp(be/2) alone exceeds float64 (be/2 > ~709.78; lat=1
-                    # at cryogenic T), but the PRODUCT usually does not:
-                    # evaluate it in log space (see _asym_overflow_s). Every
-                    # non-overflowing value takes the direct path above,
-                    # keeping existing tapes byte-identical.
-                    s_val = _asym_overflow_s(ssm[i_beta, j, nt], be,
-                                             beta_card, temp_k, smin)
-                if s_val >= small:
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = sigfig(s_val, 6, 0)
-            else:
-                if ssm[i_beta, j, nt] > 0.0:
-                    s_val = log(ssm[i_beta, j, nt]) + be / 2.0
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = tiny
-        else:
-            i_beta = ii - nbeta  # 0-based
-            if ilog == 0:
-                try:
-                    s_val = ssp[i_beta, j, nt] * exp(be / 2.0)
-                except OverflowError:
-                    # Same evaluation-order rescue as the -beta half above.
-                    s_val = _asym_overflow_s(ssp[i_beta, j, nt], be,
-                                             beta_card, temp_k, smin)
-                if s_val >= small:
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = sigfig(s_val, 6, 0)
-            else:
-                if ssp[i_beta, j, nt] > 0.0:
-                    s_val = log(ssp[i_beta, j, nt]) + be / 2.0
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = tiny
-
-    elif isym == 2:
-        # Asymmetric SS for -beta (isabt=1)
-        i_beta = ii - 1
-        if ilog == 0:
-            s_val = ssm[i_beta, j, nt]
-            if s_val >= small:
-                s_val = sigfig(s_val, 7, 0)
-            else:
-                s_val = sigfig(s_val, 6, 0)
-        else:
-            if ssm[i_beta, j, nt] > 0.0:
-                s_val = log(ssm[i_beta, j, nt])
-                s_val = sigfig(s_val, 7, 0)
-            else:
-                s_val = tiny
-
-    elif isym == 3:
-        # Asymmetric SS for +/- beta
-        if ii < nbeta:
-            i_beta = nbeta - ii
-            if ilog == 0:
-                s_val = ssm[i_beta, j, nt]
-                if s_val >= small:
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = sigfig(s_val, 6, 0)
-            else:
-                if ssm[i_beta, j, nt] > 0.0:
-                    s_val = log(ssm[i_beta, j, nt])
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = tiny
-        else:
-            i_beta = ii - nbeta
-            if ilog == 0:
-                s_val = ssp[i_beta, j, nt]
-                if s_val >= small:
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = sigfig(s_val, 6, 0)
-            else:
-                if ssp[i_beta, j, nt] > 0.0:
-                    s_val = log(ssp[i_beta, j, nt])
-                    s_val = sigfig(s_val, 7, 0)
-                else:
-                    s_val = tiny
-    else:
-        s_val = 0.0
-
-    if ilog == 0 and s_val < smin:
-        s_val = 0.0
-
-    return s_val
 
 def _coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta):
     """Shared MF7/MT2 coherent-elastic table assembly.
