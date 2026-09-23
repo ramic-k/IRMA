@@ -1,16 +1,7 @@
-"""Shared fixtures for the IRMA test suite.
-
-These tests pin pure-function behavior (no phonopy / NJOY needed) so the
-recently-changed, format-churn-prone surfaces (Bragg-edge grouping, multiphonon
-order policy, deck parsing) can't silently regress.
-"""
-# Pin native BLAS/OMP thread pools to 1 BEFORE numpy is imported anywhere in the
-# session (conftest.py is pytest's earliest import). The mode-1/2 engine forks
-# its worker pool; a multithreaded BLAS pool spun up first leaves idle pthreads
-# that can hold the glibc malloc lock at fork() and deadlock a worker (the
-# fork-after-threads hazard). Setting these first means OpenBLAS never creates
-# its pool, so every engine fork in the suite is safe regardless of import
-# order. setdefault preserves a deliberate environment override.
+"""Shared fixtures for the IRMA test suite."""
+# Pin BLAS/OMP pools to 1 before numpy loads (conftest.py is pytest's earliest
+# import): the engine forks workers, and a live BLAS pool can deadlock a forked
+# child. setdefault keeps a deliberate environment override.
 import os
 
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
@@ -50,20 +41,8 @@ def dense_bragg():
     return E, s_raw, emax
 
 
-# ---------------------------------------------------------------------------
-# GUI tests must never open a REAL modal dialog.
-#
-# The suite runs on a live display (the GUI tests are display-gated, not
-# headless), so a messagebox or file dialog from a test does not just slow
-# things down: it appears on the developer's screen and blocks the whole
-# run until someone clicks it. That happened twice while agents were
-# running suites in the background. Individual tests already stub the
-# dialogs they assert on; this is the backstop for every path that reaches
-# one incidentally, e.g. a validation error raised by a deliberately
-# incomplete form.
-#
-# A test that wants to assert on dialog behavior still patches it itself
-# (mock.patch.object(module, "messagebox")), which takes precedence.
+# Stub Tk modal dialogs so a GUI test on a live display never blocks on one; a
+# test that asserts on a dialog patches it itself, which takes precedence.
 @pytest.fixture(autouse=True)
 def _no_blocking_tk_dialogs(monkeypatch):
     """Make tkinter's modal dialogs non-blocking for the whole suite."""

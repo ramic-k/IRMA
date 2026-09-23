@@ -1,12 +1,7 @@
-"""MEF (LTHR=3) must apply the same directional Debye-Waller as CEF.
-
-elastic_mode=2 with inelastic_mode=1/2 used to fall back to the isotropic
-per-species DW even though the directional F-matrices were available,
-making the accepted MEF output physically inconsistent with the CEF path.
-This pins the ported branch with a synthetic anisotropic crystal: the
-plane-by-plane attenuation W_s(Ĝ) = (Ĝ·F_s·Ĝ)/(awr_s·kT) must reproduce a
-hand-evaluated value, differ between c-axis and basal-plane edges, and
-match the CEF builder's directional arithmetic exactly.
+"""MEF (LTHR=3) applies the same directional Debye-Waller as CEF. On a
+synthetic anisotropic crystal the plane-by-plane attenuation
+W_s(Ĝ) = (Ĝ·F_s·Ĝ)/(awr_s·kT) must reproduce a hand-evaluated value, differ
+between c-axis and basal-plane edges, and match the CEF builder exactly.
 """
 import numpy as np
 import pytest

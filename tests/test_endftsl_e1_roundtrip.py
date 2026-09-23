@@ -1,12 +1,7 @@
-"""Review E1 end-to-end gate: a generalized CEF LTHR=2 tape with npr > 1 must
-round-trip through the ENDFTSL converter back to the per-principal effective
-incoherent-elastic cross section.
-
-The generalized writer used to store the per-principal value raw while the
-converter divides every LTHR=2 SB by MT4 B(6)=npr (correct for the classic
-writer's molecular convention), silently under-predicting incoherent elastic
-by exactly npr. The writer now stores SB = per-principal x npr for both
-conventions, so the converter's single division is uniformly correct.
+"""A generalized CEF LTHR=2 tape with npr > 1 round-trips through the ENDFTSL
+converter back to the per-principal incoherent-elastic cross section: the
+writer stores SB = per-principal x npr and the converter divides by MT4
+B(6)=npr once.
 
 Imports the ENDFTSL python package from the sibling plugin tree; skipped when
 its dependencies (endf-parserpy through the reader) are unavailable.

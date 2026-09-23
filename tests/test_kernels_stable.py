@@ -1,12 +1,8 @@
-"""stable() buffer sizing and termination must match NJOY exactly.
-
-The buffer was previously capped at 100,000 points while the loop's only
-bounds are eps-convergence and NJOY's ndmax (>= 1,000,000): a physically
-reasonable weakly-diffusive deck (small c, large alpha) needs >100k points
-and crashed with IndexError. The termination is also pinned to NJOY's
-post-increment convention (stop at count >= ndmax-1, leapr.f90:1065), which
-keeps the last written index inside the buffer for either ndmax parity and
-keeps nsd odd for Simpson integration on the cap path.
+"""stable() buffer sizing and termination match NJOY: the buffer holds a
+weakly-diffusive deck that needs more than 100k points, and the loop stops
+by NJOY's post-increment convention (count >= ndmax-1, leapr.f90:1065),
+which keeps the last index inside the buffer for either ndmax parity and nsd
+odd for Simpson integration on the cap path.
 """
 import numpy as np
 
