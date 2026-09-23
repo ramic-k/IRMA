@@ -43,26 +43,33 @@ _DECK_SECONDARY = _DECK_PRINCIPAL.replace(
     "1.0 20.0 1 0 0/\n1 1. 16.0 4.0 1/")
 
 
-def _run_and_parse(deck_text):
+def _run_and_parse(deck_text, d):
+    """Run the deck in directory d: (tape path, parsed dict, text lines)."""
     from endf_parserpy import EndfParserPy
-    d = tempfile.mkdtemp()
     inp, out = os.path.join(d, "deck.input"), os.path.join(d, "deck.endf")
     with open(inp, "w") as f:
         f.write(deck_text)
     run_leapr(inp, out)
     p = EndfParserPy(ignore_number_mismatch=True, ignore_zero_mismatch=True,
                      ignore_varspec_mismatch=True)
-    return p.parsefile(out)
+    with open(out) as f:
+        lines = f.read().splitlines()
+    return out, p.parsefile(out), lines
 
 
 @pytest.fixture(scope="module")
-def principal_tape():
-    return _run_and_parse(_DECK_PRINCIPAL)
+def principal_run(tmp_path_factory):
+    return _run_and_parse(_DECK_PRINCIPAL, tmp_path_factory.mktemp("principal"))
 
 
 @pytest.fixture(scope="module")
-def secondary_tape():
-    return _run_and_parse(_DECK_SECONDARY)
+def principal_tape(principal_run):
+    return principal_run[1]
+
+
+@pytest.fixture(scope="module")
+def secondary_tape(tmp_path_factory):
+    return _run_and_parse(_DECK_SECONDARY, tmp_path_factory.mktemp("secondary"))[1]
 
 
 def test_mt4_b_array_principal(principal_tape):
@@ -103,8 +110,7 @@ def test_mt2_incoherent_elastic_fallback(principal_tape):
     assert mt2["LTHR"] == 2
     # SB = bound xs * npr = spr*((1+awr)/awr)^2 = 20*(2/1)^2 = 80 b
     assert mt2["SB"] == pytest.approx(80.0, rel=5e-7)
-    w = mt2["Wp"] if "Wp" in mt2 else mt2["W"]
-    wvals = [w[k] for k in sorted(w)] if isinstance(w, dict) else list(w)
+    wvals = mt2["Wp"]
     assert len(wvals) == 2 and all(v > 0 for v in wvals)
 
 
@@ -164,22 +170,22 @@ def _audit_directory(lines):
     return out
 
 
-def test_mf1_directory_counts_are_exact():
+def test_mf1_directory_counts_are_exact(principal_run):
     """Every MF1/MT451 directory NCx must equal the section's actual record
     count (the NJOY closed-form estimates were wrong for this writer's line
     wrapping and for the iel=10 LTHR=2/3 and grouped-elastic branches)."""
-    lines = _read_tape_lines(_DECK_PRINCIPAL)
+    lines = principal_run[2]
     entries = _audit_directory(lines)
     assert {(m, t) for m, t, _, _ in entries} == {(1, 451), (7, 2), (7, 4)}
     for mfx, mtx, ncx, actual in entries:
         assert ncx == actual, f"MF{mfx}/MT{mtx}: NCx={ncx} actual={actual}"
 
 
-def test_mf1_nwd_counts_all_written_text_records():
+def test_mf1_nwd_counts_all_written_text_records(principal_run):
     """The 5 structured header text records are always emitted (blank-padded
     for short decks): NWD must never be below 5, and MF1's record count must
     be 4 CONTs + NWD + NXC."""
-    lines = _read_tape_lines(_DECK_PRINCIPAL)   # deck has 1 comment card
+    lines = principal_run[2]                    # deck has 1 comment card
     i0 = next(i for i, ln in enumerate(lines)
               if len(ln) >= 75 and ln[70:72] == " 1" and ln[72:75] == "451")
     hdr4 = lines[i0 + 3]
@@ -204,7 +210,7 @@ def test_mf1_header_fields_land_in_spec_columns():
     """The header comment cards' leading blank is column 1 of ZSYMAM; the
     writer must preserve it (rstrip, not strip), or ZSYMAM/ALAB/EDATE/AUTH
     and the card-2 REF/DDATE/RDATE/ENDATE all shift one column left and lose
-    a character at each field boundary (QA finding ENG-2)."""
+    a character at each field boundary."""
     lines = _read_tape_lines(_DECK_MF1_HEADER)
     i0 = next(i for i, ln in enumerate(lines)
               if len(ln) >= 75 and ln[70:72] == " 1" and ln[72:75] == "451")
@@ -222,16 +228,10 @@ def test_mf1_header_fields_land_in_spec_columns():
     assert rec2[55:63] == "20170917"                         # ENDATE
 
 
-def test_tape_contains_no_carriage_returns():
-    """Tapes must be LF-only on every platform (QA finding CI-1): a CRLF
-    tape written on Windows is no longer byte-identical to the NJOY
-    references or to tapes written elsewhere."""
-    d = tempfile.mkdtemp()
-    inp, out = os.path.join(d, "deck.input"), os.path.join(d, "deck.endf")
-    with open(inp, "w") as f:
-        f.write(_DECK_PRINCIPAL)
-    run_leapr(inp, out)
-    with open(out, "rb") as f:
+def test_tape_contains_no_carriage_returns(principal_run):
+    """Tapes must be LF-only on every platform: a CRLF tape written on
+    Windows is no longer byte-identical to the NJOY references."""
+    with open(principal_run[0], "rb") as f:
         data = f.read()
     assert data.count(b"\n") > 50               # sanity: a real multi-line tape
     assert b"\r" not in data
