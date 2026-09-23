@@ -3,15 +3,10 @@
 write_endf_output assembles the tape via endf-parserpy. The MF7/MT2 elastic
 section comes from one of the builders: the classic LEAPR coherent table
 (_build_coherent_elastic, iel=1-6), the generalized CEF/MEF builders
-(iel=10), or the inline incoherent-elastic branch (iel<0). MF7/MT4 stores
+(iel=10), or the incoherent-elastic builder (iel<0). MF7/MT4 stores
 the symmetric law S*exp(-beta/2) via _endf_s (isym/ilog variants).
 
-Terminology: "CEF" throughout this module (and the ``_build_cef_*`` helper
-names, kept to avoid an API/identifier break) is the single-channel elastic
-format now called SEF in the docs and GUI. It was named the current ENDF
-format (CEF) in Ramic et al., NIM-A 1027 (2022) 166227, when the mixed
-elastic format (MEF) was introduced; only the user-facing label changed.
-Printed summaries and error messages use SEF.
+CEF in identifiers is the single-channel elastic format the docs and GUI call SEF.
 """
 
 import sys
@@ -72,17 +67,11 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
                       bragg, nedge, isym, ilog, smin,
                       iint=0, comments=None, crystal_info=None):
     """Write ENDF-6 output file using endf-parserpy."""
-    # iint selects the MF7/MT4 S(alpha,beta) interpolation law for BOTH the
-    # alpha (per-beta TAB1) and beta (TAB2) tables: 0 -> log-lin (ENDF INT=4,
-    # the classic/NJOY-faithful default); 1 -> lin-lin (INT=2). Coherent
-    # one-phonon laws have structural near-zeros that log interpolation floors;
-    # lin-lin preserves them. INT-aware THERMR honors whichever is written.
+    # MF7/MT4 interpolation for both the alpha and beta tables: iint 0 ->
+    # log-lin (INT=4, NJOY), 1 -> lin-lin (INT=2).
     coh_int = 2 if iint == 1 else 4
 
-    # Compute bound scattering cross section (sb). The secondary-scatterer
-    # bound XS (sbs) and the mixed-moderator SAB merge live in engine.py
-    # (it recomputes sb/sbs/srat before calling this writer), so no sbs is
-    # needed here.
+    # Bound cross section of the principal scatterer.
     sb = spr * ((1.0 + awr) / awr)**2
 
     # Compute Debye-Waller integral for ENDF output
@@ -309,45 +298,14 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
     # ---- MF7/MT2 (elastic) ----
     mf7mt2 = None
     if iel == 10:
-        # Generalized elastic output (CEF or MEF). crystal_info is mandatory
-        # here: without it the elif chain below would fall through to the
-        # built-in coherent-elastic builder (10 >= 1) and silently emit a
-        # wrong MT2 from the hardcoded-material arrays. The engine always
-        # supplies crystal_info for iel==10; guard the module-level API so a
-        # direct caller fails fast instead of producing a corrupt section.
-        if crystal_info is None:
-            raise ValueError(
-                "iel=10 (generalized elastic) requires crystal_info; "
-                "got None. The built-in coherent-elastic builder cannot "
-                "represent a generalized (iel=10) material.")
         mf7mt2 = _build_generalized_elastic(
             mat, za, awr, bragg, nedge, ntempr, tempr,
             crystal_info, dwpix_out, sb, npr=npr)
-
     elif iel < 0:
-        # Incoherent elastic (LTHR=2)
-        mf7mt2 = {}
-        mf7mt2['MAT'] = mat
-        mf7mt2['MF'] = 7
-        mf7mt2['MT'] = 2
-        mf7mt2['ZA'] = za
-        mf7mt2['AWR'] = awr
-        mf7mt2['LTHR'] = 2  # incoherent elastic
-
-        ndw = max(ntempr, 2)
-        mf7mt2['SB'] = sb * npr
-        mf7mt2['NBT'] = [ndw]
-        mf7mt2['INT'] = [2]  # linear-linear interpolation
-        mf7mt2['Tint'] = []
-        mf7mt2['Wp'] = []
-
-        for i in range(ndw):
-            idx_t = min(i, ntempr - 1)
-            mf7mt2['Tint'].append(tempr[idx_t])
-            mf7mt2['Wp'].append(sigfig(dwpix_out[idx_t], 7, 0))
-
+        mf7mt2 = _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out,
+                                       sb, npr)
     elif iel >= 1:
-        # Coherent elastic (standard hardcoded materials)
+        # Built-in coherent elastic (iel=1-6)
         mf7mt2 = _build_coherent_elastic(mat, za, awr, bragg, nedge, ntempr,
                                           tempr, dwpix_out, dwp1_out, nss, b7)
 
@@ -475,17 +433,10 @@ def _coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta):
             jmax = j + 1
             suml = total_sum
 
-    # No edge carries a positive contribution (nedge==0, or every edge thinned
-    # away because total_sum stayed <= 0). There is no Bragg peak to tabulate;
-    # building the TAB1 below would index an empty energy list (energies[-1]).
-    # A valid coherent-elastic section needs at least one surviving edge, so
-    # fail fast rather than emit a degenerate/empty MT2.
     if jmax == 0:
         raise ValueError(
             "coherent elastic: no Bragg edge with a positive contribution "
-            f"(nedge={nedge}) — there is no coherent-elastic peak to "
-            "tabulate. Check Card 6d coherent lengths / the lattice, or "
-            "omit the elastic section.")
+            f"(nedge={nedge}); check the Card 6d coherent lengths and the lattice")
 
     # First temperature: TAB1 with energies and cumulative S.
     out['NP'] = jmax
@@ -536,9 +487,9 @@ def _coherent_s_table_or_grouped(bragg, nedge, ntempr, tempr, edge_delta,
     enables it (ENDF-102 7.2.2), else the full set. Shared by the plain coherent
     path AND the extinction splice, so grouping composes with extinction (the
     extinction path feeds the grouped edges as its above-cutoff piece)."""
-    group_bpd = int((crystal_info or {}).get('coh_edge_group_bins_per_decade', 0) or 0)
+    group_bpd = int(crystal_info.get('coh_edge_group_bins_per_decade', 0))
     if group_bpd > 0:
-        group_thr = float((crystal_info or {}).get('coh_edge_group_threshold_ev', 1.0) or 1.0)
+        group_thr = float(crystal_info.get('coh_edge_group_threshold_ev', 1.0))
         return _grouped_coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta,
                                          group_thr, group_bpd)
     return _coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta)
@@ -548,24 +499,12 @@ def _coherent_extinction_s_table(kin_table, sigma_fn, edge_E, E_active,
                                  ntempr, tempr, tol):
     """Extinction-corrected MF7/MT2 coherent-elastic table (INT=1 histogram).
 
-    An extinction-corrected sigma_coh(E) is energy-dependent WITHIN a Bragg
-    interval (the per-plane factor y depends on the incident wavelength), but only
-    BELOW the cutoff ``E_active`` -- above it y->1 and sigma_ext == sigma_kin. We
-    therefore keep the standard ideal-crystal histogram structure and only refine
-    the low-energy region:
-
-      * ABOVE ``E_active``: reuse the thinned kinematic edges (``kin_table``)
-        verbatim -- same energy grid as the no-extinction tape;
-      * BELOW ``E_active``: one node per Bragg edge plus tolerance-adaptive
-        histogram nodes wherever the STEP value of S=E*sigma jumps by more than
-        ``tol`` relatively across a smooth interval.
-
-    The result is a single-region **histogram (INT=1)** cumulative-S table, the
-    standard MF7/MT2 form. This is deliberate: a processor reads MF7/MT2 as a step
-    function regardless of the INT flag (NJOY THERMR's ``sigcoh`` reads ``np``/``nr``
-    but never the INT array, and reconstructs sigma = S(E_i<=E)/E). Tabulating for
-    that step -- rather than a lin-lin curve that gets read as a staircase anyway --
-    is both smaller and more faithful, and needs no INT-honoring patch.
+    Extinction makes sigma_coh depend on E within a Bragg interval, but only
+    below ``E_active``. Below it the table has one node per Bragg edge plus
+    adaptive nodes wherever S = E*sigma changes by more than ``tol``; above it
+    the thinned kinematic edges of ``kin_table`` are reused. The table is a
+    histogram because THERMR reads MF7/MT2 as a step function whatever the INT
+    flag.
     """
     kst = kin_table['S_T0_table']
     Ek, Sk = kst['Eint'], kst['S']          # thinned kinematic edges (sigfig'd)
@@ -579,12 +518,8 @@ def _coherent_extinction_s_table(kin_table, sigma_fn, edge_E, E_active,
     # smooth extinction rise is refined to tol using PRE-jump right endpoints, so the
     # refinement never "chases" a jump and every node keeps a well-defined side.
     #
-    # The smooth interior is refined at EVERY temperature and the node energies are
-    # UNIONed. Extinction strength falls as temperature rises (the Debye-Waller factor
-    # shrinks the effective |F|^2), so a grid resolved only at the reference T0 could
-    # under-sample a colder, sharper temperature. E*sigma is monotone within each
-    # inter-edge interval, so the union stays tol-bounded for every temperature and,
-    # when T0 is the coldest (the usual case), reduces to exactly the T0 grid.
+    # The interior is refined at every temperature and the nodes are united, so
+    # a colder (sharper) temperature is resolved as well as T0.
     edges_below = sorted(e for e in set(edge_E) if e < top)
     node_E = set(edges_below)                # Bragg edges are nodes at every temperature
     bounds = edges_below + [top]
@@ -608,17 +543,10 @@ def _coherent_extinction_s_table(kin_table, sigma_fn, edge_E, E_active,
                     stack.append((m, hi))
     node_S = {e: e * sigma_fn(e, 0) for e in node_E}    # T0 cumulative-S at every node
 
-    # assemble: below-cutoff fine nodes (raw S, NOT re-evaluated at rounded E), then
-    # the kinematic edges verbatim. Dedup to strictly ascending 7-sig-fig energies; on
-    # a collision the later (larger, post-jump) cumulative-S wins so jumps survive.
-    #
-    # Splice continuity: the below-cutoff nodes carry sigma_fn, which returns the FULL
-    # kinematic cumulative once E >= E_active, while the appended edges (Ek/Sk) may be
-    # edge-GROUPED above the grouping threshold. These never disagree at the seam
-    # because the extinction cutoff (x ~ lambda^2 -> 0 above ~0.1 eV) sits well below
-    # the grouping threshold (default 1 eV), so the edges are still ungrouped -- i.e.
-    # equal to the full cumulative -- at and below `top`. Extinction and grouping act
-    # on disjoint energy ranges by construction.
+    # Assemble: the fine nodes below the cutoff, then the kinematic edges. Dedup
+    # to ascending 7-figure energies; on a collision the post-jump value wins.
+    # Assumes E_active is below the grouping threshold (true for the 1 eV
+    # default), so the edges at the seam are ungrouped.
     energies, s0, src = [], [], []           # src: raw energy (below) | ('kin', qi)
     for e in sorted(node_S):
         es = sigfig(e, 7, 0)
@@ -729,14 +657,9 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
             # Incoherent approximation (Eq 25)
             # Scale SB by (σ_coh + σ_inc) / σ_inc
             if sigma_inc_p <= 0.0:
-                # sigma_coh <= sigma_inc and sigma_inc == 0 means the
-                # principal scatterer has NO elastic channel at all.
                 raise ValueError(
-                    "SEF single-atom: principal scatterer has zero "
-                    "coherent AND incoherent elastic cross sections "
-                    "(b_coh=0, sigma_inc=0 on Card 6d) — there is no "
-                    "elastic law to represent; remove the elastic "
-                    "section or fix the Card 6d cross sections.")
+                    "SEF single-atom: sigma_coh and sigma_inc are both 0 on "
+                    "Card 6d; no elastic law to write")
             scale = (sigma_coh_p + sigma_inc_p) / sigma_inc_p
             print(f"  SEF single atom: incoherent approx, "
                   f"SB scale={scale:.4f}", flush=True)
@@ -762,15 +685,10 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
         sigma_inc_dc = dc_at['sigma_inc']
 
         if sigma_inc_p <= 0.0:
-            # Eq 26 redistributes the DC atom's incoherent strength onto
-            # this atom's incoherent channel — impossible without one.
             raise ValueError(
-                "SEF polyatomic: the principal scatterer has "
-                "sigma_inc=0 on Card 6d but is not the designated "
-                "coherent atom, so the Eq. 26 incoherent redistribution "
-                "is undefined. Use elastic_mode=2 (mixed elastic) or "
-                "give the principal scatterer its physical incoherent "
-                "cross section.")
+                "SEF polyatomic: the principal has sigma_inc=0 but is not the "
+                "designated-coherent atom, so the Eq. 26 redistribution is "
+                "undefined; use elastic_mode=2")
         # Redistribution factor: [1 + f_DC/(1-f_DC) × σ_inc_DC/σ_inc_i]
         redist = 1.0 + (f_dc / (1.0 - f_dc)) * (sigma_inc_dc / sigma_inc_p)
 
@@ -811,52 +729,20 @@ def _report_grouping_fidelity(E, delta, out_E, out_S, ntempr, tempr):
 
 def _grouped_coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta_fn,
                               threshold_ev, bins_per_decade):
-    """Build the coherent-elastic cumulative-S table with high-energy Bragg-edge
-    GROUPING, per ENDF-102 sec 7.2.2.
+    """Coherent-elastic cumulative-S table with Bragg edges grouped above
+    ``threshold_ev`` (ENDF-102 sec 7.2.2).
 
-    WHY: above ~1 eV the Bragg edges of some materials/space groups become
-    extremely dense and each "stair step" of S(E,T) is tiny. ENDF-102 sec 7.2.2
-    permits grouping those edges into fewer steps "while still preserving the
-    average value of the cross section". This collapses thousands of negligible
-    edges into a handful while keeping the cumulative S -- hence the total bound
-    cross section and the high-E 1/E tail -- exact at every group boundary and
-    every temperature.
-
-    bins_per_decade: resolution of the grouping above ``threshold_ev``. The
-    energy axis above the threshold is split into geometric (log-uniform) bins,
-    ``bins_per_decade`` of them per factor-of-10 in energy (bin width ratio
-    10**(1/bins_per_decade)). All edges in a bin are merged into ONE step placed
-    at the structure-factor-weighted log-mean energy
-    ``ln(E_rep) = sum_i d_i ln(E_i) / sum_i d_i`` -- the placement that EXACTLY
-    preserves that bin's 1/E cross-section integral at the reference
-    temperature T0.
-
-    FIDELITY AT T > T0: the cumulative S at every group boundary stays exact at
-    EVERY temperature (the per-T increments are accumulated in full), so the
-    total bound cross section and the high-E 1/E tail are exact. Only the
-    intra-bin 1/E SHAPE drifts at T != T0, because E_rep is fixed using the T0
-    structure-factor weights while each edge's Debye-Waller attenuation is
-    T-dependent. That drift is bounded only by the per-temperature relative
-    errors that ``_report_grouping_fidelity`` always prints; for materials with
-    strongly T-dependent Debye-Waller factors, raise ``bins_per_decade`` (finer
-    grouping) if those numbers are too large.
-    The number of grouped steps above the threshold is
-    ``~ bins_per_decade * log10(emax/threshold)`` regardless of how many raw
-    edges the space group produced (e.g. 20/decade over 1->emax=5 eV keeps ~14).
-    Larger bins_per_decade -> finer grouping (more steps, closer to ungrouped).
-
-    Edges at or below ``threshold_ev`` are kept individually (unchanged). emax
-    is taken from the actual data (the flat endpoint bragg[-1][0]) so the table
-    stays defined up to the real upper limit.
+    Above the threshold the edges in each log-uniform bin (``bins_per_decade``
+    per decade) become one step at the T0-weighted log-mean energy
+    ``ln(E_rep) = sum_i d_i ln(E_i) / sum_i d_i``, which keeps the bin's 1/E
+    integral exact at T0. The cumulative S is exact at every group boundary
+    and every temperature; the shape inside a bin drifts at T != T0 (printed
+    by ``_report_grouping_fidelity``; raise ``bins_per_decade`` if needed).
+    Edges at or below the threshold are kept.
     """
     E = np.array([bragg[j][0] for j in range(nedge)], dtype=float)
-    # An empty edge set has no upper energy (E[-1]) and no coherent-elastic
-    # peak to group; mirror _coherent_s_table and fail fast.
-    if nedge == 0 or E.size == 0:
-        raise ValueError(
-            "coherent elastic: no Bragg edge to group (nedge=0) — there is "
-            "no coherent-elastic peak to tabulate. Check Card 6d coherent "
-            "lengths / the lattice, or omit the elastic section.")
+    if nedge == 0:
+        raise ValueError("coherent elastic: no Bragg edge to group")
     emax = float(E[-1])
     # Per-edge DW-weighted increments at each edge's OWN energy, all temperatures.
     delta = np.array(
@@ -934,7 +820,7 @@ def _grouped_coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta_fn,
     return table
 
 def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
-                         dwpix_out, scale, crystal_info=None):
+                         dwpix_out, scale, crystal_info):
     """Build LTHR=1 (coherent elastic) section with a multiplicative scale.
 
     The scale factor accounts for:
@@ -958,24 +844,6 @@ def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
     #     to the scalar isotropic form; arithmetic shared with the MEF builder
     #     via irma.core.elastic_dw. ---
     species_dw = resolve_species_dw(crystal_info, tempr, ntempr)
-    use_dir_dw = species_dw is not None and species_dw.use_dir_dw
-    use_ps = species_dw is not None and species_dw.use_ps
-
-    if use_dir_dw:
-        atom_types, awr_sp = species_dw.atom_types, species_dw.awr_sp
-        print(f"    Per-species directional DW (inelastic_mode=1/2) at T={tempr[0]:.2f}K:", flush=True)
-        for si, at in enumerate(atom_types):
-            F0 = species_dw.F_species_per_temp[0][si]
-            f_ab = 0.5 * (F0[0, 0] + F0[1, 1])
-            f_c  = F0[2, 2]
-            W_ab = f_ab / (awr_sp[si] * tempr[0] * BK)
-            W_c  = f_c  / (awr_sp[si] * tempr[0] * BK)
-            print(f"      {at['Z']}-{at['A']}: W_ab={W_ab:.6f}, W_c={W_c:.6f} 1/eV", flush=True)
-    elif use_ps:
-        print(f"    Per-species DW (ENDF W, 1/eV) at T={tempr[0]:.2f}K:", flush=True)
-        for si, at in enumerate(species_dw.atom_types):
-            print(f"      {at['Z']}-{at['A']}: W={species_dw.W_ps[si][0]:.6f}", flush=True)
-
     _edge_delta = make_edge_delta(bragg, dwpix_out, scale=scale,
                                   species_dw=species_dw, tempr=tempr)
 
@@ -990,24 +858,14 @@ def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
     mf7mt2['T0'] = tempr[0]
     mf7mt2['LT'] = ntempr - 1
 
-    # Optional crystalline EXTINCTION correction (sample-specific). When enabled,
-    # the coherent Bragg-edge structure is energy-dependent only BELOW a cutoff
-    # E_active (above it extinction has died out and sigma_ext == sigma_kin). We
-    # keep the standard histogram (INT=1) cumulative-S form: reuse the thinned
-    # kinematic edges above E_active and splice in fine adaptive histogram nodes
-    # below it.
-    ext_cfg = (crystal_info or {}).get('coherent_extinction')
+    # Optional crystalline extinction (see _coherent_extinction_s_table).
+    ext_cfg = crystal_info.get('coherent_extinction')
     if ext_cfg:
         from irma.core.elastic_extinction import make_sigma_coh_ext
         crystal = crystal_info['crystal']
         sigma_fn, edge_E, E_active = make_sigma_coh_ext(
             bragg, crystal_info['bragg_dir_terms'], species_dw, dwpix_out,
             crystal.volume, crystal.n_atoms, scale, ext_cfg, tempr)
-        # The spliced-in above-cutoff edges compose with edge GROUPING: extinction
-        # acts only below ~0.1 eV and the grouping threshold is >= 1 eV, so the two
-        # are disjoint — fine extinction nodes below the cutoff, GROUPED edges above
-        # the threshold (the extinction tape's high-E region then matches the
-        # grouped no-extinction tape).
         kin_table = _coherent_s_table_or_grouped(
             bragg, nedge, ntempr, tempr, _edge_delta, crystal_info)
         mf7mt2.update(_coherent_extinction_s_table(
@@ -1015,8 +873,6 @@ def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
             float(ext_cfg.get('rmse_tol', 1e-3))))
         return mf7mt2
 
-    # No extinction: the plain Bragg edges, GROUPED above the threshold if Card 6b asks
-    # (ENDF-102 7.2.2). Same helper the extinction splice uses.
     mf7mt2.update(_coherent_s_table_or_grouped(
         bragg, nedge, ntempr, tempr, _edge_delta, crystal_info))
     return mf7mt2
@@ -1025,15 +881,9 @@ def _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out, sb_value,
                           npr=1):
     """Build LTHR=2 (incoherent elastic) section for CEF non-DC atom.
 
-    sb_value is the effective PER-PRINCIPAL bound cross section (barns), which
-    may include the redistribution factor from Eq 26. The tape stores
-    ``SB = sb_value * npr`` -- the same molecular convention the classic
-    (iel<0) writer has always used -- so a consumer recovers the
-    per-principal value by dividing once by MT4's B(6)=npr regardless of
-    which writer produced the tape (pre-release review E1: the generalized
-    writer used to store the per-principal value raw, and the ENDFTSL
-    converter's uniform division then under-predicted incoherent elastic by
-    exactly npr for generalized CEF tapes with npr > 1).
+    sb_value is the per-principal bound cross section (barns), including any
+    Eq 26 redistribution. The tape stores SB = sb_value*npr, the molecular
+    convention of every IRMA writer (npr is MT4's B(6)).
     """
     mf7mt2 = {}
     mf7mt2['MAT'] = mat
@@ -1044,12 +894,8 @@ def _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out, sb_value,
     mf7mt2['LTHR'] = 2  # incoherent elastic
 
     ndw = max(ntempr, 2)
-    # FORMAT NOTE (deliberate NJOY divergence): NJOY stores this SB raw
-    # (leapr.f90:3169, no sigfig) and its adaptive formatter renders it
-    # with up to 9 significant digits in no-exponent form; IRMA renders
-    # every value with the uniform 7-significant-figure convention. The
-    # values agree to 7 figures — byte comparisons against NJOY tapes
-    # must compare this one record numerically.
+    # NJOY writes SB unrounded (up to 9 digits); IRMA rounds to 7 significant
+    # figures, so compare this record numerically.
     mf7mt2['SB'] = sb_value * npr
     mf7mt2['NBT'] = [ndw]
     mf7mt2['INT'] = [2]  # linear-linear interpolation
@@ -1090,80 +936,14 @@ def _build_mef_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
     represent exactly; the full anisotropy is carried instead in the coherent
     (per-plane W_s(Ĝ) above) and inelastic channels.
     """
-    principal_at = crystal_info['atom_types'][crystal_info['principal_atom_idx']]
-    sigma_inc_p = principal_at['sigma_inc']  # barns
-
-    mf7mt2 = {}
-    mf7mt2['MAT'] = mat
-    mf7mt2['MF'] = 7
-    mf7mt2['MT'] = 2
-    mf7mt2['ZA'] = za
-    mf7mt2['AWR'] = awr
+    sigma_inc_p = crystal_info['atom_types'][crystal_info['principal_atom_idx']]['sigma_inc']
+    mf7mt2 = _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
+                                 dwpix_out, 1.0, crystal_info=crystal_info)
+    inc = _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out,
+                                sigma_inc_p, npr)
     mf7mt2['LTHR'] = 3  # mixed elastic
-
-    # --- Resolve directional/per-species DW (same detection as CEF), shared
-    #     via irma.core.elastic_dw; MEF carries no structure-factor scale. ---
-    species_dw = resolve_species_dw(crystal_info, tempr, ntempr)
-    use_dir_dw = species_dw is not None and species_dw.use_dir_dw
-
-    if use_dir_dw:
-        atom_types, awr_sp = species_dw.atom_types, species_dw.awr_sp
-        print(f"    MEF per-species directional DW (inelastic_mode=1/2) "
-              f"at T={tempr[0]:.2f}K:", flush=True)
-        for si, at in enumerate(atom_types):
-            F0 = species_dw.F_species_per_temp[0][si]
-            f_ab = 0.5 * (F0[0, 0] + F0[1, 1])
-            f_c = F0[2, 2]
-            W_ab = f_ab / (awr_sp[si] * tempr[0] * BK)
-            W_c = f_c / (awr_sp[si] * tempr[0] * BK)
-            print(f"      {at['Z']}-{at['A']}: W_ab={W_ab:.6f}, W_c={W_c:.6f} 1/eV", flush=True)
-
-    _edge_delta = make_edge_delta(bragg, dwpix_out, scale=1.0,
-                                  species_dw=species_dw, tempr=tempr)
-
-    # --- Coherent elastic part (Bragg edges, per-atom average) ---
-    mf7mt2['T0'] = tempr[0]
-    mf7mt2['LT'] = ntempr - 1
-
-    ext_cfg = (crystal_info or {}).get('coherent_extinction')
-    if ext_cfg:
-        # Crystalline extinction on the per-atom coherent Bragg edges (scale=1.0, the
-        # same per-atom normalization as the kinematic MEF edges). Reuses the CEF
-        # machinery; composes with grouping (the above-cutoff piece is the grouped
-        # set). The incoherent part below is unaffected.
-        from irma.core.elastic_extinction import make_sigma_coh_ext
-        crystal = crystal_info['crystal']
-        sigma_fn, edge_E, E_active = make_sigma_coh_ext(
-            bragg, crystal_info['bragg_dir_terms'], species_dw, dwpix_out,
-            crystal.volume, crystal.n_atoms, 1.0, ext_cfg, tempr)
-        kin_table = _coherent_s_table_or_grouped(
-            bragg, nedge, ntempr, tempr, _edge_delta, crystal_info)
-        mf7mt2.update(_coherent_extinction_s_table(
-            kin_table, sigma_fn, edge_E, E_active, ntempr, tempr,
-            float(ext_cfg.get('rmse_tol', 1e-3))))
-    else:
-        # Plain coherent Bragg edges, GROUPED above the threshold if Card 6b asks.
-        mf7mt2.update(_coherent_s_table_or_grouped(
-            bragg, nedge, ntempr, tempr, _edge_delta, crystal_info))
-
-    # --- Incoherent elastic part ---
-    # Uses same key names as LTHR=2 (SB, NBT, INT, Tint, Wp)
-    # endf-parserpy handles LTHR=3 natively with this layout
-    ndw = max(ntempr, 2)
-    # Molecular convention: per-principal sigma_inc x npr, matching the
-    # classic (iel<0) and SEF/CEF incoherent writers (see docstring).
-    mf7mt2['SB'] = sigma_inc_p * npr
-    mf7mt2['NBT'] = [ndw]
-    mf7mt2['INT'] = [2]
-    mf7mt2['Tint'] = []
-    mf7mt2['Wp'] = []
-
-    for i in range(ndw):
-        idx_t = min(i, ntempr - 1)
-        mf7mt2['Tint'].append(tempr[idx_t])
-        mf7mt2['Wp'].append(sigfig(dwpix_out[idx_t], 7, 0))
-
+    for key in ('SB', 'NBT', 'INT', 'Tint', 'Wp'):
+        mf7mt2[key] = inc[key]
     print(f"  MEF: LTHR=3, {mf7mt2['NP']} Bragg edges, σ_inc={sigma_inc_p:.4f} b "
           f"(x npr={npr} on tape)", flush=True)
-
     return mf7mt2
