@@ -92,6 +92,7 @@ data, identical to the [spectra](spectra.md) and ENDF workflows:
 |-----|---------|
 | `phonopy_yaml` | Path to the phonopy calculation (eigenvectors come from here; mode 2 needs it). |
 | `born` | Optional BORN file for the non-analytical correction (polar crystals). |
+| `force_constants` / `force_sets` | Optional explicit FORCE_CONSTANTS / FORCE_SETS file; by default they are embedded in the phonopy.yaml or found next to it. Embedded force constants win (phonopy's rule; a warning names the unused file). The file used is hashed into the data file's provenance. |
 | `mesh` | Phonon mesh, e.g. `[40, 40, 40]`. |
 | `temperature_K` | The single temperature this data is exported at (default `296.0`). |
 | `scatterers` | One entry per chemical species in the structure (see below). |

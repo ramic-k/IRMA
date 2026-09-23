@@ -56,6 +56,19 @@ class PrincipalGroup:
     sigma_inc_b: float
 
 
+def _force_constants_file_used(mat):
+    """The force-constants or force-sets file the model is built from, or
+    None when the phonopy.yaml embeds its force constants (those win)."""
+    from irma.core.phonopy_io import (
+        phonopy_yaml_embeds_force_constants, resolve_force_constants_source)
+    if phonopy_yaml_embeds_force_constants(mat.phonopy_yaml):
+        return None
+    if mat.force_constants or mat.force_sets:
+        return mat.force_constants or mat.force_sets
+    src = resolve_force_constants_source(mat.phonopy_yaml)
+    return src.get("force_constants_filename") or src.get("force_sets_filename")
+
+
 def _load_mesh_and_freq_max_eV(mat):
     """Load the phonopy mesh the engine resolves (same force constants + NAC)
     and return ``(freq_max_eV, mesh_data)``.
@@ -67,7 +80,9 @@ def _load_mesh_and_freq_max_eV(mat):
     an unstable model silently."""
     from irma.core.phonopy_io import load_phonopy_mesh, warn_dynamic_instability
     mesh_data = load_phonopy_mesh(
-        str(mat.phonopy_yaml), tuple(int(m) for m in mat.mesh), born_path=mat.born)
+        str(mat.phonopy_yaml), tuple(int(m) for m in mat.mesh), born_path=mat.born,
+        force_constants_filename=mat.force_constants,
+        force_sets_filename=mat.force_sets)
     warn_dynamic_instability(mesh_data.frequencies_ev, mesh_data.qpoints)
     freq_max = float(np.max(np.asarray(mesh_data.frequencies_ev, dtype=float)))
     return freq_max, mesh_data
@@ -345,6 +360,8 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         phonopy_yaml_path=str(mat.phonopy_yaml),
         mesh_dim=tuple(mat.mesh),
         born_path=mat.born,
+        force_constants=mat.force_constants,
+        force_sets=mat.force_sets,
         num_jobs=resolve_jobs(cfg.jobs),
         controls=controls,
         inelastic_mode=cfg.inelastic_mode,
@@ -371,6 +388,7 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         min_phonon_energy_meV=cfg.min_phonon_energy_meV,
         inelastic_mode=cfg.inelastic_mode,
         born=mat.born,
+        force_constants=_force_constants_file_used(mat),
         extra={
             "principal_symbol": group.symbol,
             "principal_group_index": str(group_index),

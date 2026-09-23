@@ -195,6 +195,8 @@ def run_noncubic_standalone_sab(
     phonopy_yaml_path: str,
     mesh_dim: list[int] | tuple[int, int, int],
     born_path: str | None = None,
+    force_constants: str | None = None,
+    force_sets: str | None = None,
     num_jobs: int,
     inelastic_mode: int = 1,
     represented_principal_site_count: int | None = None,
@@ -223,16 +225,24 @@ def run_noncubic_standalone_sab(
     same model/mesh (the MT2 loader's ``PhonopyMeshData.phonopy_mesh_object``);
     forwarded to ``build_compute_context`` so a context-cache MISS skips the
     duplicate full-mesh eigensolve.
+
+    ``force_constants`` / ``force_sets``: explicit files; force constants
+    embedded in the yaml still win (phonopy's rule, with a warning).
     """
     phonopy_yaml = Path(phonopy_yaml_path).resolve()
-    # hdf5 > text FORCE_CONSTANTS > FORCE_SETS next to the yaml, or embedded
-    # in the yaml itself ({} -> phonopy reads them from the yaml); raises if
-    # no source exists. Resolved here so the failure is immediate and the
-    # context cache key reflects the actual model source.
-    from irma.core.phonopy_io import resolve_force_constants_source
-    fc_kwargs = resolve_force_constants_source(phonopy_yaml)
-    force_constants = fc_kwargs.get("force_constants_filename")
-    force_sets = fc_kwargs.get("force_sets_filename")
+    if force_constants is None and force_sets is None:
+        # hdf5 > text FORCE_CONSTANTS > FORCE_SETS next to the yaml, or
+        # embedded in the yaml itself ({} -> phonopy reads them from the
+        # yaml); raises if no source exists. Resolved here so the failure is
+        # immediate and the context cache key reflects the actual source.
+        from irma.core.phonopy_io import resolve_force_constants_source
+        fc_kwargs = resolve_force_constants_source(phonopy_yaml)
+        force_constants = fc_kwargs.get("force_constants_filename")
+        force_sets = fc_kwargs.get("force_sets_filename")
+    else:
+        force_constants = (None if force_constants is None
+                           else str(Path(force_constants).resolve()))
+        force_sets = None if force_sets is None else str(Path(force_sets).resolve())
     born = None
     if born_path is not None:
         born = Path(born_path).resolve()

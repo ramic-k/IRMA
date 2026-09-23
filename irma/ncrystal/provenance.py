@@ -68,6 +68,7 @@ def collect_provenance(
     inelastic_mode: int = 2,
     min_phonon_energy_meV: float = 0.0,
     born: str | Path | None = None,
+    force_constants: str | Path | None = None,
     extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Assemble the provenance metadata dict folded into a pack's ``metadata``."""
@@ -94,6 +95,11 @@ def collect_provenance(
     if born is not None:
         meta["born_sha256"] = file_sha256(born)
         meta["born_name"] = Path(born).name
+    # the separate force-constants (or force-sets) file the model was built
+    # from; None when the phonopy.yaml embeds them (it is hashed above)
+    if force_constants is not None:
+        meta["force_constants_sha256"] = file_sha256(force_constants)
+        meta["force_constants_name"] = Path(force_constants).name
     if extra:
         meta.update({str(k): str(v) for k, v in extra.items()})
     return meta
