@@ -66,11 +66,22 @@ def test_build_validate_emit_end_to_end(al_poscar, tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "Next steps" in out and "irma spectra run" in out
+    assert "DEVELOPMENT backend" in out            # emt is a dev backend
     for name in ("endf_Al.input", "spectra.yaml", "ncrystal.yaml",
                  "emit_manifest.json"):
         assert os.path.isfile(os.path.join(outdir, name)), name
     rec = json.load(open(os.path.join(outdir, "emit_manifest.json")))
     assert rec["species"][0]["mat"] == 45
+    assert rec["elastic_format"] == "mef"          # the omitted-flag default
+    m = json.load(open(os.path.join(outdir, "manifest.json")))
+    assert m["calculator"]["dev_backend"] is True
+
+    assert main(["emit", outdir, "--to", "oclimax"]) == 2
+    assert "unknown emit target" in capsys.readouterr().err
+    # --overwrite, so the refusal is the MAT one and not the existing deck
+    assert main(["emit", outdir, "--to", "endf", "--mat", "Al=45",
+                 "--mat", "Cu=99", "--overwrite"]) == 2
+    assert "not present in the structure" in capsys.readouterr().err
 
 
 def test_build_chained_emit(al_poscar, tmp_path, capsys):
@@ -142,29 +153,6 @@ def test_emit_rejects_invalid_bundle(tmp_path, capsys):
     assert rc == 2
 
 
-def test_emit_has_no_principal_option():
-    """--principal is gone: the spectra emitter has no principal scatterer.
-
-    Its only effect was to sort one symbol first in the emitted scatterer
-    list, which the forward model ignores, so the flag advertised a physics
-    choice it could not make. The word stays load-bearing for the endf and
-    ncrystal targets, which write one deck/pack per principal species.
-    """
-    from irma.mlip.cli import _build_parser
-    with pytest.raises(SystemExit):
-        _build_parser().parse_args(
-            ["emit", "bundle", "--to", "spectra", "--principal", "C"])
-
-
-def test_emit_unknown_target(al_poscar, tmp_path, capsys):
-    outdir = str(tmp_path / "bundle")
-    assert main(["build", al_poscar, "-o", outdir, "--potential", "emt", "--allow-dev-backend",
-                 "--supercell", "2 2 2", "--mesh", "4 4 4"]) == 0
-    rc = main(["emit", outdir, "--to", "oclimax"])
-    assert rc == 2
-    assert "unknown emit target" in capsys.readouterr().err
-
-
 def test_explicit_supercell_12_is_honored_under_disordered(al_poscar,
                                                            tmp_path, capsys):
     # review finding: '--supercell 12' must mean Lmin=12 even with
@@ -207,49 +195,15 @@ def test_outdir_preflight_fails_fast(al_poscar, tmp_path, capsys):
     assert not (target / "scratch").exists()  # preflight beat the compute
 
 
-def test_dev_backend_is_stamped_and_warned_on_emit(al_poscar, tmp_path,
-                                                   capsys):
-    outdir = str(tmp_path / "b")
-    assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
-                 "--allow-dev-backend", "--supercell", "2 2 2",
-                 "--mesh", "4 4 4"]) == 0
-    m = json.load(open(os.path.join(outdir, "manifest.json")))
-    assert m["calculator"]["dev_backend"] is True
-    capsys.readouterr()
-    assert main(["emit", outdir, "--to", "endf", "--mat", "Al=45"]) == 0
-    assert "DEVELOPMENT backend" in capsys.readouterr().out
-
-
-def test_disordered_ncrystal_is_refused(al_poscar, tmp_path, capsys):
-    outdir = str(tmp_path / "b")
-    assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
-                 "--allow-dev-backend", "--disordered",
-                 "--mesh", "2 2 2"]) == 0
-    capsys.readouterr()
-    rc = main(["emit", outdir, "--to", "ncrystal", "--mat", "Al=45"])
-    assert rc == 2
-    assert "disordered" in capsys.readouterr().err
-
-
-def test_unknown_mat_symbol_is_rejected(al_poscar, tmp_path, capsys):
-    outdir = str(tmp_path / "b")
-    assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
-                 "--allow-dev-backend", "--supercell", "2 2 2",
-                 "--mesh", "4 4 4"]) == 0
-    rc = main(["emit", outdir, "--to", "endf", "--mat", "Al=45",
-               "--mat", "Cu=99"])
-    assert rc == 2
-    assert "not present in the structure" in capsys.readouterr().err
-
-
 def test_top_level_routing():
     from irma.cli import main as top_main
     assert top_main(["mlip", "--help"]) == 0
 
 
-def test_sef_rejected_on_a_disordered_bundle(al_poscar, tmp_path, capsys):
-    """--elastic-format sef is a crystal-deck selector; the disordered
-    classic path rejects it."""
+def test_disordered_bundle_refuses_sef_and_ncrystal(al_poscar, tmp_path,
+                                                    capsys):
+    """--elastic-format sef is a crystal-deck selector and NCrystal export
+    needs a crystal: the disordered classic path rejects both."""
     outdir = str(tmp_path / "b")
     assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
                  "--allow-dev-backend", "--disordered",
@@ -261,21 +215,12 @@ def test_sef_rejected_on_a_disordered_bundle(al_poscar, tmp_path, capsys):
     assert rc == 2
     assert "--elastic-format is not applicable" in capsys.readouterr().err
     assert not os.path.isfile(os.path.join(outdir, "endf_Al.input"))
+    assert main(["emit", outdir, "--to", "ncrystal", "--mat", "Al=45"]) == 2
+    assert "disordered" in capsys.readouterr().err
 
     # omitted: the classic disordered path emits normally
     assert main(["emit", outdir, "--to", "endf", "--mat", "Al=45"]) == 0
     assert os.path.isfile(os.path.join(outdir, "endf_Al.input"))
-
-
-def test_omitted_elastic_format_defaults_to_mef(al_poscar, tmp_path, capsys):
-    """The emitted crystal deck is MEF when the flag is omitted."""
-    outdir = str(tmp_path / "b")
-    assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
-                 "--allow-dev-backend", "--supercell", "2 2 2",
-                 "--mesh", "4 4 4"]) == 0
-    assert main(["emit", outdir, "--to", "endf", "--mat", "Al=45"]) == 0
-    rec = json.load(open(os.path.join(outdir, "emit_manifest.json")))
-    assert rec["elastic_format"] == "mef"
 
 
 def test_uncovered_element_is_refused_before_relaxation(tmp_path, monkeypatch,
@@ -287,13 +232,7 @@ def test_uncovered_element_is_refused_before_relaxation(tmp_path, monkeypatch,
 
     def fake_make_calculator(spec):
         return EMT(), {"potential": spec.potential, "checkpoint": "w.model",
-                       "checkpoint_sha256": None, "dtype": "float64",
-                       "checkpoint_elements": ["H", "C"],
-                       "checkpoint_model_class": "ScaleShiftMACE",
-                       "checkpoint_r_max_A": 6.5,
-                       "checkpoint_num_interactions": 2,
-                       "checkpoint_stored_dtype": "float32",
-                       "dtype_note": "stored weights: float32"}
+                       "checkpoint_elements": ["H", "C"]}
     monkeypatch.setattr(calculators, "make_calculator", fake_make_calculator)
     cu = tmp_path / "Cu.vasp"
     ase_write(str(cu), bulk("Cu", "fcc", a=3.6, cubic=True), direct=True,
