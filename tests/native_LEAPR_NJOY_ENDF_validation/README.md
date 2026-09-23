@@ -18,10 +18,10 @@ leapr_decks/                       one self-contained triple per material:
   tsl-HinCH2.{leapr,input,endf.gz}                 H in CH2,  iel=0 + free-gas C, 15 T
   tsl-l-CH4.{leapr,input,endf.gz}                  liquid CH4: trans (diffusion) +
                                                    4 discrete oscillators + free-gas C, 1 T
-  tsl-ortho-H.{leapr,input,endf.gz}                liquid ortho-H2: coldh (ncold=1) +
-                                                   Skold (nsk=2) + trans + discre, 7 T
-  tsl-para-H.{leapr,input,endf.gz}                 liquid para-H2: coldh (ncold=2) +
-                                                   Skold + trans + discre, 7 T
+  tsl-ortho-H.{leapr,input,endf.gz}                liquid ortho-H2: coldh (ncold=1, nsk=2
+                                                   S(kappa) table) + trans + discre, 7 T
+  tsl-para-H.{leapr,input,endf.gz}                 liquid para-H2: coldh (ncold=2, nsk=2
+                                                   S(kappa) table) + trans + discre, 7 T
   tsl-BeO.{leapr,input,endf.gz}                    BeO (ENDF model): TWO-PASS secondary
                                                    (nss=1 b7=0, O gets its own phonon
                                                    pass) + iel=3 builtin, 8 T
@@ -136,13 +136,15 @@ fcc (aluminum, iel=4) built-in coherent elastic, a hydrogenous molecular
 moderator (polyethylene, iel=0) with a free-gas secondary scatterer and
 incoherent elastic (LTHR=2), liquid methane (`trans` with a diffusive
 component + 4 discrete oscillators + free-gas secondary), and liquid
-ortho-/para-hydrogen (`coldh` ortho/para statistics + `skold` with a
-1500-point S(κ) table + translational + oscillator, with a fresh detail block
-at every temperature). The BeO case adds the
+ortho-/para-hydrogen (`coldh` ortho/para statistics with a 1500-point S(κ)
+table + translational + oscillator, with a fresh detail block at every
+temperature). The `skold` step runs only for ncold = 0 (in NJOY and IRMA
+alike), so these decks do not exercise it; the fast-CI minitape
+`tests/test_coldh_skold_minitape.py` pins it against NJOY. The BeO case adds the
 two-pass secondary scatterer (nss=1, b7=0: the O atom gets a complete second
 phonon-spectrum pass and the laws are merged) and validates the iel=3 BeO
-built-in coherent elastic against NJOY. Together they cover every classic
-kernel (`contin`, `trans`, `discre`, `coldh`, `skold`) and both secondary
+built-in coherent elastic against NJOY. Together they cover the classic
+kernels `contin`, `trans`, `discre` and `coldh` and both secondary
 conventions (free-gas and two-pass).
 
 The strict all-points "max rel d" (~1e-4) is slightly larger than the

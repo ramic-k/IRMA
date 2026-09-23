@@ -17,10 +17,16 @@ NJOY does not — see CHANGELOG).
 * `coldh_skold.endf.gz` — a miniature ortho-hydrogen deck (6 alpha x 10
   beta, 14 K, diffusion translation + one discrete oscillator + a 12-point
   S(kappa) table, ncold=1 + nsk=2) pinning the cold-hydrogen rotational
-  sums, the Skold correction, and the diffusion translational path
-  byte-for-byte in fast CI (`tests/test_coldh_skold_minitape.py`). The
+  sums and the diffusion translational path byte-for-byte in fast CI
+  (`tests/test_coldh_skold_minitape.py`). With ncold != 0 neither NJOY nor
+  IRMA runs the Skold step (leapr.f90 `if nsk==2 and ncold==0`); the
+  S(kappa) table feeds coldh's spin-correlation factors instead. The
   full-grid 7-temperature expected validation remains in
   `tests/native_LEAPR_NJOY_ENDF_validation/`.
+
+* `skold.endf.gz` — the same deck with ncold=0, so the Skold correction
+  runs; pins it byte-for-byte in the same test. Generated with the local
+  NJOY2016.79 build (LEAPR unmodified upstream).
 
 * `coldd_ortho.endf.gz` / `coldd_para.endf.gz` — miniature ortho-deuterium
   (ncold=3) and para-deuterium (ncold=4) decks (6 alpha x 10 beta, 19 K,

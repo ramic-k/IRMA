@@ -46,12 +46,14 @@ same decks. Eight evaluations test the classic kernels:
 | Al (fcc) | CE | `iel=4` | 6 | published tape | 6.2×10⁻⁵ |
 | H in CH₂ | CE + free-gas carbon secondary | incoh. | 15 | published tape | 2.0×10⁻⁵ |
 | liquid CH₄ | CE+T+D | - | 1 | NJOY2016.78 | exact |
-| ortho-H₂ | CE+T+D+YK+SK | - | 7 | NJOY2016.78 | exact |
-| para-H₂ | CE+T+D+YK+SK | - | 7 | NJOY2016.78 | exact |
+| ortho-H₂ | CE+T+D+YK | - | 7 | NJOY2016.78 | exact |
+| para-H₂ | CE+T+D+YK | - | 7 | NJOY2016.78 | exact |
 | BeO | CE, 2P | `iel=3` | 8 | NJOY2016.78 | exact |
 
 Components: CE = continuous phonon expansion, T = translational (free gas or
-diffusion), D = discrete oscillators, YK = Young-Koppel cold H₂, SK = Sköld,
+diffusion), D = discrete oscillators, YK = Young-Koppel cold H₂ (the H₂
+decks set `nsk=2`, but the Sköld step runs only for `ncold=0`; a fast-CI
+minitape pins it against NJOY),
 2P = two-pass secondary scatterer; `iel` is the built-in
 coherent-elastic option of the classic kernels. N_T is the number of
 temperatures compared. The cold ortho- and para-deuterium kernels are gated the
