@@ -72,11 +72,11 @@ def _write_iel10_tape(path, za, awr, crystal_info, npr=1, bragg=None):
     edges = list(bragg or [])
     write_endf_output(
         str(path), 1, za, awr, 5.5, npr, 10,      # mat za awr spr npr iel
-        0, 0, 0.0, 0.0, 0.0, 0, 2, 2, 1,          # ncold nss b7 aws sps mss nalpha nbeta lat
+        0, 0.0, 0.0, 0.0, 0, 2, 2, 1,             # nss b7 aws sps mss nalpha nbeta lat
         np.array([0.1, 1.0]), np.array([0.0, 1.0]), ssm, None,
         np.array(_TEMPR), 2, np.array(_DWPIX), np.array(_DWPIX),
         np.array([320.0, 520.0]), np.array([320.0, 520.0]),
-        edges, len(edges), 0, 0, 1.0e-6, 0,
+        edges, len(edges), 0, 0, 1.0e-6,
         comments=None, crystal_info=crystal_info)
 
 
@@ -227,11 +227,11 @@ def classic_npr2_tape(tmp_path_factory):
     ssm = np.full((2, 2, 2), 0.1)
     write_endf_output(
         str(p), 1, 4009.0, _BE['awr'], spr, 2, -1,   # mat za awr spr npr iel
-        0, 0, 0.0, 0.0, 0.0, 0, 2, 2, 1,             # ncold nss b7 aws sps mss nalpha nbeta lat
+        0, 0.0, 0.0, 0.0, 0, 2, 2, 1,                # nss b7 aws sps mss nalpha nbeta lat
         np.array([0.1, 1.0]), np.array([0.0, 1.0]), ssm, None,
         np.array(_TEMPR), 2, np.array(_DWPIX), np.array(_DWPIX),
         np.array([320.0, 520.0]), np.array([320.0, 520.0]),
-        [], 0, 0, 0, 1.0e-6, 0,
+        [], 0, 0, 0, 1.0e-6,
         comments=None, crystal_info=None)
     return p
 
