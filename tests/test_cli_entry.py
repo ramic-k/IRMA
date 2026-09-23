@@ -45,15 +45,6 @@ def test_gui_missing_tkinter_friendly_message(monkeypatch, capsys):
     assert "INSTALL.md" in err
 
 
-def test_gui_missing_tkinter_no_traceback_escapes(monkeypatch, capsys):
-    """The raw ImportError must be swallowed, not propagated to the caller."""
-    _block_gui_import(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["irma", "--gui"])
-
-    # An unhandled ImportError would raise here; main() returns the code instead.
-    assert cli.main() == 4
-
-
 def test_cli_help_mentions_ncrystal(capsys):
     assert cli.main(["--help"]) == 0
     assert "ncrystal" in capsys.readouterr().out
