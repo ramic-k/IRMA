@@ -1,42 +1,31 @@
-"""Spawn-pool worker kernels + IPC for the noncubic inelastic engine.
+"""Worker kernels and process-pool plumbing for the noncubic inelastic engine.
 
-Kept separate from noncubic_engine.py so that module stays navigable. This
-module owns, and MUST keep co-located:
-  * WORKER_STATE -- the per-process compute context -- and set_worker_state,
-    which rebinds it in the PARENT before each compute phase. Workers are
-    started with the SPAWN method (the one start method that exists on
-    every platform, Windows included) in ONE pool reused across all
-    phases: per phase the engine stages the state once (share_worker_state
-    -- ndarrays as zero-copy multiprocessing.shared_memory blocks, the
-    remainder pickled into one more block) and every task carries only a
-    tiny state_ref; _dispatch_block attaches on the first task of a new
-    generation and reuses the attachment for the rest of the phase. The
-    serial ncpu=1 path reads the parent's WORKER_STATE directly.
-  * limit_native_threads_to_one + the _pool_worker_init pool initializer
-    (one BLAS/OMP thread per worker + warning-latch adoption),
-  * the star-averaged projection + directional-multiphonon precompute helpers,
-  * the sparse-block result compression / accumulation IPC, and
-  * the three accumulate_*_block kernels the engine maps over the pool.
-
-noncubic_engine re-imports these names, so compute_from_args and existing
-``from irma.core.noncubic_engine import ...`` callers are unaffected. Dependency
-direction is one-way (workers -> constants / numerics leaf modules); there is no
-import cycle with the engine.
+- WORKER_STATE and set_worker_state: the compute state of the current stage.
+  Workers are spawned once per run; per stage the engine stages the state in
+  shared memory (share_worker_state) and every task carries only a small
+  reference, which _dispatch_block attaches on first use. The serial path
+  (ncpu = 1) reads WORKER_STATE directly.
+- Thread pinning (limit_native_threads_to_one, _pool_worker_init).
+- The star-averaged projections and the directional multiphonon precompute.
+- The three accumulate_*_block kernels the engine maps over the pool.
 """
 from __future__ import annotations
 
 import math
-import multiprocessing as _mp
 import os
-import sys
 
-# Pin native thread pools BEFORE numpy (hence BLAS/OMP) imports -- the env-var
-# clamp only binds if set first. Mirrors noncubic_engine's header and is
-# idempotent (setdefault), so doing it in both modules is harmless. The pin
-# target is 1 thread per process (the measured optimum for the
-# process-parallel design); IRMA_WORKER_THREADS overrides it for tuning
-# experiments -- spawned workers inherit the variable through the
-# environment, so one setting governs parent and pool alike.
+# One BLAS/OpenMP thread per process: the engine parallelizes across worker
+# processes (Card 6f ncpu), and threaded BLAS in every worker oversubscribes the
+# cores. IRMA_WORKER_THREADS overrides the count for tuning. The variables only
+# bind if set before numpy loads.
+NATIVE_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+)
 
 
 def _worker_thread_limit() -> int:
@@ -47,14 +36,7 @@ def _worker_thread_limit() -> int:
         return 1
 
 
-for _name in (
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-    "BLIS_NUM_THREADS",
-):
+for _name in NATIVE_THREAD_ENV_VARS:
     os.environ.setdefault(_name, str(_worker_thread_limit()))
 
 import numpy as np
@@ -63,53 +45,22 @@ from irma.core.constants import (
     BK as _BK_EV_PER_K,
     THZ_TO_EV as THzToEv,
 )
-from irma.core.noncubic_numerics import (
-    add_line_to_row,
-    bincount_add,
-    gaussian_add,
-)
+from irma.core.noncubic_numerics import bincount_add
 
 THz = 1000000000000.0
 
 
 WORKER_STATE: dict = {}
-NATIVE_THREAD_ENV_VARS = (
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-    "BLIS_NUM_THREADS",
-)
 BARN_PER_M2 = 1e28
 
-# Temperature (K) at or below which the Bose occupancy is forced to its exact
-# T=0 limit (n=0, bose_plus_one=1). The expm1 branch is itself numerically safe
-# at all T>0, so this guard is a convenience/labelling cutoff rather than a
-# numerical-safety requirement: it short-circuits the occupancy evaluation for
-# the degenerate near-0 K case. No production TSL run uses T<=1 K. Shared by the
-# coherent worker and the context occupancy setup so the two stay in sync.
-BOSE_T0_LIMIT_K = 1.0
 
 
 def limit_native_threads_to_one() -> None:
-    """Best-effort limit on native thread pools used inside worker processes.
+    """Pin native thread pools to IRMA_WORKER_THREADS threads (default 1).
 
-    One thread per process is the measured optimum: the mode-1/2 paths
-    parallelize across processes (Card 6f ncpu), and threaded BLAS inside
-    every worker oversubscribes the machine (>11x slower in a 14-worker
-    mode-2 run on a 16-core M4 Max). A jobs-vs-threads sweep on the
-    graphite production pack bake on the same machine gives 14 procs x
-    1 thread 27.1 s, 7 x 2 28.1 s, 1 x 14 46.6 s — BLAS threading cannot
-    substitute for the block decomposition even at equal core count,
-    because the kernels are many small operations rather than large
-    matrix factorizations. The env variables only take effect if set
-    before the pools initialize, so threadpoolctl — when available — clamps
-    pools that were already spun up by an earlier numpy import; it is an
-    optional dependency and silently skipped otherwise. The
-    IRMA_WORKER_THREADS environment variable overrides the limit (default 1)
-    for tuning experiments; the function name states the default, not the
-    override.
+    Sets the environment variables (setdefault, so a caller's choice wins) and,
+    when threadpoolctl is installed, clamps pools an earlier numpy import
+    already started.
     """
     limit = _worker_thread_limit()
     for name in NATIVE_THREAD_ENV_VARS:
@@ -122,47 +73,17 @@ def limit_native_threads_to_one() -> None:
         pass
 
 
-def _pool_worker_init(warned_latch=None) -> None:
-    """Initializer run once in each spawned worker process.
+def _pool_worker_init() -> None:
+    """Initializer of each spawned worker: force the thread limit.
 
-    Three jobs (the compute context itself does NOT come through here — it
-    arrives per task via _dispatch_block, so the one long-lived pool can
-    switch state between compute phases):
-
-    1. Native-thread pinning. The parent pins via ``setdefault`` (preserving any
-       deliberate user override in the parent), but a worker that inherited a
-       large ``OMP_NUM_THREADS`` through the environment would oversubscribe
-       the machine — pinning is process-local and a hard requirement for the
-       process-parallel design, so here we OVERRIDE rather than setdefault
-       (forcing the inherited values to the IRMA_WORKER_THREADS limit,
-       default 1) and then clamp any already spun-up pools via threadpoolctl.
-    2. Rebind ``sys.stdout``/``sys.stderr`` to the real interpreter streams.
-       Defensive only: spawned workers start with fresh streams, but a
-       programmatic embedder's sitecustomize may still have swapped
-       ``sys.stdout`` for a non-picklable redirector.
-    3. Adopt the parent's once-per-run warning latch. Deliberately NOT via
-       set_worker_state — that would re-arm (zero) the latch, and a worker
-       that initializes late could erase a warning an earlier worker already
-       claimed. ``warned_latch`` is the parent's multiprocessing.Value,
-       handed through the spawn reducer so once-per-run warning semantics
-       survive without fork.
+    Unlike the parent, the worker overrides inherited values, so a large
+    OMP_NUM_THREADS in the environment cannot oversubscribe the machine. The
+    compute state arrives per task through _dispatch_block.
     """
     limit = _worker_thread_limit()
     for name in NATIVE_THREAD_ENV_VARS:
         os.environ[name] = str(limit)
-    try:
-        from threadpoolctl import threadpool_limits
-
-        threadpool_limits(limits=limit)
-    except Exception:
-        pass
-    if sys.__stdout__ is not None:
-        sys.stdout = sys.__stdout__
-    if sys.__stderr__ is not None:
-        sys.stderr = sys.__stderr__
-    global _KERNEL_AREA_WARNED
-    if warned_latch is not None:
-        _KERNEL_AREA_WARNED = warned_latch
+    limit_native_threads_to_one()
 
 
 def contract_real_symmetric_projection_components(
@@ -257,14 +178,11 @@ def precompute_directional_multiphonon_orders(
     mesh_mode_eigvecs: np.ndarray,
     mesh_mode_projection_components: np.ndarray | None,
     e_signed_grid_mev: np.ndarray,
-    e_signed_edges_mev: np.ndarray,
-    e_signed_bin_widths_mev: np.ndarray,
     de_mev: float,
-    sigma_mev: float,
     max_order: int,
     positive_slice: slice,
-    sigma0_emission_lookup: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
-    sigma0_absorption_lookup: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+    sigma0_emission_lookup: tuple[np.ndarray, np.ndarray, np.ndarray],
+    sigma0_absorption_lookup: tuple[np.ndarray, np.ndarray, np.ndarray],
     emit_gain_side: bool = False,
     q2_max: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, "np.ndarray | None"]:
@@ -278,10 +196,6 @@ def precompute_directional_multiphonon_orders(
     Returns:
         order_tables: shape ``(n_dirs, n_atoms, max_order, n_e)`` unit-area
             signed self orders sliced to the positive-energy support.
-        kernel_areas: shape ``(n_dirs, n_atoms)`` discrete signed area of each
-            ``p=1`` kernel (= ``u_hat . U_d . u_hat`` by construction), used by
-            ``_warn_kernel_area_mismatch`` to check consistency against the
-            analytic directional MSD.
         order_tables_gain: ``None`` unless ``emit_gain_side``; then the same
             orders sliced to the ENERGY-GAIN window ``signed[0:start+1] =
             -e_work[::-1]`` (the negative half of the SAME signed convolution,
@@ -336,46 +250,12 @@ def precompute_directional_multiphonon_orders(
             emission_weights = emission_weights_by_atom[:, atom_index]
             absorption_weights = absorption_weights_by_atom[:, atom_index]
 
-            if sigma_mev > 0.0:
-                for energy_mev, weight in zip(mesh_mode_energies_mev, emission_weights):
-                    if weight != 0.0:
-                        add_line_to_row(
-                            row,
-                            float(energy_mev),
-                            float(weight),
-                            e_signed_grid_mev,
-                            e_signed_edges_mev,
-                            e_signed_bin_widths_mev,
-                            sigma_mev,
-                        )
-                for energy_mev, weight in zip(mesh_mode_energies_mev, absorption_weights):
-                    if weight != 0.0:
-                        add_line_to_row(
-                            row,
-                            float(-energy_mev),
-                            float(weight),
-                            e_signed_grid_mev,
-                            e_signed_edges_mev,
-                            e_signed_bin_widths_mev,
-                            sigma_mev,
-                        )
-            else:
-                if sigma0_emission_lookup is None or sigma0_absorption_lookup is None:
-                    raise ValueError("Missing precomputed sigma=0 histogram lookup for multiphonon kernels.")
-                emission_valid, emission_bins, emission_inv_widths = sigma0_emission_lookup
-                absorption_valid, absorption_bins, absorption_inv_widths = sigma0_absorption_lookup
-                bincount_add(
-                    row,
-                    emission_bins,
-                    emission_weights[emission_valid],
-                    emission_inv_widths,
-                )
-                bincount_add(
-                    row,
-                    absorption_bins,
-                    absorption_weights[absorption_valid],
-                    absorption_inv_widths,
-                )
+            emission_valid, emission_bins, emission_inv_widths = sigma0_emission_lookup
+            absorption_valid, absorption_bins, absorption_inv_widths = sigma0_absorption_lookup
+            bincount_add(row, emission_bins, emission_weights[emission_valid],
+                         emission_inv_widths)
+            bincount_add(row, absorption_bins, absorption_weights[absorption_valid],
+                         absorption_inv_widths)
 
             # Normalize the p=1 kernel to unit signed area BEFORE self-convolving, so
             # every order S_hat_n = (T1/area)^{*n} stays unit-area (never under/overflows).
@@ -472,75 +352,29 @@ def precompute_directional_multiphonon_orders(
                 order_tables_gain[dir_idx[:active], atom_idx[:active],
                                   order_index - 1] = prev[:, gain_slice]
 
-    return order_tables, kernel_areas, order_tables_gain
+    return order_tables, order_tables_gain
 
 
-# Warn-once latch for the kernel-area guard: a multiprocessing.Value
-# shared with every pool worker through the spawn initializer (a plain
-# module bool would be per-process), so the FIRST block that trips the
-# guard warns for the whole run instead of once per worker process (every
-# worker still validates the kernels it built — only the duplicate
-# printing is suppressed).
-# set_worker_state() re-arms it in the parent before each compute phase, so a
-# second calculation in the same process gets the guard again. The Value MUST
-# come from the spawn context explicitly: the default context is spawn on
-# macOS but FORK on Linux, and a fork-context SemLock raises RuntimeError
-# when pickled into a spawn worker (caught by Linux CI, invisible on macOS).
-_KERNEL_AREA_WARNED = _mp.get_context("spawn").Value("b", 0)
+def multiphonon_seed_area_deficit(base_prefactors, mode_eigvecs, emission_prefactors,
+                                  absorption_prefactors, emission_valid, absorption_valid,
+                                  thermal_mats) -> float:
+    """Largest relative difference, over atoms, between the direction-averaged
+    area of the multiphonon one-phonon seed and Tr(U_a)/3.
 
-
-def _warn_kernel_area_mismatch(
-    kernel_areas: np.ndarray,
-    analytic_msd: np.ndarray,
-    rel_tol: float = 1.0e-5,
-) -> None:
-    """Warn once if the discrete multiphonon kernel area drifts from the analytic MSD.
-
-    The p=1 self kernel is built from the same eigenvector/occupation contraction as the
-    analytic mean-square displacement ``a = u_hat . U . u_hat`` (isotropic: ``trA/3``), so
-    its discrete signed area equals ``a`` to ~1e-9 in normal operation. We reuse ``a`` as the
-    Poisson mean ``2W = Q^2 a`` while normalizing the shape by the discrete area; because the
-    two agree to machine precision, the per-order ``(a/area)^n`` mismatch is negligible even
-    at order ~hundreds. A gross divergence (>> binning noise) means the signed work grid is
-    too narrow to hold the one-phonon spectrum, so the kernel is losing area and the
-    multiphonon zeroth moment cannot close to the free-gas limit. ``rel_tol=1e-5`` sits ~3.5
-    decades above the observed floor (~4e-9): tight enough to flag real truncation, loose
-    enough never to false-positive on deposition rounding. This is a guard, not a correction.
-
-    Note on higher orders: only orders near the Poisson peak ``n ~ 2W`` carry weight, and that
-    peak convolution is centered on the recoil energy ``Q^2 hbar^2/2M``. For any kinematically
-    consistent (alpha, beta) grid the recoil for the largest Q lands inside the output/work
-    grid, so the weight-bearing orders are contained; only the negligible super-peak tail
-    spills past the grid edge (confirmed empirically: the result is invariant to a 3x larger
-    work grid). Hence the p=1 area check is the meaningful guard.
+    The two agree to rounding when every mode lands inside the signed work grid
+    and the seed uses the same modes as the Debye-Waller tensors; a gap means
+    the multiphonon background loses area and cannot reach the free-atom limit.
     """
-    if _KERNEL_AREA_WARNED.value:
-        return
-    analytic = np.asarray(analytic_msd, dtype=float)
-    discrete = np.asarray(kernel_areas, dtype=float)
-    mask = analytic > 1.0e-12
+    weights = np.zeros(len(emission_prefactors), dtype=float)
+    weights[emission_valid] += emission_prefactors[emission_valid]
+    weights[absorption_valid] += absorption_prefactors[absorption_valid]
+    e2 = np.sum(np.abs(mode_eigvecs) ** 2, axis=2)              # (modes, atoms)
+    area = np.asarray(base_prefactors, dtype=float) * (weights @ e2) / 3.0
+    msd = np.trace(np.asarray(thermal_mats, dtype=float), axis1=1, axis2=2) / 3.0
+    mask = msd > 1.0e-12
     if not np.any(mask):
-        return
-    rel = np.abs(discrete[mask] - analytic[mask]) / analytic[mask]
-    worst = float(np.max(rel))
-    if worst > rel_tol:
-        with _KERNEL_AREA_WARNED.get_lock():
-            if _KERNEL_AREA_WARNED.value:
-                return
-            _KERNEL_AREA_WARNED.value = 1
-        print(
-            f"WARNING: multiphonon kernel area vs analytic MSD differs by up to "
-            f"{worst * 100:.2f}% in the first direction block that tripped this check "
-            f"(tolerance {rel_tol:.0e} relative; other blocks may lose more): the signed "
-            f"energy work grid, which is derived from the output energy grid, is too "
-            f"narrow to hold the full one-phonon spectrum, so the multiphonon background "
-            f"is losing area and cannot close to the free-gas limit. Extend the output "
-            f"energy grid's maximum (spectra: grid.e_max_meV; decks: the beta grid) "
-            f"above the highest phonon energy, or set the multiphonon order to 1 to "
-            f"drop the multiphonon terms deliberately.",
-            flush=True,
-        )
-
+        return 0.0
+    return float(np.max(np.abs(area[mask] - msd[mask]) / msd[mask]))
 
 
 def build_q_bin_sampling(
@@ -561,18 +395,13 @@ def build_q_bin_sampling(
 
 
 def set_worker_state(state: dict) -> None:
-    """Set global worker state for multiprocessing.
+    """Set the worker state in the parent before each compute stage.
 
-    Called in the PARENT before every compute phase. Also re-arms the
-    once-per-run kernel-area warning latch, so each new calculation in the
-    same process gets the guard again. Spawned pool workers receive their
-    state through _pool_worker_init (shared-memory views + pickled
-    remainder) together with the parent's latch object, so clearing the
-    latch here is visible to them as well.
+    The serial path reads it directly; pool workers receive it through
+    share_worker_state and _dispatch_block.
     """
     global WORKER_STATE
     WORKER_STATE = state
-    _KERNEL_AREA_WARNED.value = 0
 
 
 _STATE_GENERATION = 0
@@ -730,62 +559,6 @@ def _dispatch_block(state_ref, kernel, block):
     return kernel(block)
 
 
-_SPARSE_BLOCK_TAG = "sparse-block"
-_SPARSE_BLOCK_DENSITY_CUTOFF = 0.10
-
-
-def compress_block_result(arr: np.ndarray):
-    """Ship only the nonzero cells of a worker block result.
-
-    The pool returns block deposits to the parent by pickling; a dense
-    accumulator array costs 8 bytes/cell even when the block touched a
-    tiny fraction of the grid (a 2-direction coherent block on a
-    10000-alpha grid deposits ~0.5% of cells but shipped 1.2 GB, leaving
-    the parent the serial bottleneck while every worker idled). Shipping
-    (index, value) pairs keeps the parent-side accumulation bitwise
-    identical to the dense ``result += partial``: the same values are
-    added to the same cells in the same block order, and skipped cells
-    would have added exactly +0.0 (the accumulators never hold -0.0, so
-    ``x + 0.0 == x`` bitwise). Results above the density cutoff — e.g.
-    multiphonon order sums with broad energy support — ship unchanged,
-    where compression would cost more than it saves.
-    """
-    flat = arr.reshape(-1)
-    # density check with count_nonzero first (no allocation); only build the
-    # nonzero-index array on the sparse path that actually ships it -- a dense
-    # block (the common multiphonon case) skips the flatnonzero allocation.
-    if np.count_nonzero(flat) > flat.size * _SPARSE_BLOCK_DENSITY_CUTOFF:
-        return arr
-    idx = np.flatnonzero(flat)
-    return (_SPARSE_BLOCK_TAG, arr.shape, idx, flat[idx])
-
-
-def accumulate_block_result(result: np.ndarray, partial) -> np.ndarray:
-    """Add one worker block result (dense or compressed) into the sum."""
-    if (isinstance(partial, tuple) and partial
-            and partial[0] == _SPARSE_BLOCK_TAG):
-        _, shape, idx, vals = partial
-        if shape != result.shape:
-            raise ValueError(
-                f"sparse block shape {shape} does not match accumulator "
-                f"shape {result.shape}")
-        # On a non-C-contiguous accumulator, reshape(-1) returns a COPY and
-        # the fancy-index add lands in that copy — every sparse-compressed
-        # deposit would be silently dropped while dense blocks still
-        # accumulate. All production initial accumulators are fresh
-        # np.zeros, so this only fires on a caller-supplied view.
-        if not result.flags['C_CONTIGUOUS']:
-            raise ValueError(
-                "accumulate_block_result requires a C-contiguous result "
-                "array for sparse block deposits (got a non-contiguous "
-                "view; pass a fresh or np.ascontiguousarray accumulator)")
-        # flatnonzero indices are unique, so fancy-index add is exact
-        result.reshape(-1)[idx] += vals
-        return result
-    result += partial
-    return result
-
-
 def build_q_vectors(
     q_bin_sample_mags: np.ndarray,
     q_bin_sample_weights: np.ndarray,
@@ -872,53 +645,19 @@ def principal_weighted_coherent_partition(
 
 
 def _batched_qpoints_eigh(dynamical_matrix, qpoints, factor_to_thz):
-    """Frequencies (THz) + eigenvectors for a batch of q-points.
+    """Frequencies (THz) and eigenvectors for a batch of q-points.
 
-    Replicates phonopy's ``QpointsPhonon(..., with_eigenvectors=True)``
-    arithmetic — the batched C dynamical-matrix solver, then eigh, then
-    ``sqrt(|eigval|) * sign(eigval) * factor`` — with ONE stacked
-    ``np.linalg.eigh`` over the (M, nb, nb) array instead of phonopy's
-    per-q Python loop. LAPACK runs the same zheevd
-    on the same matrices, so with pinned BLAS threads the results are
-    bit-identical; only the per-q Python/dispatch overhead is removed.
-
-    phonopy >= 4 removed ``run_dynamical_matrix_solver_c`` from
-    ``phonopy.harmonic.dynamical_matrix`` (Rust backend); there the
-    reference ``QpointsPhonon`` path is used instead — identical results,
-    without the batching speedup.
-
-    ``factor_to_thz`` is the MODEL's own frequency conversion factor
-    (``Phonopy.unit_conversion_factor``), and is REQUIRED rather than
-    defaulted. phonopy's dynamical matrix is built from force constants and a
-    cell in the CALCULATOR's native units, so the eigenvalue -> THz factor is
-    calculator-specific: 15.633302 for vasp/lammps/castep/aims/crystal/pwmat,
-    108.970772 for qe, 21.490680 for abinit/siesta/abacus, 112.105157 for
-    cp2k, 154.107943 for elk/fleur/TURBOMOLE/DFTB+, 3.445958 for wien2k. Both
-    phonopy's own default and the constant this function used to hardcode are
-    the vasp value, which silently rescaled the coherent one-phonon
-    frequencies of every model built with another interface (the incoherent
-    and multiphonon channels read phonopy's already-converted
-    ``mesh.frequencies``, so the two halves of the kernel disagreed) — hence
-    no default here.
+    ``factor_to_thz`` is the model's own ``Phonopy.unit_conversion_factor``.
+    It is required: the eigenvalue-to-THz factor depends on the calculator the
+    force constants came from (vasp and qe differ, for example).
     """
-    try:
-        from phonopy.harmonic.dynamical_matrix import (
-            run_dynamical_matrix_solver_c,
-        )
-    except ImportError:
-        from phonopy.phonon.qpoints import QpointsPhonon
-        qp = QpointsPhonon(qpoints, dynamical_matrix, with_eigenvectors=True,
-                           factor=factor_to_thz)
-        return qp.frequencies, qp.eigenvectors
-
-    dynmat = run_dynamical_matrix_solver_c(dynamical_matrix, qpoints, None)
-    eigvals, eigvecs = np.linalg.eigh(dynmat)
-    eigvals = eigvals.real
-    frequencies = np.sqrt(np.abs(eigvals)) * np.sign(eigvals) * factor_to_thz
-    return frequencies, eigvecs
+    from phonopy.phonon.qpoints import QpointsPhonon
+    qp = QpointsPhonon(qpoints, dynamical_matrix, with_eigenvectors=True,
+                       factor=factor_to_thz)
+    return qp.frequencies, qp.eigenvectors
 
 
-def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
+def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     """Accumulate coherent one-phonon S(Q,E) and its diagonal/interference split.
 
     This is the exact harmonic coherent ``n=1`` term: we sum atom amplitudes
@@ -944,10 +683,8 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
     unit_conversion = state["unit_conversion"]
     temperature = state["temperature"]
     q_shell_index = state["q_shell_index"]
-    e_grid_mev = state["e_grid_mev"]
     e_edges_mev = state["e_edges_mev"]
     e_bin_widths_mev = state["e_bin_widths_mev"]
-    sigma_mev = state["sigma_mev"]
     sample_weights = state["sample_weights"]
     mev_to_joule = state["mev_to_joule"]
     one_phonon_creation_scale = state["one_phonon_creation_scale"]
@@ -970,7 +707,6 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
     q_folded = np.ascontiguousarray(q_red - np.rint(q_red))
     frequencies, eigvecs = _batched_qpoints_eigh(dynamical_matrix, q_folded,
                                                  frequency_factor_to_thz)
-    assert eigvecs is not None
 
     g_vectors = q_red - q_folded
     projected_u2_block = np.einsum("di,aij,dj->da", unit_dirs_block, thermal_mats, unit_dirs_block)
@@ -1040,13 +776,10 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
     # grid would divide by zero at the freq=0 Goldstone modes — a spurious
     # warning under default numpy, a hard error under seterr(divide="raise").
     bose_plus_one = np.zeros_like(frequencies)
-    if temperature <= BOSE_T0_LIMIT_K:
-        bose_plus_one[valid_modes] = 1.0
-    else:
-        exponent = np.clip(
-            frequencies[valid_modes] * THzToEv / (_BK_EV_PER_K * temperature),
-            0.0, 700.0)
-        bose_plus_one[valid_modes] = 1.0 / (-np.expm1(-exponent))
+    exponent = np.clip(
+        frequencies[valid_modes] * THzToEv / (_BK_EV_PER_K * temperature),
+        0.0, 700.0)
+    bose_plus_one[valid_modes] = 1.0 / (-np.expm1(-exponent))
 
     lw_total = total_w * bose_plus_one * creation_prefactor_scale    # (M, B)
     lw_diagonal = diagonal_w * bose_plus_one * creation_prefactor_scale
@@ -1062,17 +795,15 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
     # (the ENDF byte-exact gate). Same structure factors total_w/diagonal_w/
     # interference_w and the same Bose-independent creation_prefactor_scale; only
     # the occupancy differs -- n(omega) (= 1/expm1(x)) for absorption vs n+1 for
-    # emission -- and the lines deposit at -energy. T <= BOSE_T0_LIMIT_K: no
-    # thermal phonons to absorb, bose_n = 0. Deposited AFTER the loss pass under
-    # a single emit_gain guard (never interleaved with loss accumulation).
+    # emission -- and the lines deposit at -energy. Deposited AFTER the loss pass
+    # under a single emit_gain guard (never interleaved with loss accumulation).
     emit_gain = state.get("emit_gain_side", False)
     if emit_gain:
         bose_n = np.zeros_like(frequencies)
-        if temperature > BOSE_T0_LIMIT_K:
-            exponent_gain = np.clip(
-                frequencies[valid_modes] * THzToEv / (_BK_EV_PER_K * temperature),
-                0.0, 700.0)
-            bose_n[valid_modes] = 1.0 / np.expm1(exponent_gain)
+        exponent_gain = np.clip(
+            frequencies[valid_modes] * THzToEv / (_BK_EV_PER_K * temperature),
+            0.0, 700.0)
+        bose_n[valid_modes] = 1.0 / np.expm1(exponent_gain)
         lw_total_gain = total_w * bose_n * creation_prefactor_scale
         lw_diagonal_gain = diagonal_w * bose_n * creation_prefactor_scale
         lw_interference_gain = interference_w * bose_n * creation_prefactor_scale
@@ -1084,65 +815,6 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
         sqe_total_gain = np.zeros((state["num_q"], num_e_gain), dtype=float)
         sqe_diagonal_gain = np.zeros_like(sqe_total_gain)
         sqe_interference_gain = np.zeros_like(sqe_total_gain)
-
-    if sigma_mev > 0.0:
-        # Non-histogram (Gaussian) deposition: rare, non-production. The bulk
-        # weights above are reused; only the spread is per-line.
-        for local_i in range(len(indices)):
-            if not direction_ok[local_i]:
-                continue
-            modes = valid_modes[local_i]
-            if not np.any(modes):
-                continue
-            q_bin = block_q_bins[local_i]
-            sample_weight = block_weights[local_i]
-            for energy, total, diagonal, interference in zip(
-                energy_mev[local_i][modes],
-                lw_total[local_i][modes],
-                lw_diagonal[local_i][modes],
-                lw_interference[local_i][modes],
-                strict=True,
-            ):
-                gaussian_add(sqe_total, q_bin, float(energy), float(total),
-                             e_grid_mev, e_edges_mev, e_bin_widths_mev,
-                             sigma_mev, sample_weight)
-                gaussian_add(sqe_diagonal, q_bin, float(energy), float(diagonal),
-                             e_grid_mev, e_edges_mev, e_bin_widths_mev,
-                             sigma_mev, sample_weight)
-                gaussian_add(sqe_interference, q_bin, float(energy),
-                             float(interference), e_grid_mev, e_edges_mev,
-                             e_bin_widths_mev, sigma_mev, sample_weight)
-        if emit_gain:
-            for local_i in range(len(indices)):
-                if not direction_ok[local_i]:
-                    continue
-                modes = valid_modes[local_i]
-                if not np.any(modes):
-                    continue
-                q_bin = block_q_bins[local_i]
-                sample_weight = block_weights[local_i]
-                for energy, total, diagonal, interference in zip(
-                    gain_energy_mev[local_i][modes],
-                    lw_total_gain[local_i][modes],
-                    lw_diagonal_gain[local_i][modes],
-                    lw_interference_gain[local_i][modes],
-                    strict=True,
-                ):
-                    gaussian_add(sqe_total_gain, q_bin, float(energy),
-                                 float(total), e_gain_grid_mev, e_gain_edges_mev,
-                                 e_gain_bin_widths_mev, sigma_mev, sample_weight)
-                    gaussian_add(sqe_diagonal_gain, q_bin, float(energy),
-                                 float(diagonal), e_gain_grid_mev, e_gain_edges_mev,
-                                 e_gain_bin_widths_mev, sigma_mev, sample_weight)
-                    gaussian_add(sqe_interference_gain, q_bin, float(energy),
-                                 float(interference), e_gain_grid_mev,
-                                 e_gain_edges_mev, e_gain_bin_widths_mev,
-                                 sigma_mev, sample_weight)
-            return compress_block_result(np.stack(
-                (sqe_total, sqe_diagonal, sqe_interference,
-                 sqe_total_gain, sqe_diagonal_gain, sqe_interference_gain), axis=0))
-        return compress_block_result(
-            np.stack((sqe_total, sqe_diagonal, sqe_interference), axis=0))
 
     # Histogram deposition (production path): one masked scatter per array
     # over the whole (M x B) grid instead of ~24000 np.add.at calls.
@@ -1195,15 +867,14 @@ def accumulate_coherent_block(indices: np.ndarray) -> "np.ndarray | tuple":
             np.add.at(sqe_diagonal_gain, (grows, gcols), lw_diagonal_gain[ggood] * gdensity)
             np.add.at(sqe_interference_gain, (grows, gcols),
                       lw_interference_gain[ggood] * gdensity)
-        return compress_block_result(np.stack(
+        return np.stack(
             (sqe_total, sqe_diagonal, sqe_interference,
-             sqe_total_gain, sqe_diagonal_gain, sqe_interference_gain), axis=0))
+             sqe_total_gain, sqe_diagonal_gain, sqe_interference_gain), axis=0)
 
-    return compress_block_result(
-        np.stack((sqe_total, sqe_diagonal, sqe_interference), axis=0))
+    return np.stack((sqe_total, sqe_diagonal, sqe_interference), axis=0)
 
 
-def accumulate_incoherent_shell_block(shell_indices: np.ndarray) -> "np.ndarray | tuple":
+def accumulate_incoherent_shell_block(shell_indices: np.ndarray) -> np.ndarray:
     """Accumulate the exact incoherent one-phonon self term over powder shells."""
     state = WORKER_STATE
     sqe_incoherent = np.zeros((state["num_q"], state["num_e"]), dtype=float)
@@ -1216,24 +887,18 @@ def accumulate_incoherent_shell_block(shell_indices: np.ndarray) -> "np.ndarray 
     mesh_mode_energies_mev = state["mesh_mode_energies_mev"]
     mesh_mode_bose_prefactors = state["mesh_mode_bose_prefactors"]
     mesh_mode_eigvecs = state["mesh_mode_eigvecs"]
-    e_grid_mev = state["e_grid_mev"]
-    e_edges_mev = state["e_edges_mev"]
-    e_bin_widths_mev = state["e_bin_widths_mev"]
-    sigma_mev = state["sigma_mev"]
-    hist_valid = state.get("hist_valid_indices")
-    hist_bins = state.get("hist_bin_indices")
-    hist_inv_widths = state.get("hist_inv_bin_widths")
+    hist_valid = state["hist_valid_indices"]
+    hist_bins = state["hist_bin_indices"]
+    hist_inv_widths = state["hist_inv_bin_widths"]
 
     # Energy-gain (annihilation) deposition, gated and byte-isolated from loss.
     emit_gain = state.get("emit_gain_side", False)
     if emit_gain:
         mesh_mode_absorption_prefactors = state["mesh_mode_absorption_prefactors"]
         e_gain_grid_mev = state["e_gain_grid_mev"]
-        e_gain_edges_mev = state["e_gain_edges_mev"]
-        e_gain_bin_widths_mev = state["e_gain_bin_widths_mev"]
-        hist_gain_valid = state.get("hist_gain_valid_indices")
-        hist_gain_bins = state.get("hist_gain_bin_indices")
-        hist_gain_inv_widths = state.get("hist_gain_inv_bin_widths")
+        hist_gain_valid = state["hist_gain_valid_indices"]
+        hist_gain_bins = state["hist_gain_bin_indices"]
+        hist_gain_inv_widths = state["hist_gain_inv_bin_widths"]
         sqe_incoherent_gain = np.zeros((state["num_q"], len(e_gain_grid_mev)),
                                        dtype=float)
 
@@ -1267,94 +932,25 @@ def accumulate_incoherent_shell_block(shell_indices: np.ndarray) -> "np.ndarray 
                 line_weights_gain = (radial_weight
                                      * mesh_mode_absorption_prefactors * mode_weights)
 
-            if sigma_mev > 0.0:
-                for energy_mev, weight_barn in zip(mesh_mode_energies_mev, line_weights):
-                    gaussian_add(
-                        sqe_incoherent,
-                        q_bin,
-                        float(energy_mev),
-                        float(weight_barn),
-                        e_grid_mev,
-                        e_edges_mev,
-                        e_bin_widths_mev,
-                        sigma_mev,
-                        1.0,
-                    )
-                if emit_gain:
-                    for energy_mev, weight_barn in zip(mesh_mode_energies_mev,
-                                                       line_weights_gain):
-                        gaussian_add(sqe_incoherent_gain, q_bin,
-                                     float(-energy_mev), float(weight_barn),
-                                     e_gain_grid_mev, e_gain_edges_mev,
-                                     e_gain_bin_widths_mev, sigma_mev, 1.0)
-            else:
-                if hist_valid is None or hist_bins is None or hist_inv_widths is None:
-                    raise ValueError("Missing precomputed sigma=0 histogram lookup for incoherent accumulation.")
-                if len(hist_bins) == 0:
-                    continue
-                bincount_add(
-                    sqe_incoherent[q_bin],
-                    hist_bins,
-                    line_weights[hist_valid],
-                    hist_inv_widths,
-                )
-                if emit_gain and hist_gain_bins is not None and len(hist_gain_bins):
-                    bincount_add(
-                        sqe_incoherent_gain[q_bin],
-                        hist_gain_bins,
-                        line_weights_gain[hist_gain_valid],
-                        hist_gain_inv_widths,
-                    )
+            if len(hist_bins) == 0:
+                continue
+            bincount_add(sqe_incoherent[q_bin], hist_bins, line_weights[hist_valid],
+                         hist_inv_widths)
+            if emit_gain and len(hist_gain_bins):
+                bincount_add(sqe_incoherent_gain[q_bin], hist_gain_bins,
+                             line_weights_gain[hist_gain_valid], hist_gain_inv_widths)
 
     if emit_gain:
-        return compress_block_result(
-            np.stack((sqe_incoherent, sqe_incoherent_gain), axis=0))
-    return compress_block_result(sqe_incoherent)
+        return np.stack((sqe_incoherent, sqe_incoherent_gain), axis=0)
+    return sqe_incoherent
 
 
-def recursive_multiphonon_orders_no_factorial(
-    one_phonon_row: np.ndarray,
-    de_mev: float,
-    max_order: int,
-) -> list[np.ndarray]:
-    """Build signed ``T1**n`` convolution rows without the harmonic ``1/n!``."""
-    if max_order < 2:
-        return []
-
-    base = np.array(one_phonon_row, dtype=float, copy=False)
-    prev = np.array(one_phonon_row, dtype=float, copy=True)
-    n_points = len(base)
-    orders: list[np.ndarray] = []
-    n_full = 2 * n_points - 1
-    use_fft = n_points >= 512
-    if use_fft:
-        n_fft = 1 << (n_full - 1).bit_length()
-        base_fft = np.fft.rfft(base, n=n_fft)
-    else:
-        n_fft = 0
-        base_fft = None
-
-    for _order in range(2, max_order + 1):
-        if use_fft:
-            prev_fft = np.fft.rfft(prev, n=n_fft)
-            full = np.fft.irfft(base_fft * prev_fft, n=n_fft)[:n_full]
-        else:
-            full = np.convolve(base, prev, mode="full")
-        full *= de_mev
-        start = (n_full - n_points) // 2
-        current = full[start : start + n_points]
-        orders.append(current)
-        prev = current
-
-    return orders
-
-
-def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndarray) -> "np.ndarray | tuple":
+def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndarray) -> np.ndarray:
     """Accumulate a direction block of the sigma_total multiphonon background."""
     state = WORKER_STATE
     emit_gain = state.get("emit_gain_side", False)
     directions = state["directions"][direction_indices]
-    order_tables, kernel_areas, order_tables_gain = precompute_directional_multiphonon_orders(
+    order_tables, order_tables_gain = precompute_directional_multiphonon_orders(
         directions,
         state["base_prefactors"],
         state["mesh_mode_energies_mev"],
@@ -1363,45 +959,24 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         state["mesh_mode_eigvecs"],
         state.get("mesh_mode_projection_components"),
         state["e_signed_grid_mev"],
-        state["e_signed_edges_mev"],
-        state["e_signed_bin_widths_mev"],
         state["de_mev"],
-        state["sigma_mev"],
         state["max_order"],
         state["positive_slice"],
-        sigma0_emission_lookup=state.get("sigma0_emission_lookup"),
-        sigma0_absorption_lookup=state.get("sigma0_absorption_lookup"),
+        sigma0_emission_lookup=state["sigma0_emission_lookup"],
+        sigma0_absorption_lookup=state["sigma0_absorption_lookup"],
         emit_gain_side=emit_gain,
         q2_max=float(np.max(state["q_bin_sample_mags"])) ** 2,
     )
-    collect_last = state.get("collect_last_order", False)
-    if order_tables.shape[2] <= 1:
-        # No multiphonon support (order<=1): return zeros of the same stacked
-        # shape the populated path would. Stack order: approx, [last_order],
-        # [gain] -- the engine unpacks by the flags it set.
-        n_stack = 1 + int(collect_last) + int(emit_gain)
-        if n_stack == 1:
-            return compress_block_result(
-                np.zeros((state["num_q"], state["num_e"]), dtype=float))
-        return compress_block_result(
-            np.zeros((n_stack, state["num_q"], state["num_e"]), dtype=float))
-
     sqe_multiphonon_approx = np.zeros((state["num_q"], state["num_e"]), dtype=float)
-    sqe_last_order = np.zeros_like(sqe_multiphonon_approx) if collect_last else None
     sqe_multiphonon_gain = np.zeros_like(sqe_multiphonon_approx) if emit_gain else None
 
     q_bin_sample_mags = state["q_bin_sample_mags"]
     q_bin_sample_weights = state["q_bin_sample_weights"]
     thermal_mats = state["thermal_mats"]
     projected_u2 = np.einsum("di,aij,dj->da", directions, thermal_mats, directions, optimize=True)
-    # Consistency check: the discrete kernel area must equal the analytic directional MSD
-    # u_hat . U . u_hat (the Debye-Waller exponent base). A mismatch beyond binning noise
-    # means the work grid is dropping kernel support and the zeroth moment cannot close.
-    _warn_kernel_area_mismatch(kernel_areas, projected_u2)
     sigma_total_scale = state["multiphonon_sigma_total_scale"]
     total_num_dirs = state["num_total_dirs"]
     multiphonon_orders = order_tables[:, :, 1:, :]
-    last_order_table = multiphonon_orders[:, :, -1, :] if sqe_last_order is not None else None
     # Per-order n>=2 weighting is the bounded Poisson term Poisson(2W; n) = (2W)^n/n! e^{-2W}
     # with mean 2W = Q^2 * (u_hat . U . u_hat), multiplying the unit-area self shapes built
     # by precompute. Because the shapes carry the (u^2)^n scaling, this is mathematically
@@ -1430,11 +1005,6 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
     n_e_out = multiphonon_orders.shape[3]
     orders_c = np.ascontiguousarray(multiphonon_orders)
     kernel_matrix = orders_c.reshape(-1, n_e_out)
-    last_kernel_matrix = (
-        np.ascontiguousarray(last_order_table).reshape(-1, n_e_out)
-        if last_order_table is not None
-        else None
-    )
     # Gain kernel matrix: the SAME (direction, atom, order) Poisson weighting
     # `term` (computed below) contracts with the gain-window orders, so the gain
     # side costs only a second matmul -- no recomputation of weights.
@@ -1456,11 +1026,6 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         flat_weights / total_num_dirs,
         0.0,
     )
-    # Clean NaN and -inf to 0, but leave +inf as +inf: a genuine overflow must
-    # reach the engine's finite-value gate (which raises with the offending
-    # array named) instead of being silently clamped to finfo.max -- a huge but
-    # FINITE value that passes the gate and lands as garbage in the tape.
-    nan_kwargs = dict(nan=0.0, posinf=np.inf, neginf=0.0)
     dao = kernel_matrix.shape[0]
     chunk_bins = max(1, 20_000_000 // max(1, dao * num_radial_samples))
     for q_start in range(0, num_q_bins, chunk_bins):
@@ -1516,33 +1081,14 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         term *= sigma_total_scale[None, None, :, None]
         term *= row_scale[rows][:, None, None, None]             # (r,d,a,o)
         n_rows = term.shape[0]
-        contrib = np.nan_to_num(
-            term.reshape(n_rows, -1) @ k_mat, **nan_kwargs
-        ).reshape(q_stop - q_start, num_radial_samples, n_e_out).sum(axis=1)
+        contrib = (term.reshape(n_rows, -1) @ k_mat).reshape(
+            q_stop - q_start, num_radial_samples, n_e_out).sum(axis=1)
         sqe_multiphonon_approx[q_start:q_stop] += contrib
-        if (sqe_last_order is not None and last_kernel_matrix is not None
-                and o_hi == n_orders - 1):
-            # o_hi < n_orders - 1 would mean the last order's weights are
-            # all exactly zero in this chunk: contribution exactly zero.
-            last_contrib = np.nan_to_num(
-                term[:, :, :, -1].reshape(n_rows, -1) @ last_kernel_matrix,
-                **nan_kwargs,
-            ).reshape(
-                q_stop - q_start, num_radial_samples, n_e_out
-            ).sum(axis=1)
-            sqe_last_order[q_start:q_stop] += last_contrib
-        if sqe_multiphonon_gain is not None and k_gain is not None:
-            gain_contrib = np.nan_to_num(
-                term.reshape(n_rows, -1) @ k_gain, **nan_kwargs
-            ).reshape(q_stop - q_start, num_radial_samples, n_e_out).sum(axis=1)
+        if sqe_multiphonon_gain is not None:
+            gain_contrib = (term.reshape(n_rows, -1) @ k_gain).reshape(
+                q_stop - q_start, num_radial_samples, n_e_out).sum(axis=1)
             sqe_multiphonon_gain[q_start:q_stop] += gain_contrib
 
-    # Stack order matches the early-return: approx, [last_order], [gain].
-    stack = [sqe_multiphonon_approx]
-    if sqe_last_order is not None:
-        stack.append(sqe_last_order)
     if sqe_multiphonon_gain is not None:
-        stack.append(sqe_multiphonon_gain)
-    if len(stack) == 1:
-        return compress_block_result(sqe_multiphonon_approx)
-    return compress_block_result(np.stack(stack, axis=0))
+        return np.stack((sqe_multiphonon_approx, sqe_multiphonon_gain), axis=0)
+    return sqe_multiphonon_approx
