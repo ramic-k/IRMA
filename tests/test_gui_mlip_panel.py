@@ -97,6 +97,16 @@ def test_emit_command_targets_and_pairs(panel, tmp_path):
         panel.emit_command()
 
 
+def test_min_phonon_energy_is_forwarded_for_every_target(panel, tmp_path):
+    # every emitter records the cutoff, so an NCrystal-only emit carries it
+    panel.bundle.set(str(tmp_path))
+    panel.targets["endf"].set(False)
+    panel.targets["ncrystal"].set(True)
+    panel.emit_min_phonon_energy.set("0.5")
+    cmd = panel.emit_command()
+    assert cmd[cmd.index("--min-phonon-energy") + 1] == "0.5"
+
+
 def test_run_build_goes_through_the_stub_runner(panel, tmp_path):
     struct = tmp_path / "cell.vasp"
     struct.write_text("x")
