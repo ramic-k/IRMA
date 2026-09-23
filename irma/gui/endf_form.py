@@ -1179,8 +1179,12 @@ class EndfFormMixin:
                  self.latt_alpha, self.latt_beta, self.latt_gamma),
                 lattice_fields):
             entry.set(value)
+        self._write_atom_rows(atom_rows)
+
+    def _write_atom_rows(self, rows):
+        """Replace the atom block with the given Card 6d row texts."""
         self.atoms_text.delete("1.0", tk.END)
-        self.atoms_text.insert("1.0", "\n".join(atom_rows) + "\n")
+        self.atoms_text.insert("1.0", "\n".join(rows) + "\n")
 
     # ------------------------------------------------------------------
     # Tab 2: Scattering Parameters
@@ -1328,8 +1332,7 @@ class EndfFormMixin:
         self.awr.set(f"{nuc.awr:.6g}")
         self.spr.set(f"{spr:.6g}")
         if new_rows is not None:
-            self.atoms_text.delete("1.0", tk.END)
-            self.atoms_text.insert("1.0", "\n".join(format_atom_row(r) for r in new_rows) + "\n")
+            self._write_atom_rows([format_atom_row(r) for r in new_rows])
         model_note = ""
         if new_rows is not None and self.inelastic_mode_var.get() in (1, 2):
             model_note = ("; the phonopy model's masses and phonons are not "
@@ -1340,52 +1343,6 @@ class EndfFormMixin:
         self._set_za_status(
             f"ZA {za} ({label}): AWR {nuc.awr:.6g}, sigma_free {spr:.6g} b; "
             f"{row_note}{model_note}")
-
-    def _relabel_row_or_abort(self, za, rows):
-        """Run/Save backstop for a principal ZA with no matching atom row.
-
-        With exactly one row of that element whose constants are the
-        table's own, offer to relabel it (the same change 'Apply ZA'
-        makes) and continue; otherwise, or on 'No', abort with the
-        engine's own message. Returns the rows to write.
-        """
-        from irma.core.crystal_input import (
-            format_atom_row, nuclide_label, principal_mismatch_message,
-            principal_row_match, relabel_row, row_constants_match_table)
-        message = principal_mismatch_message(za, rows)
-        if message is None:
-            return rows
-        match = principal_row_match(za, rows)
-        if len(match["same_z"]) == 1:
-            i = match["same_z"][0]
-            try:
-                new_row, changes = relabel_row(rows[i], za)
-            except (KeyError, ValueError):
-                raise ValueError(message)
-            old_label = nuclide_label(rows[i]["Z"], rows[i]["A"])
-            new_label = nuclide_label(match["Z"], match["A"])
-            custom = "" if row_constants_match_table(rows[i]) else (
-                "\n\nThat row's constants differ from the table entry for "
-                f"{old_label}, so they look like your own values.")
-            change_text = ", ".join(
-                f"{name} {old:g} -> {new:g}" if name != "A" else f"A {old} -> {new}"
-                for name, old, new in changes)
-            if self._ask_yes_no(
-                    self.APPLY_ZA_TITLE,
-                    f"Card 4 ZA={za} is {new_label}, but atom row {i + 1} is "
-                    f"{old_label}.{custom}\n\nRelabel row {i + 1} to "
-                    f"{new_label} ({change_text}; positions kept) and "
-                    f"continue?\n\n'No' stops here and changes nothing."):
-                new_rows = list(rows)
-                new_rows[i] = new_row
-                self.atoms_text.delete("1.0", tk.END)
-                self.atoms_text.insert(
-                    "1.0", "\n".join(format_atom_row(r) for r in new_rows) + "\n")
-                self._set_za_status(
-                    f"atom row {i + 1}: {old_label} -> {new_label} "
-                    f"({change_text}); positions kept")
-                return new_rows
-        raise ValueError(message)
 
     def _build_scattering_tab(self):
         """Build the Scattering part widgets."""
@@ -2690,18 +2647,13 @@ class EndfFormMixin:
                     "(Card 6d) in the Material part. Type the rows in, press "
                     "'" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or "
                     "load an input file with Import Input File.")
-            # The principal ZA must be one of the rows (the engine's rule);
-            # a lone row of that element can be relabelled here, with the
-            # user's yes, instead of failing later in the engine.
-            za_text = self.za.get().strip()
-            if za_text:
-                try:
-                    za_int = int(float(za_text))
-                except ValueError:
-                    za_int = None
-                if za_int is not None and za_int > 0:
-                    atoms = self._relabel_row_or_abort(za_int, atoms)
-                    nat = len(atoms)
+            # The principal ZA must be one of the rows (the engine's rule;
+            # Apply ZA relabels a row).
+            from irma.core.crystal_input import principal_mismatch_message
+            mismatch = principal_mismatch_message(
+                int(parse_float("ZA", self.za.get())), atoms)
+            if mismatch:
+                raise ValueError(mismatch)
             elastic_mode = self._code(self.elastic_mode)
 
             # Card 6e partial spectra ride through import -> export verbatim;
