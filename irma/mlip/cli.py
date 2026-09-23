@@ -14,8 +14,8 @@ such files before any phonopy parse (see irma.mlip.bundle and
 irma.core.phonopy_io.reject_unsafe_phonopy_yaml).
 
 The public potentials are exactly irma.mlip.calculators.POTENTIALS. The
-'emt' development backend is accepted only when IRMA_MLIP_DEV_BACKENDS=1 is
-set (test/dev use; never a production surface).
+'emt' development backend is accepted only with the hidden
+--allow-dev-backend flag (test/dev use; never a production surface).
 
 All heavy imports are function-level (core-clean module).
 """
@@ -36,9 +36,7 @@ def _err(msg) -> int:
 
 def _allowed_potentials(allow_dev=False):
     from irma.mlip.calculators import POTENTIALS
-    if allow_dev and os.environ.get("IRMA_MLIP_DEV_BACKENDS") == "1":
-        return POTENTIALS + ("emt",)
-    return POTENTIALS
+    return POTENTIALS + ("emt",) if allow_dev else POTENTIALS
 
 
 def _parse_pairs(values, what, cast=str):
@@ -141,11 +139,8 @@ def _add_emit_options(p):
                         "classic cards, Card 6e partial spectra for the "
                         "other species); 1/2 = phonopy-backed directional "
                         "decks. Not applicable to disordered bundles")
-    # default=None so an EXPLICIT `--elastic-format mef` is distinguishable
-    # from the absent flag and can be rejected on disordered bundles,
-    # exactly like --inelastic-mode; _do_emit normalizes None to "mef"
     p.add_argument("--elastic-format", choices=("mef", "sef"),
-                   default=None,
+                   default="mef",
                    help="elastic output convention of the emitted ENDF "
                         "decks: mef writes both elastic components for "
                         "every species (default), sef assigns the complete "
@@ -225,7 +220,7 @@ def _build_parser():
     b.add_argument("--overwrite", action="store_true",
                    help="replace an existing bundle/outputs")
     b.add_argument("--allow-dev-backend", action="store_true",
-                   help=argparse.SUPPRESS)   # dev/test backends, with env gate
+                   help=argparse.SUPPRESS)   # dev/test backends
     b.add_argument("--emit", default=None, metavar="LIST",
                    help="chain emission after the build: comma list of "
                         "endf,spectra,ncrystal")
@@ -270,16 +265,6 @@ def _do_emit(bundle, targets, args) -> int:
     if unknown:
         return _err(f"unknown emit target(s) {unknown}; choose from "
                     f"endf, spectra, ncrystal")
-    # an EXPLICIT --elastic-format is a crystal-deck selector even when it
-    # names the default: rejected on disordered bundles exactly like
-    # --inelastic-mode (argparse default is None, normalized to mef below)
-    elastic_format = getattr(args, "elastic_format", None)
-    if elastic_format is not None and "endf" in targets \
-            and bundle.manifest.get("disordered"):
-        return _err("disordered bundles use the DOS-driven classic path, "
-                    "whose elastic term is always the incoherent format "
-                    "(no Card 6b); --elastic-format is not applicable "
-                    "there")
     if bundle.manifest.get("calculator", {}).get("dev_backend"):
         print("  WARNING: this bundle was built with a DEVELOPMENT backend; "
               "its physics is not production-grade")
@@ -287,6 +272,7 @@ def _do_emit(bundle, targets, args) -> int:
     nuclides = _parse_pairs(args.nuclide, "--nuclide")
     overrides = _parse_species(args.species)
     out_dir = getattr(args, "out_dir", None) or bundle.path
+    min_e = float(getattr(args, "min_phonon_energy", 0.0))
 
     produced = []
     if "endf" in targets:
@@ -294,24 +280,22 @@ def _do_emit(bundle, targets, args) -> int:
             bundle, temperature_k=args.temperature, mats=mats,
             nuclides=nuclides, overrides=overrides, out_dir=out_dir,
             overwrite=args.overwrite, allow_unstable=args.allow_unstable,
-            inelastic_mode=getattr(args, "inelastic_mode", None),
-            elastic_format=(elastic_format or "mef"),
-            min_phonon_energy_mev=float(getattr(args, "min_phonon_energy", 0.0) or 0.0))
+            inelastic_mode=args.inelastic_mode,
+            elastic_format=args.elastic_format, min_phonon_energy_mev=min_e)
     if "spectra" in targets:
         produced.append(emit_spectra_yaml(
             bundle, temperature_k=args.temperature,
             nuclides=nuclides, overrides=overrides,
             out_path=os.path.join(out_dir, "spectra.yaml"),
             overwrite=args.overwrite, allow_unstable=args.allow_unstable,
-            min_phonon_energy_mev=float(getattr(args, "min_phonon_energy", 0.0) or 0.0)))
+            min_phonon_energy_mev=min_e))
     if "ncrystal" in targets:
         produced.append(emit_ncrystal_yaml(
             bundle, temperature_k=args.temperature,
             material_id=args.material_id, nuclides=nuclides,
             overrides=overrides,
             out_path=os.path.join(out_dir, "ncrystal.yaml"),
-            overwrite=args.overwrite,
-            min_phonon_energy_mev=float(getattr(args, "min_phonon_energy", 0.0) or 0.0)))
+            overwrite=args.overwrite, min_phonon_energy_mev=min_e))
 
     import shlex
     print("\nNext steps (review each file before production):")
@@ -333,7 +317,7 @@ def _cmd_build(args) -> int:
         CalculatorSpec, MlipDependencyError, canonicalize_spec,
         make_calculator)
 
-    allowed = _allowed_potentials(getattr(args, "allow_dev_backend", False))
+    allowed = _allowed_potentials(args.allow_dev_backend)
     if args.potential not in allowed:
         return _err(f"unknown potential {args.potential!r}; choose from "
                     f"{', '.join(p for p in allowed if p != 'emt')}")
@@ -565,10 +549,19 @@ def _cmd_validate(args) -> int:
         return 2
     m = load_bundle(args.bundle).manifest
     print(f"{args.bundle}: OK")
-    return _safe_render_summary(args.bundle, m)
+    return _render_summary(m)
 
 
-def _render_summary(bundle_path, m) -> int:
+def _render_summary(m) -> int:
+    try:
+        _print_summary(m)
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        print(f"  (manifest summary unavailable: malformed field {exc!r})")
+        return 2
+    return 0
+
+
+def _print_summary(m):
     print(f"  potential: {m['calculator'].get('potential')} "
           f"({m['calculator'].get('checkpoint')})")
     print(f"  relaxed: converged={m['relaxation']['converged']} "
@@ -582,15 +575,6 @@ def _render_summary(bundle_path, m) -> int:
     print(f"  nac_embedded={m['nac_embedded']} "
           f"disordered={m['disordered']}")
     print(f"  fingerprint: {m['fingerprint'][:16]}...")
-    return 0
-
-
-def _safe_render_summary(bundle_path, m) -> int:
-    try:
-        return _render_summary(bundle_path, m)
-    except (KeyError, TypeError, ValueError, IndexError) as exc:
-        print(f"  (manifest summary unavailable: malformed field {exc!r})")
-        return 2
 
 
 def main(argv=None) -> int:

@@ -167,9 +167,8 @@ def test_build_command_jitter_cycles(panel):
 
 def test_emit_command_deck_and_ncrystal_selectors(panel, tmp_path):
     """SPG-4: --inelastic-mode / --elastic-format / --material-id are
-    selectable from the panel ('default' omits the flag; explicit values --
-    including an explicit 'mef', which the CLI distinguishes from the absent
-    flag -- are forwarded), and the argv parses on the real CLI surface."""
+    selectable from the panel ('default' omits the flag; explicit values are
+    forwarded), and the argv parses on the real CLI surface."""
     panel.bundle.set(str(tmp_path))
     cmd = panel.emit_command()
     for flag in ("--inelastic-mode", "--elastic-format", "--material-id"):
@@ -184,8 +183,6 @@ def test_emit_command_deck_and_ncrystal_selectors(panel, tmp_path):
     assert cmd[cmd.index("--elastic-format") + 1] == "sef"
     assert cmd[cmd.index("--material-id") + 1] == "graphite_296K"
 
-    # explicit 'mef' names the CLI default but is NOT the same as omitting
-    # the flag (the CLI rejects it for disordered bundles): forwarded.
     panel.emit_elastic_format.set("mef")
     cmd = panel.emit_command()
     assert cmd[cmd.index("--elastic-format") + 1] == "mef"
@@ -196,13 +193,13 @@ def test_emit_command_deck_and_ncrystal_selectors(panel, tmp_path):
     assert ns.inelastic_mode == 0
     assert ns.elastic_format == "mef"
     assert ns.material_id == "graphite_296K"
-    # and with the selectors at 'default', argparse keeps its None defaults
+    # and with the selectors at 'default', argparse keeps its defaults
     panel.emit_inelastic_mode.set("default")
     panel.emit_elastic_format.set("default")
     panel.material_id.set("")
     ns = _build_parser().parse_args(panel.emit_command()[5:])
     assert ns.inelastic_mode is None
-    assert ns.elastic_format is None
+    assert ns.elastic_format == "mef"
     assert ns.material_id is None
 
 

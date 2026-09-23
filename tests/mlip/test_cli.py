@@ -247,34 +247,28 @@ def test_top_level_routing():
     assert top_main(["mlip", "--help"]) == 0
 
 
-def test_explicit_elastic_format_rejected_on_a_disordered_bundle(
-        al_poscar, tmp_path, capsys):
-    """--elastic-format is a crystal-deck selector; an EXPLICITLY typed
-    value must be rejected on a disordered bundle even when it names the
-    argparse default, exactly like --inelastic-mode."""
+def test_sef_rejected_on_a_disordered_bundle(al_poscar, tmp_path, capsys):
+    """--elastic-format sef is a crystal-deck selector; the disordered
+    classic path rejects it."""
     outdir = str(tmp_path / "b")
     assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
                  "--allow-dev-backend", "--disordered",
                  "--mesh", "2 2 2"]) == 0
     capsys.readouterr()
 
-    for value in ("mef", "sef"):
-        rc = main(["emit", outdir, "--to", "endf", "--mat", "Al=45",
-                   "--elastic-format", value])
-        assert rc == 2, value
-        assert "--elastic-format is not applicable" in \
-            capsys.readouterr().err
-        assert not os.path.isfile(os.path.join(outdir, "endf_Al.input"))
+    rc = main(["emit", outdir, "--to", "endf", "--mat", "Al=45",
+               "--elastic-format", "sef"])
+    assert rc == 2
+    assert "--elastic-format is not applicable" in capsys.readouterr().err
+    assert not os.path.isfile(os.path.join(outdir, "endf_Al.input"))
 
     # omitted: the classic disordered path emits normally
     assert main(["emit", outdir, "--to", "endf", "--mat", "Al=45"]) == 0
     assert os.path.isfile(os.path.join(outdir, "endf_Al.input"))
 
 
-def test_omitted_elastic_format_still_defaults_to_mef(al_poscar, tmp_path,
-                                                      capsys):
-    """The argparse default moved to None; the emitted crystal deck must
-    still be MEF when the flag is omitted."""
+def test_omitted_elastic_format_defaults_to_mef(al_poscar, tmp_path, capsys):
+    """The emitted crystal deck is MEF when the flag is omitted."""
     outdir = str(tmp_path / "b")
     assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
                  "--allow-dev-backend", "--supercell", "2 2 2",
