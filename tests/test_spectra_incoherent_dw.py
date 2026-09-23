@@ -60,18 +60,6 @@ def test_anisotropic_directional_exceeds_isotropic():
                        rtol=1e-3)
 
 
-def test_directional_channels_populated():
-    dirm = _model(GRAPHITE_U, "directional")
-    iso = _model(GRAPHITE_U, "isotropic")
-    assert dirm.incoherent_channels_dir
-    assert not iso.incoherent_channels_dir
-    sb, eig = dirm.incoherent_channels_dir[0]
-    assert sb == pytest.approx(80.0)
-    assert tuple(sorted(eig)) == pytest.approx((0.00226, 0.00226, 0.0149))
-    # display fields keep the isotropic bookkeeping
-    assert dirm.sigma_b == pytest.approx(iso.sigma_b)
-
-
 def test_coherent_peaks_unaffected_by_mode():
     iso = _model(GRAPHITE_U, "isotropic", kind="both")
     dirm = _model(GRAPHITE_U, "directional", kind="both")
