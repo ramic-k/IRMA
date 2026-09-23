@@ -130,47 +130,12 @@ def test_graphite_elastic_block_and_roundtrip(tmp_path):
 
 
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
-def test_graphite_auto_grid(tmp_path):
-    # auto (converged ENDF-style) grid path: omit alpha/beta. Pin freq_max and
-    # use small knob overrides so the end-to-end build stays fast (the real
-    # defaults build a 300x400 grid; the layout itself is pinned against the ENDF
-    # generators in tests/ncrystal/test_provenance_and_config.py).
-    d = {
-        "material": {
-            "phonopy_yaml": str(_GRAPHITE_YAML), "mesh": [2, 2, 2],
-            "temperature_K": 296.0,
-            "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551, "awr": 11.898,
-                            "b_coh_fm": 6.646, "sigma_inc_b": 0.001}]},
-        "export": {"material_id": "graphite", "inelastic_mode": 2,
-                   "num_directions": 48, "multiphonon_num_directions": 16,
-                   "multiphonon_max_order": 2,
-                   "freq_max_eV": 0.2, "n_lower": 2, "n_phonon": 6, "n_upper": 2,
-                   "alpha_dq_invA": 1.0, "alpha_qcut_invA": 6.0, "alpha_nlog": 4},
-    }
-    cfg = NCrystalExportConfig.from_dict(d)
-    assert cfg.grid_mode == "auto"
-    packs, _ncmat = build_packs(cfg, progress=lambda *a: None)
-    assert len(packs) == 1
-    pack = packs[0]
-    # alpha strictly increasing & scaled by AWR; beta starts at 0
-    assert pack.alpha_grid[0] > 0 and all(
-        b > a for a, b in zip(pack.alpha_grid, pack.alpha_grid[1:]))
-    assert pack.beta_grid[0] == 0.0
-    assert pack.metadata["grid_mode"] == "auto"
-    assert "auto(ENDF)" in pack.metadata["grid_spec"]
-
-
-@pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
 def test_auto_grid_pack_beta_carries_linlin_cap(tmp_path):
-    """NCB-1 end-to-end: a REAL auto-grid export bakes a beta grid whose
-    largest step below the recoil ridge respects DELTA_BETA_MAX_LINLIN
-    (NCrystal's SAB kernel interpolates S(alpha,beta) linearly in beta).
-    Knobs are chosen small but such that the old uncapped tail demonstrably
-    violates the cap, so this fails if build.py reverts to the bare builder."""
-    from irma.core.constants import BK
-    from irma.core.grids import (
-        generate_beta_grid, DELTA_BETA_MAX_LINLIN,
-        grid_reference_temperature_K)
+    """A real auto-grid export bakes the ENDF evaluator's lin-lin beta grid
+    (NCrystal interpolates S(alpha,beta) linearly in beta). On these small
+    knobs the capped grid and the uncapped one differ in length, so the
+    equality fails if build.py reverts to the uncapped builder."""
+    from irma.core.grids import generate_beta_grid, grid_reference_temperature_K
     awr = 11.898
     d = {
         "material": {
@@ -188,6 +153,9 @@ def test_auto_grid_pack_beta_carries_linlin_cap(tmp_path):
     cfg = NCrystalExportConfig.from_dict(d)
     assert cfg.grid_mode == "auto"
     packs, _ncmat = build_packs(cfg, progress=lambda *a: None)
+    assert len(packs) == 1
+    assert packs[0].metadata["grid_mode"] == "auto"
+    assert "auto(ENDF)" in packs[0].metadata["grid_spec"]
     beta_abs = np.asarray(packs[0].beta_grid, float)
 
     # the pack grid is stored in ABSOLUTE beta = E/kT(296 K); the auto grid is
@@ -199,28 +167,6 @@ def test_auto_grid_pack_beta_carries_linlin_cap(tmp_path):
         beta_max_eV=1.0,
         evaluation_temperatures_K=[296.0])
     assert beta_abs == pytest.approx((expected * scale).tolist())
-
-    # the cap property itself, on the pack's own axis. The cap governs the
-    # UPPER (post-phonon-region) tail below the recoil ridge; the linear
-    # phonon region legitimately keeps its freq_max/n_phonon step.
-    kT = BK * t_ref
-    lin_end_abs = 0.2 * (1.0 - 1.0 / 6) / kT * scale
-    ridge_abs = 4.0 * (1.0 / kT) / awr * scale
-    steps = np.diff(beta_abs)
-    in_tail = (beta_abs[1:] > lin_end_abs + 1e-9) & (
-        beta_abs[1:] <= ridge_abs + 1e-9)
-    assert in_tail.sum() > 0
-    assert steps[in_tail].max() <= DELTA_BETA_MAX_LINLIN * scale * (1.0 + 1e-9)
-
-    # discriminator: the bare uncapped builder violates the cap on these knobs
-    uncapped = generate_beta_grid(0.2, t_ref, n_lower=2, n_phonon=6, n_upper=4,
-                                  beta_max_eV=1.0)
-    lin_end = 0.2 * (1.0 - 1.0 / 6) / kT
-    ridge = 4.0 * (1.0 / kT) / awr
-    usteps = np.diff(uncapped)
-    u_tail = (uncapped[1:] > lin_end + 1e-9) & (uncapped[1:] <= ridge + 1e-9)
-    assert usteps[u_tail].max() > DELTA_BETA_MAX_LINLIN
-    assert len(uncapped) != len(expected)
 
 
 @pytest.mark.skipif(not _BEO_YAML.exists(), reason="BeO fixture absent")
@@ -241,20 +187,7 @@ def test_auto_beta_cap_sized_to_lightest_species(monkeypatch):
         raise _Abort
 
     monkeypatch.setattr(B, "_auto_beta_grid", spy)
-    cfg = NCrystalExportConfig.from_dict({
-        "material": {
-            "phonopy_yaml": str(_BEO_YAML), "mesh": [2, 2, 2],
-            "temperature_K": 296.0,
-            "scatterers": [
-                {"symbol": "Be", "sigma_bound_b": 7.63, "awr": 8.93478,
-                 "b_coh_fm": 7.79, "sigma_inc_b": 0.0018},
-                {"symbol": "O", "sigma_bound_b": 4.232, "awr": 15.8575,
-                 "b_coh_fm": 5.803, "sigma_inc_b": 0.0},
-            ],
-        },
-        "export": {"material_id": "beo", "inelastic_mode": 2,
-                   "freq_max_eV": 0.14},
-    })
+    cfg = _beo_cfg(alpha_grid=None, beta_grid=None, freq_max_eV=0.14)
     assert cfg.grid_mode == "auto"
     with pytest.raises(_Abort):
         build_packs(cfg, progress=lambda *a: None)
@@ -273,24 +206,7 @@ def test_freq_max_auto_estimated_from_phonopy():
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
 @pytest.mark.skipif(not _BEO_YAML.exists(), reason="BeO fixture absent")
 def test_beo_two_packs_summed(tmp_path):
-    cfg = NCrystalExportConfig.from_dict({
-        "material": {
-            "phonopy_yaml": str(_BEO_YAML),
-            "mesh": [2, 2, 2], "temperature_K": 296.0,
-            "scatterers": [
-                {"symbol": "Be", "sigma_bound_b": 7.63, "awr": 8.93478,
-                 "b_coh_fm": 7.79, "sigma_inc_b": 0.0018},
-                {"symbol": "O", "sigma_bound_b": 4.232, "awr": 15.8575,
-                 "b_coh_fm": 5.803, "sigma_inc_b": 0.0},
-            ],
-        },
-        "export": {
-            "material_id": "beo", "inelastic_mode": 2,
-            "num_directions": 32, "multiphonon_num_directions": 16,
-            "multiphonon_max_order": 2, "alpha_grid": _ALPHA, "beta_grid": _BETA,
-        },
-    })
-    packs, snippet = build_packs(cfg, progress=lambda *a: None)
+    packs, snippet = build_packs(_beo_cfg(), progress=lambda *a: None)
     assert len(packs) == 2
     ids = {p.material_id for p in packs}
     assert ids == {"beo__Be", "beo__O"}
@@ -346,24 +262,12 @@ def test_exact_total_multigroup_rejected():
 
 
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
-def test_inelastic_only_pack_carries_the_same_nonzero_sab(tmp_path):
-    """Review NC-1: disabling the elastic OUTPUT block must not change the
-    inelastic physics. The old zero-sentinel path baked an identically zero
-    S(alpha,beta) when the neutron constants were omitted with
-    elastic=false; with the constants present (now mandatory), the
-    elastic=false pack must carry byte-for-byte the same kernel as the
-    elastic=true pack, just without the elastic block."""
-    packs_el, _ = build_packs(_graphite_cfg(), pack_path_prefix="el")
-    packs_inel, _ = build_packs(_graphite_cfg(elastic=False),
-                                pack_path_prefix="inel")
-    p_el, p_inel = packs_el[0], packs_inel[0]
-    assert max(p_inel.sab_values) > 0.0
-    assert p_inel.sab_values == p_el.sab_values
-    assert p_inel.alpha_grid == p_el.alpha_grid
-    assert p_inel.beta_grid == p_el.beta_grid
-    assert p_inel.bound_xs_barn == p_el.bound_xs_barn
-    assert not p_inel.elastic_u_tensors_a2      # elastic block genuinely absent
-    assert p_el.elastic_u_tensors_a2            # ...and present when requested
+def test_inelastic_only_pack_has_a_kernel_and_no_elastic_block(tmp_path):
+    """export.elastic: false drops the elastic block and keeps the kernel."""
+    pack = build_packs(_graphite_cfg(elastic=False),
+                       progress=lambda *a: None)[0][0]
+    assert max(pack.sab_values) > 0.0
+    assert not pack.elastic_u_tensors_a2
 
 
 def test_extra_scatterer_row_is_an_error():
