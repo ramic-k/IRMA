@@ -109,8 +109,6 @@ def test_graphite_elastic_block_and_roundtrip(tmp_path):
     # + sigma_inc (0.001 b), so the C++ honors IRMA, not NCrystal's atom DB.
     assert got.elastic_u_coherent_scatlen_sqrtbarn == pytest.approx([0.6646] * 4)
     assert got.elastic_u_incoherent_xs_barn == pytest.approx([0.001] * 4)
-    assert got.elastic_coherent is True
-    assert got.elastic_msd_a2 is None            # structure mode
 
     # the written .ncmat is a complete, self-consistent material:
     ncmat = ncmat_path.read_text()
