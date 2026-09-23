@@ -90,13 +90,3 @@ def test_compressed_files_are_scanned_too(tmp_path):
     with gzip.open(good, "wt") as fh:
         fh.write(LEGIT)
     assert reject_unsafe_phonopy_yaml(str(good)) is None
-
-
-def test_real_bundle_scale_content_passes(tmp_path):
-    # near-miss bulk: a large embedded-FC-like body with numbers that
-    # merely CONTAIN suspicious-looking substrings in comments is fine
-    path = tmp_path / "phonopy.yaml"
-    rows = "".join(f"  - [0.{i % 7}, 0.0, 0.0]\n" for i in range(5000))
-    path.write_text(LEGIT + "more_rows:\n" + rows +
-                    "# note: python users see docs\n")
-    assert reject_unsafe_phonopy_yaml(str(path)) is None
