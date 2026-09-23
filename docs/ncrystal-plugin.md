@@ -366,10 +366,13 @@ against an IRMA tape:
   the bound cross section out; the exporter rescales the table to the data
   file's advertised `bound_xs_barn` so NCrystal's `SABScatter` reproduces the
   intended absolute cross section.
-- **Negative-fringe clip.** Mode-2 coherent interference histograms can leave
-  small negative cancellation bins in a principal-partitioned `S(α,β)`; the
-  exporter clips them to zero with a table-scale guard, the same projection
-  IRMA's ENDF writer applies before NJOY sees the table.
+- **Negative-cell clip.** A species' share of the mode-2 coherent law can be
+  negative where the interference is destructive. ENDF and NCrystal tables
+  cannot hold negative values, so the exporter, like IRMA's ENDF writer, sets
+  those cells to zero; the summed material law is then slightly larger than
+  the exact total. A cell below -1% of the table maximum stops the export: the
+  direction sampling is too coarse for that share, and a larger
+  `export.num_directions` fixes it.
 - **Provenance pin.** Each data file records the IRMA git SHA (marked `-dirty`
   if the tree had uncommitted edits), IRMA version, the phonopy-yaml SHA-256,
   mesh, direction counts, multiphonon order, and temperature, as `meta.*` lines.
