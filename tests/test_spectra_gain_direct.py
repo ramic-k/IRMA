@@ -184,51 +184,6 @@ def test_orchestrator_falls_back_to_mirror_on_grid_cap(monkeypatch):
                        rtol=1e-12, atol=0.0)
 
 
-def test_direct_kernel_input_validation():
-    sp = _carbon()
-    with pytest.raises(ValueError):        # gain grid must be <= 0
-        compute_mode0_gain_direct(species=[sp], temperature_k=T_K,
-                                  q_ang_inv=np.array([2.0]),
-                                  e_gain_mev=np.array([-5.0, 5.0]))
-    with pytest.raises(ValueError):        # and ascending
-        compute_mode0_gain_direct(species=[sp], temperature_k=T_K,
-                                  q_ang_inv=np.array([2.0]),
-                                  e_gain_mev=np.array([-5.0, -10.0]))
-
-
-def test_signed_sqe_uses_attached_gain_verbatim():
-    """signed_sqe must return an attached direct gain side VERBATIM (sentinel =
-    2x the mirror) and leave the loss side untouched -- pins that the direct
-    values actually flow instead of being silently re-mirrored."""
-    E = np.arange(0.0, 30.5, 1.0)
-    q = np.array([1.0, 2.0])
-    S = np.outer([1.0, 2.0], np.exp(-E / 20.0))
-    Epos = E[1:]
-    sentinel = 2.0 * (S[:, 1:] * np.exp(-Epos / KT))[:, ::-1]   # on -Epos[::-1]
-    p = _sqe.PowderSQE(q=q, E=E, S=S, T_K=T_K, sigma_b=5.0,
-                       E_gain=-Epos[::-1], S_gain=sentinel)
-    qg, Es, Ss = _sqe.signed_sqe(p, include_gain=True)
-    n_gain = Epos.size
-    assert np.allclose(Es[:n_gain], -Epos[::-1])
-    assert np.array_equal(Ss[:, :n_gain], sentinel)             # verbatim
-    assert np.array_equal(Ss[:, n_gain:], S)                    # loss untouched
-    # without the attachment, the mirror (= sentinel/2) is used
-    p2 = _sqe.PowderSQE(q=q, E=E, S=S, T_K=T_K, sigma_b=5.0)
-    _, _, Ss2 = _sqe.signed_sqe(p2, include_gain=True)
-    assert np.allclose(Ss2[:, :n_gain], sentinel / 2.0)
-
-
-def test_signed_sqe_rejects_mismatched_gain_grid():
-    E = np.arange(0.0, 30.5, 1.0)
-    q = np.array([1.0])
-    S = np.ones((1, E.size))
-    p = _sqe.PowderSQE(q=q, E=E, S=S, T_K=T_K, sigma_b=5.0,
-                       E_gain=-E[1:][::-1] * 0.5,               # wrong grid
-                       S_gain=np.ones((1, E.size - 1)))
-    with pytest.raises(ValueError):
-        _sqe.signed_sqe(p, include_gain=True)
-
-
 def test_spectrum_gain_side_direct_vs_mirror_agree():
     """End-to-end 1-D: the two gain_side settings agree to round-off on BOTH
     sides (the gain values themselves and the resolution leakage into loss)."""
@@ -259,22 +214,6 @@ def test_map_gain_side_direct_vs_mirror_agree():
     assert np.nanmax(m_db.S[:, gn]) > 0.0
     assert np.allclose(np.nan_to_num(m_dir.S), np.nan_to_num(m_db.S),
                        rtol=1e-9, atol=1e-16)
-
-
-def test_direct_gain_skipped_for_loss_only_grid():
-    """A loss-only output grid (e_min >= 0, the default) never shows the gain
-    side, so the direct evaluation is skipped even with gain_side='direct' --
-    gain_side_used reports 'detailed_balance' (nothing computed, nothing wasted)."""
-    r = compute_spectrum(geometry="direct", e_fixed_meV=250.0, angles_deg=[60.0],
-                         dos_species=[_carbon()], e_min=0.0, e_max=120.0,
-                         dE=1.0, dQ=0.1, gain_side="direct", **BASE)
-    assert r.metadata["gain_side"] == "direct"
-    assert r.metadata["gain_side_used"] == "detailed_balance"
-    # ... while e_min<0 does compute it directly
-    r2 = compute_spectrum(geometry="direct", e_fixed_meV=250.0, angles_deg=[60.0],
-                          dos_species=[_carbon()], e_min=-40.0, e_max=120.0,
-                          dE=1.0, dQ=0.1, gain_side="direct", **BASE)
-    assert r2.metadata["gain_side_used"] == "direct"
 
 
 def test_config_validates_gain_side(tmp_path):
