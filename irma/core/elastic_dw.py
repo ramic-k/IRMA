@@ -12,11 +12,10 @@ the cumulative-S TAB1/LIST records. Three physical forms exist:
     anisotropic ``W_s(Ghat) = (Ghat.F_s.Ghat)/(awr_s kT)`` summed over the
     reciprocal-vector directions merged into the edge.
 
-This module is the single source of that arithmetic for all three
-consumers -- ``_build_coherent_elastic`` (iel=1-6), ``_build_cef_coherent``
-(iel=10 SEF) and ``_build_mef_elastic`` (iel=10 MEF; identical except a
-trailing ``* scale``) -- so the elastic Debye-Waller treatment cannot
-drift between the classic and generalized paths.
+This module is the single source of that arithmetic for
+``_build_coherent_elastic`` (iel=1-6) and ``_build_cef_coherent`` (iel=10
+SEF, and MEF through it with scale 1), so the elastic Debye-Waller treatment
+cannot drift between the classic and generalized paths.
 
 BYTE-IDENTITY CONTRACT: the operation order here reproduces the original
 closures exactly (the ``W_si``/``W_ti`` recompute pattern, the
