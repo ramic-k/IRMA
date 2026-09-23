@@ -73,6 +73,15 @@ def test_cutoff_that_removes_every_mode_is_refused():
     _expect(deck, "removes every phonon mode")
 
 
+def test_card6d_positions_must_match_the_phonopy_sites():
+    # one Card 6d row per element used to match by symbol alone
+    pytest.importorskip("phonopy")
+    from test_noncubic_fast_ci import _DECK, _YAML
+    deck = _DECK.format(mode=2, yaml=_YAML).replace(
+        "0.333333333333 0.666666666667 0.25", "0.3 0.6 0.25")
+    _expect(deck, "do not match the phonopy primitive cell")
+
+
 def test_empty_file():
     _expect("", "no LEAPR cards found")
 
