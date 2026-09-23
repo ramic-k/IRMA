@@ -94,8 +94,8 @@ def _parse_line(line):
         quote_char = stripped[0]
         # Scan for the closing quote, honoring Fortran doubled-quote
         # escaping ('' inside a '-quoted string is a literal quote).
+        # A missing closing quote keeps everything after the opening one.
         chars = []
-        close_idx = -1
         j = 1
         while j < len(stripped):
             if stripped[j] == quote_char:
@@ -103,20 +103,10 @@ def _parse_line(line):
                     chars.append(quote_char)
                     j += 2
                     continue
-                close_idx = j
                 break
             chars.append(stripped[j])
             j += 1
-        if close_idx < 0:
-            # No closing quote found: keep the chars already decoded (with
-            # doubled-quote escapes resolved) so the result is consistent
-            # whether or not a closing quote was located. Re-slicing
-            # stripped[1:] here would have discarded the escape processing.
-            pass
-        text = ''.join(chars)
-        result = [('string', text)]
-        result.append(CARD_END)
-        return result
+        return [('string', ''.join(chars)), CARD_END]
 
     # Lines starting with * are comment/title lines in NJOY.
     # Fortran's list-directed `read(nsysi,*) text` reads only the first
@@ -132,9 +122,7 @@ def _parse_line(line):
             if ch in (' ', '\t', ',', '/'):
                 break
             token += ch
-        result = [('string', token)]
-        result.append(CARD_END)
-        return result
+        return [('string', token), CARD_END]
 
     # Check for / card terminator
     has_slash = '/' in stripped
@@ -196,6 +184,7 @@ class TokenReader:
         self.raw_lines = raw_lines
         self.filename = filename
         self._card = None
+        self._card_line = None
 
     def card(self, label):
         """Set the current card label used in deck-error messages."""
@@ -207,8 +196,7 @@ class TokenReader:
         """Source line of the current (or last) token, if line info exists."""
         if not self.token_lines:
             return None
-        idx = min(self.pos, len(self.token_lines) - 1)
-        return self.token_lines[idx] if self.token_lines else None
+        return self.token_lines[min(self.pos, len(self.token_lines) - 1)]
 
     def _fail(self, msg, line=None):
         """Raise a DeckError carrying the current card and input line."""
@@ -228,7 +216,7 @@ class TokenReader:
         consumed the card by the time semantic checks run).
         """
         if not cond:
-            self._fail(msg, line=getattr(self, "_card_line", None))
+            self._fail(msg, line=self._card_line)
 
     @staticmethod
     def _token_repr(t):
@@ -260,10 +248,6 @@ class TokenReader:
         """
         if defaults is None:
             defaults = [0] * n
-        if len(defaults) < n:
-            raise ValueError(
-                f"defaults list has {len(defaults)} entries but {n} "
-                f"values were requested")
         if self.pos >= len(self.tokens):
             self._fail("input ended before this card")
         result = list(defaults[:n])
@@ -309,10 +293,6 @@ class TokenReader:
         """
         if defaults is None:
             defaults = [0.0] * n
-        if len(defaults) < n:
-            raise ValueError(
-                f"defaults list has {len(defaults)} entries but {n} "
-                f"values were requested")
         if self.pos >= len(self.tokens):
             self._fail("input ended before this card")
         result = list(defaults[:n])
@@ -333,12 +313,8 @@ class TokenReader:
     def read_card_floats(self):
         """Read all numeric values remaining on the current card.
 
-        A non-numeric token where a numeric field is expected (e.g. the
-        method selector written as the word 'numerical' instead of its code
-        0 on a variable-length card) is a malformed deck: it is reported
-        here rather than silently dropped by _consume_card_end, which would
-        let the surviving numeric values pass a downstream field-count check
-        with a field defaulted away.
+        A non-numeric token is an error, not silently dropped, so a word in a
+        numeric field cannot pass a later field-count check.
         """
         result = []
         while self.pos < len(self.tokens) and self.tokens[self.pos] not in _RECORD_ENDS:
@@ -350,23 +326,6 @@ class TokenReader:
             result.append(float(t))
             self.pos += 1
         self._consume_card_end()
-        return result
-
-    def peek_card_floats(self):
-        """Peek numeric values remaining on the current card.
-
-        Non-consuming lookahead: a public probing API for callers that need
-        to inspect a variable-length card's field count before deciding how
-        to read it (no production caller yet; exercised by the unit tests).
-        """
-        result = []
-        pos = self.pos
-        while pos < len(self.tokens) and self.tokens[pos] not in _RECORD_ENDS:
-            t = self.tokens[pos]
-            if not isinstance(t, (int, float)):
-                break
-            result.append(float(t))
-            pos += 1
         return result
 
     def peek_token(self):
@@ -391,27 +350,13 @@ class TokenReader:
     def read_float_array(self, n):
         """Read exactly n floats (possibly spanning multiple lines).
 
-        Skips CARD_END markers between lines since arrays can span multiple
-        records. Consumes the trailing CARD_END after the last value.
-
-        Deck-format requirement: the array's '/' terminator must sit on the
-        last DATA line (after the n-th value), matching every native NJOY
-        deck. If the n-th value ends a bare continuation line and the '/'
-        is placed alone on the FOLLOWING line, _consume_card_end consumes
-        only that continuation's LINE_END; the lone '/' is left as an
-        orphan CARD_END that the next scalar read sees as an empty card
-        (its fields take defaults), shifting every later card by one. This
-        matches NJOY's list-directed read, which also rolls a lone '/' into
-        the next read. (Pinned by test_lone_slash_array_terminator_*.)
+        Continuation lines (LINE_END) are skipped; a '/' (CARD_END) before
+        the n-th value is an error. The '/' must sit on the last data line:
+        a lone '/' on the next line is read as an empty next card, as in
+        NJOY's list-directed read.
         """
         result = []
         for _ in range(n):
-            # LINE_END = continuation line inside a multi-line array (or a
-            # blank line): skip. CARD_END = the '/' terminator: hitting it
-            # mid-array means the deck supplies fewer values than the count
-            # card promised; hitting it FIRST means a stray empty '/' card sits
-            # where the array should start, which is reported as a deck error
-            # rather than silently consuming values from the next card.
             while self.pos < len(self.tokens) and self.tokens[self.pos] == LINE_END:
                 self.pos += 1
             if self.pos >= len(self.tokens):
@@ -459,20 +404,14 @@ class TokenReader:
         if isinstance(t, tuple) and t[0] == 'string':
             self._consume_card_end()
             return t[1]
-        # An UNQUOTED string card: if the raw source line shows the token was
-        # truncated by a glued '/' (e.g. `dir/file.yaml` tokenizes to just `dir`,
-        # because an unquoted '/' ends the card), the user almost certainly meant
-        # a path -- tell them to quote it instead of silently using the fragment.
+        # An unquoted path is cut at its first '/' (`dir/file.yaml` reads as
+        # `dir`); report that instead of using the fragment. `file.yaml/` and
+        # `file.yaml/ comment` are not truncated.
         if not allow_numeric and self.raw_lines and self.token_lines:
             ln = self.token_lines[min(self.pos - 1, len(self.token_lines) - 1)]
             if ln is not None and 1 <= ln <= len(self.raw_lines):
                 raw = self.raw_lines[ln - 1].strip()
                 ts = str(t)
-                # Only flag a TRUNCATED path: the token glued to '/' with MORE
-                # non-space content after it (e.g. `dir/file.yaml`). A bare
-                # filename followed by the legal glued terminator (`file.yaml/`)
-                # or `file.yaml/ comment` is NOT truncated -- nothing path-like
-                # follows the slash.
                 if (raw.startswith(ts) and len(raw) > len(ts) + 1
                         and raw[len(ts)] == '/'
                         and not raw[len(ts) + 1].isspace()):

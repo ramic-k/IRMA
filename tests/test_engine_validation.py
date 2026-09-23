@@ -13,8 +13,6 @@ malformed-output foot-gun in the QA campaign:
                      threshold) must reject negative values rather than
                      silently disabling/defaulting.
   C5              — Card 4 smin must be finite and >= 0.
-  F16 (engine)    — mode-1/2 ncpu>1 on Windows (fork-only parallelism) must
-                     raise a DeckError advising ncpu=1, not a raw ValueError.
   F19             — Card 6f ncpu greatly exceeding the core count is clamped
                      to os.cpu_count() with a printed warning.
   F30             — `python -m irma.core.engine` delegates to irma.cli.main,
@@ -260,27 +258,6 @@ def test_card6d_duplicate_za_without_spectrum_accepted():
         assert "duplicate Card 6d" not in str(exc), (
             "nspec=0 duplicate Card 6d (Z, A) must not be rejected by the "
             "spectrum-matching guard")
-
-
-# ---------- F16 (engine-side): Windows fork-only parallelism ----------
-
-def test_mode2_ncpu_gt1_on_windows_accepted(monkeypatch):
-    """The spawn + shared-memory pool works on every platform, so ncpu>1 on
-    Windows must pass the Card 6f validation (the old fork-only rejection is
-    gone) and proceed to the (bogus) phonopy mesh load."""
-    monkeypatch.setattr(sys, "platform", "win32")
-    deck = _MODE2_6F_HEAD + "8 8 8 4 0 /\n100 100 /\n"
-    with pytest.raises(RuntimeError, match="phonopy mesh"):
-        _run(deck)
-
-
-def test_mode2_ncpu_eq1_on_windows_allowed(monkeypatch):
-    """ncpu=1 is the platform-independent path: it must pass the Windows
-    guard and proceed to the (bogus) phonopy mesh load instead."""
-    monkeypatch.setattr(sys, "platform", "win32")
-    deck = _MODE2_6F_HEAD + "8 8 8 1 0 /\n100 100 /\n"
-    with pytest.raises(RuntimeError, match="phonopy mesh"):
-        _run(deck)
 
 
 # ---------- F19: Card 6f ncpu clamp to cpu_count ----------

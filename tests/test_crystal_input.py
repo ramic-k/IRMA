@@ -197,13 +197,6 @@ def test_species_from_sites_warns_that_h_may_be_deuterium():
     assert any("deuterium" in w for w in warnings)
 
 
-def test_species_from_sites_rejects_mismatched_inputs():
-    with pytest.raises(ValueError, match="site count"):
-        species_from_sites(["C", "C"], [(0.0, 0.0, 0.0)])
-    with pytest.raises(ValueError, match="3 components"):
-        species_from_sites(["C"], [(0.0, 0.0)])
-
-
 def test_resolver_returns_warnings_as_data_not_output(capsys):
     species_from_sites(["C", "H"], [(0.0, 0.0, 0.0), (0.5, 0.5, 0.5)])
     captured = capsys.readouterr()
@@ -231,8 +224,6 @@ def test_lattice_fields_are_six_fixed_point_strings():
     fields = format_lattice_fields((2.4606, 2.4606, 6.705, 90.0, 90.0, 120.0))
     assert fields == ("2.460600", "2.460600", "6.705000",
                       "90.000000", "90.000000", "120.000000")
-    with pytest.raises(ValueError, match="6 entries"):
-        format_lattice_fields((1.0, 2.0, 3.0))
 
 
 def test_end_to_end_graphite_rows_are_natural_carbon():

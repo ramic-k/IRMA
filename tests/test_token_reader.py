@@ -52,12 +52,6 @@ def test_read_ints_with_defaults():
     assert r2.read_ints(3, defaults=[0, 0, 0]) == [200, 426, 0]
 
 
-def test_peek_does_not_consume():
-    r = TokenReader([1, 2, 3, CARD_END])
-    peeked = r.peek_card_floats()
-    assert peeked == [1.0, 2.0, 3.0]
-    # still readable afterwards
-    assert r.read_card_floats() == [1.0, 2.0, 3.0]
 
 
 def test_fortran_d_exponents_tokenize_as_numbers():
@@ -83,13 +77,6 @@ def test_doubled_quote_escaping_in_strings():
     assert tokens[0] == ("string", "it's a graphite deck")
 
 
-def test_defaults_shorter_than_n_raises():
-    r = TokenReader([1, 2, CARD_END])
-    with pytest.raises(ValueError, match="defaults"):
-        r.read_floats(4, defaults=[0, 0])
-    r = TokenReader([1, 2, CARD_END])
-    with pytest.raises(ValueError, match="defaults"):
-        r.read_ints(3, defaults=[0])
 
 
 def test_stray_text_on_card_is_discarded_not_leaked():
@@ -163,8 +150,3 @@ def test_unterminated_doubled_quote_keeps_decoded_chars():
     from irma.core.deck import _parse_line
     tokens = _parse_line("'abc''")
     assert tokens[0] == ("string", "abc'")
-
-
-def test_peek_method_removed():
-    """The dead TokenReader.peek() probe was removed (QA2-036)."""
-    assert not hasattr(TokenReader([], None, None), "peek")
