@@ -111,11 +111,15 @@ def _noncubic_mt4_step(crystal_info, ssm, itemp, alpha, beta, nalpha, nbeta,
 def _store_directional_species_dw(crystal_info, itemp, ntempr, F_matrix_all):
     """Store the per-species averaged and per-site Debye-Waller F-matrices
     that _build_cef_coherent uses for directional attenuation
-    (inelastic_mode=1/2)."""
+    (inelastic_mode=1/2), rotated into the comb's frame when Card 6c is the
+    phonopy cell (``nc_frame_rotation``)."""
     site_groups = crystal_info['nc_atom_type_site_groups']
     atom_types_list = crystal_info['atom_types']
     nsp = len(atom_types_list)
     F_arr = np.asarray(F_matrix_all)
+    M = crystal_info.get('nc_frame_rotation')
+    if M is not None:
+        F_arr = M.T @ F_arr @ M
     F_species = np.zeros((nsp, 3, 3))
     for si in range(nsp):
         F_species[si] = F_arr[site_groups[si]].mean(axis=0)

@@ -12,6 +12,7 @@ from irma.core.deck import DeckError
 from irma.core.crystal import (
     AtomSite, CrystalStructure,
     _build_atom_types_expanded, _group_phonopy_atoms_by_type,
+    lattice_to_cell_params, standard_frame_rotation,
 )
 from irma.core.noncubic_inelastic import NoncubicInelasticControls
 
@@ -127,6 +128,27 @@ def _parse_extinction_card(reader, elastic_mode):
           f"L={L:g} Å, dist={dist}, rec={recipe}, rmse_tol={rmse_tol:g}")
     return {"model": model, "l": l, "g": g, "L": L,
             "dist": dist, "recipe": recipe, "rmse_tol": rmse_tol}
+
+
+def _dw_frame_rotation(card6c, lattice_ang):
+    """Rotation taking the phonopy Debye-Waller tensors into the frame of the
+    Card 6c comb (a along x, b in the xy-plane), or None.
+
+    Applied only when Card 6c is the phonopy cell (lengths within 1e-3
+    relative, angles within 0.01 degrees): Card 6c may describe another cell,
+    and then the tensors stay as they are, with a NOTE.
+    """
+    M = standard_frame_rotation(lattice_ang)
+    if M is None:
+        return None
+    ph = lattice_to_cell_params(lattice_ang)
+    if (all(abs(x - y) <= 1e-3 * y for x, y in zip(card6c[:3], ph[:3]))
+            and all(abs(x - y) <= 0.01 for x, y in zip(card6c[3:], ph[3:]))):
+        return M
+    print("  NOTE: the phonopy cell is not oriented with a along x and b in the "
+          "xy-plane, and Card 6c describes a different cell, so the "
+          "Debye-Waller tensors of the coherent elastic are not rotated")
+    return None
 
 
 def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
@@ -547,6 +569,9 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
                                   f"model: {exc}")
         principal_nc_site_indices = list(nc_atom_type_site_groups[principal_atom_idx])
         crystal_info['nc_mesh_data'] = nc_mesh_data
+        crystal_info['nc_frame_rotation'] = _dw_frame_rotation(
+            (latt_a, latt_b, latt_c, latt_alpha, latt_beta, latt_gamma),
+            nc_mesh_data.lattice_ang)
         crystal_info['nc_ncpu'] = nc_ncpu
         crystal_info['nc_phonopy_yaml_path'] = phonopy_yaml_path
         crystal_info['nc_mesh_dim'] = [mesh_nx, mesh_ny, mesh_nz]

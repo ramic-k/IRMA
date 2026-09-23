@@ -180,6 +180,14 @@ and b), each in `(0, 180)`. An angle
 triple that does not form a valid cell (non-positive metric determinant) is
 rejected with Card-6c context.
 
+The Bragg comb is built with a along x and b in the xy-plane. With
+`inelastic_mode=1/2` the directional Debye-Waller tensors come from the
+phonopy model, in its own Cartesian frame. When that model's lattice is
+oriented differently and Card 6c is the phonopy cell (lengths within 1e-3
+relative, angles within 0.01°), the tensors are rotated into the comb's frame.
+When Card 6c describes a different cell, they are used as they are and a NOTE
+line says so.
+
 #### Card 6d: atom types (repeated `nat` times)
 
 `A` names the isotope, or `0` for the natural element. It is an

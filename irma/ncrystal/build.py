@@ -449,8 +449,14 @@ def _attach_elastic(pack, elastic_state, neutron_by_symbol, *,
     positions and per-site neutron data (the config's b_coh [sqrt(barn)] and
     sigma_inc, in the tensor site order). The C++ builds both elastic channels
     from these; ``incoherent_elastic_mode='directional'`` has it sample the
-    orientation-averaged incoherent Debye-Waller factor."""
+    orientation-averaged incoherent Debye-Waller factor. The tensors are
+    rotated into NCrystal's frame for the NCMAT cell (a along x, b in the
+    xy-plane)."""
+    from irma.core.crystal import standard_frame_rotation
     U = np.asarray(elastic_state["thermal_displacement_matrices_ang2"], float)
+    M = standard_frame_rotation(elastic_state["primitive_lattice_ang"])
+    if M is not None:
+        U = M.T @ U @ M
     symbols = [str(s) for s in elastic_state["primitive_symbols"]]
     frac = np.asarray(elastic_state["primitive_scaled_positions"], float)
     pack.elastic_u_tensors_a2 = [float(v) for v in U.reshape(-1)]

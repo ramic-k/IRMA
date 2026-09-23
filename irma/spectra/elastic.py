@@ -557,6 +557,7 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     """
     from irma.core.crystal import (
         CrystalStructure, AtomSite, _site_tensors_uniform, lattice_to_cell_params,
+        standard_frame_rotation,
     )
     from irma.core.phonopy_io import thermal_displacements_to_f_matrix
 
@@ -577,6 +578,10 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     # per-species DW: F = A kT U / (hbar^2/2m_n) averaged over each species' sites
     kT_eV = BK * float(T_K)
     F_atom = thermal_displacements_to_f_matrix(U, awr_atom, kT_eV)   # (n_atoms,3,3)
+    # into the frame of the Bragg comb built from the cell parameters
+    M = standard_frame_rotation(lattice)
+    if M is not None:
+        F_atom = M.T @ F_atom @ M
     F_species = np.stack([F_atom[g].mean(axis=0) for g in groups])    # (nsp,3,3)
     f0_species = np.trace(F_species, axis1=1, axis2=2) / 3.0          # dimensionless
     awr_species = np.array([awr_atom[g[0]] for g in groups], float)
