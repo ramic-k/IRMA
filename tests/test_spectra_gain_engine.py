@@ -77,14 +77,7 @@ def test_loss_byte_identical_emit_gain_off_vs_on(mode):
         assert k in on
         assert np.array_equal(off[k], on[k]), f"loss array {k} not bit-identical"
     # the gain run additionally surfaces the gain grid + gain arrays
-    assert "e_gain_mev" in on
     assert any(k.endswith("_gain_barn_per_meV") for k in on)
-
-
-@pytest.mark.parametrize("mode", [1, 2])
-def test_gain_grid_is_mirror_of_positive_loss(mode):
-    E = np.arange(0.0, 120.01, 2.0)
-    on = _engine(mode, True, E)
     Eg = np.asarray(on["e_gain_mev"], float)
     Epos = on["e_mev"][on["e_mev"] > 0]
     assert Eg.shape == Epos.shape
