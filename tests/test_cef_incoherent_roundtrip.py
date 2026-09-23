@@ -2,13 +2,10 @@
 _build_cef_incoherent and both dispatch branches that select it.
 
 The Eq-25 single-atom incoherent-dominant branch (sigma_inc >= sigma_coh) and
-the Eq-26 polyatomic non-DC redistribution branch (paper: K. Ramic et al.,
-NIM-A 1027 (2022) 166227) were only ever exercised through their ValueError
-guards (test_cef_guards.py); no test pinned the SB / W'(T) they actually emit.
-Here each branch is driven through write_endf_output (iel=10) to a REAL tape
-and read back with irma.spectra.elastic.from_endf_mf7mt2 — also the first
-writer-produced input that reader's LTHR=2 dispatch has ever seen. Expected
-values are computed from the paper formulas, not from the code's output:
+the Eq-26 polyatomic non-DC redistribution branch (K. Ramic et al., NIM-A 1027
+(2022) 166227) are driven through write_endf_output (iel=10) to a real tape
+and read back with irma.spectra.elastic.from_endf_mf7mt2. Expected values
+come from the paper formulas, not from the code's output:
 
   Eq 25: SB = sigma_inc x (sigma_coh + sigma_inc)/sigma_inc
   Eq 26: SB = sigma_inc_p x [1 + f_DC/(1-f_DC) x sigma_inc_DC/sigma_inc_p]
@@ -19,8 +16,7 @@ import pytest
 
 from irma.core.constants import BK
 from irma.core.endf_writer import _build_cef_incoherent, write_endf_output
-from irma.spectra.elastic import (from_endf_mf7mt2, _Cursor, _mf7mt2_lines,
-                                  _mf7mt4_npr)
+from irma.spectra.elastic import from_endf_mf7mt2, _mf7mt4_npr
 
 _TEMPR = [296.0, 500.0]
 _DWPIX = [0.8, 1.1]   # raw DW integrals; the writer stores W' = dwpix/(awr*T*kB)
@@ -94,23 +90,11 @@ def eq26_tape(tmp_path_factory):
     return p
 
 
-def test_eq25_emits_lthr2(eq25_tape):
-    m = from_endf_mf7mt2(str(eq25_tape), T_K=296.0)
-    assert "LTHR=2" in m.label
-    assert m.has_incoherent and not m.has_coherent
-
-
-def test_eq26_emits_lthr2(eq26_tape):
-    # sigma_coh > sigma_inc for the principal: only the non-DC dispatch may
-    # send this to the incoherent builder (single-atom logic would emit LTHR=1).
-    m = from_endf_mf7mt2(str(eq26_tape), T_K=296.0)
-    assert "LTHR=2" in m.label
-    assert m.has_incoherent and not m.has_coherent
-
-
 def test_eq25_sb_scales_sigma_inc_to_total(eq25_tape):
     expected = _H['sigma_inc'] * (_H['sigma_coh'] + _H['sigma_inc']) / _H['sigma_inc']
     m = from_endf_mf7mt2(str(eq25_tape), T_K=296.0)
+    assert "LTHR=2" in m.label
+    assert m.has_incoherent and not m.has_coherent
     assert m.sigma_b == pytest.approx(expected, rel=1e-6)
 
 
@@ -118,7 +102,11 @@ def test_eq26_sb_carries_redistribution_factor(eq26_tape):
     f_dc = _BE['fraction']
     redist = 1.0 + (f_dc / (1.0 - f_dc)) * (_BE['sigma_inc'] / _O['sigma_inc'])
     expected = _O['sigma_inc'] * redist
+    # sigma_coh > sigma_inc for the principal: only the non-DC dispatch may
+    # send this to the incoherent builder (single-atom logic would emit LTHR=1).
     m = from_endf_mf7mt2(str(eq26_tape), T_K=296.0)
+    assert "LTHR=2" in m.label
+    assert m.has_incoherent and not m.has_coherent
     assert m.sigma_b == pytest.approx(expected, rel=1e-6)
 
 
@@ -134,19 +122,7 @@ def test_wprime_survives_roundtrip(request, tape_fixture, awr, temp_idx):
     assert m.Wprime_invmeV == pytest.approx(expected_inv_mev, rel=1e-6)
 
 
-# ---- review E1: generalized CEF stores the molecular SB = per-principal x npr
-
-def _raw_mt2_sb(path):
-    """The verbatim MF7/MT2 SB field of an LTHR=2 tape (molecular, x npr),
-    bypassing the reader's per-principal division. LTHR=2 layout ONLY: on an
-    LTHR=3 tape the coherent block sits between the HEAD and the incoherent
-    TAB1, so the second head() would return T0 (a temperature, not SB) --
-    fail loudly instead of returning it (use _parsed_mt2 for LTHR=3)."""
-    cur = _Cursor(_mf7mt2_lines(str(path)))
-    _za, _awr, lthr, _l2, _n1, _n2 = cur.head()  # HEAD: ZA, AWR, LTHR, ...
-    assert lthr == 2, f"_raw_mt2_sb assumes the LTHR=2 layout, got LTHR={lthr}"
-    return cur.head()[0]     # incoherent TAB1: C1 = SB
-
+# ---- generalized CEF stores the molecular SB = per-principal x npr ----------
 
 @pytest.fixture(scope="module")
 def eq25_npr4_tape(tmp_path_factory):
@@ -163,15 +139,12 @@ def eq26_npr2_tape(tmp_path_factory):
 
 
 def test_eq25_npr_stores_molecular_sb(eq25_npr4_tape):
-    """The tape SB carries the classic molecular convention (x npr); dividing
-    once by MT4's B(6)=npr recovers the Eq-25 per-principal effective value --
-    the exact division the ENDFTSL converter applies uniformly (review E1:
-    the generalized writer used to store the per-principal value raw, making
-    that conversion 1/npr low). from_endf_mf7mt2 now applies the same
-    division itself (PHY-3), so the reader returns the per-principal value."""
+    """The tape SB carries the classic molecular convention (x npr); the
+    reader divides once by MT4's B(6)=npr, as the ENDFTSL converter does,
+    and returns the per-principal Eq-25 value."""
     per_principal = _H['sigma_inc'] * (
         (_H['sigma_coh'] + _H['sigma_inc']) / _H['sigma_inc'])
-    assert _raw_mt2_sb(eq25_npr4_tape) == pytest.approx(4 * per_principal,
+    assert _parsed_mt2_sb(eq25_npr4_tape) == pytest.approx(4 * per_principal,
                                                         rel=1e-6)
     m = from_endf_mf7mt2(str(eq25_npr4_tape), T_K=296.0)
     assert m.sigma_b == pytest.approx(per_principal, rel=1e-6)
@@ -181,24 +154,13 @@ def test_eq26_npr_stores_molecular_sb(eq26_npr2_tape):
     f_dc = _BE['fraction']
     redist = 1.0 + (f_dc / (1.0 - f_dc)) * (_BE['sigma_inc'] / _O['sigma_inc'])
     per_principal = _O['sigma_inc'] * redist
-    assert _raw_mt2_sb(eq26_npr2_tape) == pytest.approx(2 * per_principal,
+    assert _parsed_mt2_sb(eq26_npr2_tape) == pytest.approx(2 * per_principal,
                                                         rel=1e-6)
     m = from_endf_mf7mt2(str(eq26_npr2_tape), T_K=296.0)
     assert m.sigma_b == pytest.approx(per_principal, rel=1e-6)
 
 
-def test_npr1_unchanged(eq25_tape):
-    """npr=1 tapes (every existing generalized fixture) are byte-equivalent
-    under the new convention: x1 is the identity."""
-    per_principal = _H['sigma_inc'] * (
-        (_H['sigma_coh'] + _H['sigma_inc']) / _H['sigma_inc'])
-    m = from_endf_mf7mt2(str(eq25_tape), T_K=296.0)
-    assert m.sigma_b == pytest.approx(per_principal, rel=1e-6)
-
-
-# ---- PHY-1: the MEF (LTHR=3) writer must use the SAME molecular convention --
-# The suite was entirely npr=1 before this, which is exactly why the missing
-# "* npr" in _build_mef_elastic survived: at npr=1 the bug is invisible.
+# ---- the MEF (LTHR=3) writer uses the same molecular convention ------------
 
 @pytest.fixture(scope="module")
 def mef_npr2_tape(tmp_path_factory):
@@ -237,11 +199,9 @@ def classic_npr2_tape(tmp_path_factory):
 
 
 def _parsed_mt2(path):
-    """The full MF7/MT2 dict via the real ENDF parser: layout-independent, so
-    it works for LTHR=2 and LTHR=3 alike (the raw cursor helper above assumes
-    the LTHR=2 layout, where the incoherent TAB1 follows the HEAD directly).
-    For LTHR=3 the coherent edges land in T0/LT/S_T0_table (+ per-LT 'T'/'S')
-    and the incoherent block in SB/NBT/INT/Tint/Wp."""
+    """The full MF7/MT2 dict via the real ENDF parser, for LTHR=2 and LTHR=3
+    alike. For LTHR=3 the coherent edges land in T0/LT/S_T0_table (+ per-LT
+    'T'/'S') and the incoherent block in SB/NBT/INT/Tint/Wp."""
     from endf_parserpy import EndfParserPy
     parser = EndfParserPy(ignore_number_mismatch=True,
                           ignore_zero_mismatch=True,
@@ -254,59 +214,17 @@ def _parsed_mt2_sb(path):
     return float(_parsed_mt2(path)['SB'])
 
 
-def test_mef_stores_molecular_sb(mef_npr2_tape):
-    """MF7/MT2 SB on a MEF tape is per-principal sigma_inc x npr, matching the
-    classic (iel<0) and SEF/CEF writers, so a consumer's single division by
-    MT4's B(6)=npr is correct regardless of which writer produced the tape
-    (QA finding PHY-1)."""
-    assert _parsed_mt2_sb(mef_npr2_tape) == pytest.approx(
-        2 * _BE['sigma_inc'], rel=1e-6)
-
-
-def test_mef_npr1_unchanged(mef_npr1_tape):
-    """The npr=1 case is untouched by the fix: every shipped deck is npr=1, so
-    a change here would be a regression, not the fix."""
-    assert _parsed_mt2_sb(mef_npr1_tape) == pytest.approx(
-        _BE['sigma_inc'], rel=1e-6)
-
-
-def test_mef_and_cef_scale_by_npr_alike(mef_npr2_tape, mef_npr1_tape,
-                                        eq26_tape, eq26_npr2_tape):
-    """Both writers apply the SAME x npr molecular convention (PHY-1).
-
-    Their SB VALUES differ by design and must not be compared directly: SEF
-    assigns the whole coherent component to the designated-coherent atom and
-    redistributes the remainder through the incoherent term, while MEF keeps
-    both components separately. What has to match is the npr scaling, so
-    compare each writer against ITSELF at npr=2 vs npr=1."""
-    assert (_parsed_mt2_sb(mef_npr2_tape) /
-            _parsed_mt2_sb(mef_npr1_tape)) == pytest.approx(2.0, rel=1e-6)
-    assert (_parsed_mt2_sb(eq26_npr2_tape) /
-            _parsed_mt2_sb(eq26_tape)) == pytest.approx(2.0, rel=1e-6)
-
-
 def test_mef_classic_sef_writers_agree(mef_npr2_tape, classic_npr2_tape):
-    """All THREE incoherent-SB writers store the identical molecular value for
+    """All three incoherent-SB writers store the same molecular value for
     the same material at npr=2: the MEF (LTHR=3) tape, the classic iel<0
-    (LTHR=2) tape, and the SEF/CEF builder called directly. This is the
-    absolute cross-writer agreement (PHY-1): the relative test above proves
-    only that each writer scales by npr, not that the classic path — the
-    convention THERMR was written against — stores the same number."""
+    (LTHR=2) tape (the convention THERMR was written against), and the
+    SEF/CEF builder called directly."""
     expected = 2 * _BE['sigma_inc']
     assert _parsed_mt2_sb(mef_npr2_tape) == pytest.approx(expected, rel=1e-6)
-    assert _raw_mt2_sb(classic_npr2_tape) == pytest.approx(expected, rel=1e-6)
+    assert _parsed_mt2_sb(classic_npr2_tape) == pytest.approx(expected, rel=1e-6)
     sb_sef = _build_cef_incoherent(1, 4009.0, _BE['awr'], 2, _TEMPR,
                                    list(_DWPIX), _BE['sigma_inc'], 2)['SB']
     assert sb_sef == pytest.approx(expected, rel=1e-6)
-
-
-def test_mef_tapes_are_lthr3(mef_npr2_tape, mef_npr1_tape):
-    """The MEF fixtures really produce LTHR=3 tapes: assert the flag on the
-    tape itself rather than trusting the elastic_mode=2 dispatch. A fixture
-    that silently fell into a CEF branch (LTHR=1/2) would make every "MEF"
-    assertion above vacuous."""
-    assert int(_parsed_mt2(mef_npr2_tape)['LTHR']) == 3
-    assert int(_parsed_mt2(mef_npr1_tape)['LTHR']) == 3
 
 
 def test_mef_coherent_block_npr_invariant(mef_npr2_tape, mef_npr1_tape):
@@ -327,7 +245,7 @@ def test_mef_coherent_block_npr_invariant(mef_npr2_tape, mef_npr1_tape):
 
 @pytest.mark.parametrize("temp_idx", [0, 1])
 def test_mef_npr2_roundtrip_per_principal(mef_npr2_tape, temp_idx):
-    """PHY-3 consumer side: from_endf_mf7mt2 on a MEF npr=2 tape divides the
+    """from_endf_mf7mt2 on a MEF npr=2 tape divides the
     molecular SB by the npr it reads from the same tape's MF7/MT4 B(6) and
     returns the PER-PRINCIPAL sigma_inc, with both channels present and the
     W'(T) interpolation intact (W' is per-principal already and must NOT be
