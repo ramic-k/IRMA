@@ -490,12 +490,10 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
         crystal_info['bragg_dir_terms'] = bragg_dir_terms
         print(f"  Generalized: found {nedge} Bragg edges below 5 eV")
 
-        # Compute per-species MSD/DW for elastic scattering. In the
-        # phonopy-backed modes the directional tensors supersede these
-        # lambdas (resolve_species_dw takes the use_dir_dw branch), so the
-        # inherited-lambda warning is suppressed there.
-        _compute_per_species_msd(
-            crystal_info, tempr_arr, ntempr, dwpix, directional_dw=phonopy_mt4)
+        # Per-species Debye-Waller lambdas; modes 1/2 use the directional
+        # tensors instead.
+        if not phonopy_mt4:
+            _compute_per_species_msd(crystal_info, tempr_arr, ntempr, dwpix)
 
     elif iel > 0:
         bragg, nedge = coher(iel, npr, 5.0)
