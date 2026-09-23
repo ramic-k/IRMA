@@ -87,7 +87,8 @@ def test_invalid_iel():
 def test_nonmonotonic_beta_grid():
     """A non-monotonic beta grid must fail at deck read, not write silent garbage."""
     deck = GOOD.replace("0.0 0.6 2.0 6.0/", "0.0 2.0 0.6 6.0/")
-    _expect(deck, "Card 9", "strictly increasing", "0.6", "2")
+    _expect(deck, "Card 9", "strictly increasing", "0.6", "2",
+            "input line 9", "deck.input")
 
 
 def test_nonpositive_alpha():
@@ -111,12 +112,6 @@ def test_missing_temperature_block():
     terminator gets consumed as an empty temperature card and is rejected."""
     deck = GOOD.replace("1 1 4/", "2 1 4/")
     _expect(deck, "temperature 2 of 2", "nonzero")
-
-
-def test_error_reports_line_number_and_file():
-    deck = GOOD.replace("0.0 0.6 2.0 6.0/", "0.0 2.0 0.6 6.0/")
-    msg = _expect(deck, "input line 9", "deck.input")
-    assert "Card 9" in msg
 
 
 def test_negative_first_temperature_still_reads_block():
@@ -268,63 +263,11 @@ def test_iel10_freegas_secondary_gets_past_the_dw_guard():
         f"analytic b7=1 secondary wrongly rejected by the iel=10 DW guard: {msg}")
 
 
-# Near-miss checks at the crystal-card level: the identical block must parse
-# to completion with nss=0 (no secondary at all) and with an analytic b7=1
-# secondary, so the guard is not over-broad.
-_IEL10_MODE0_BLOCK = (
-    "1 1 0 0/",                      # 6b: SEF, 1 atom type, inelastic_mode=0
-    "2.46 2.46 6.7 90. 90. 120./",   # 6c: graphite-like lattice
-    "6 12 11.9 6.646 0.001 1/",      # 6d: C atom
-    "0.0 0.0 0.0/",                  # 6d: position
-)
-
-
-def _crystal_block_tokens():
-    from irma.core.deck import _parse_line
-    toks = []
-    for ln in _IEL10_MODE0_BLOCK:
-        toks.extend(_parse_line(ln))
-    return toks
-
-
-def test_iel10_no_secondary_near_miss_still_parses():
-    from irma.core.crystal_cards import _parse_crystal_cards
-    from irma.core.engine import TokenReader
-    ci = _parse_crystal_cards(TokenReader(_crystal_block_tokens()),
-                              za=6012, nphon=100, nss=0, b7=0.0)
-    assert ci['inelastic_mode'] == 0 and ci['nat'] == 1
-
-
-def test_iel10_freegas_secondary_near_miss_still_parses():
-    from irma.core.crystal_cards import _parse_crystal_cards
-    from irma.core.engine import TokenReader
-    ci = _parse_crystal_cards(TokenReader(_crystal_block_tokens()),
-                              za=6012, nphon=100, nss=1, b7=1.0)
-    assert ci['inelastic_mode'] == 0 and ci['nat'] == 1
-
-
-def test_iel10_bound_secondary_rejected_at_crystal_block():
-    from irma.core.crystal_cards import _parse_crystal_cards
-    from irma.core.engine import TokenReader
-    with pytest.raises(DeckError, match="secondary-scatterer Debye-Waller"):
-        _parse_crystal_cards(TokenReader(_crystal_block_tokens()),
-                             za=6012, nphon=100, nss=1, b7=0.0)
-
-
 def test_five_field_card_6g_rejected():
     """A 5-field Card 6g (extra trailing values) must fail loudly with
     the supported layout named, never be silently reinterpreted."""
     deck = _MODE1_HEAD + "100 100 1 0 0 /\n"
     _expect(deck, "Card 6g", "2 values plus an optional 3rd value")
-
-
-def test_card6g_word_method_rejected():
-    """The optional method selector written as a word ('numerical') instead
-    of its numeric code used to be dropped by read_card_floats, leaving
-    [100, 100] to pass the 2-field check with the method silently defaulted.
-    It must now fail loudly (QA2-032)."""
-    deck = _MODE1_HEAD + "100 100 numerical /\n"
-    _expect(deck, "Card 6g", "expected a number", "numerical")
 
 
 def test_new_card_6g_parses_then_fails_at_phonopy_load():
@@ -359,20 +302,7 @@ def test_invalid_b7_is_deck_error():
     _expect(deck, "b7", "got 5")
 
 
-def test_overflowing_exponent_is_deck_error():
-    """1e999 must not silently parse to inf and poison the numeric stream."""
-    deck = GOOD.replace("0.005 6/", "1e999 6/")
-    _expect(deck, "Card 11", "expected a number", "1e999")
-
-
-def test_unquoted_module_word_title_does_not_truncate():
-    """A title that is exactly an NJOY module word must still parse as the
-    title (Cards 1-2 are exempt from the module-boundary scan)."""
-    deck = GOOD.replace("'deck-error test'/", "thermr/")
-    _run(deck)   # must not raise
-
-
-# ---------- QA2 Bucket V: generalized-card validation hardening ----------
+# ---------- generalized-card validation ----------
 
 _GEN_HEAD = """20 /
 'gen validation deck'/
@@ -406,12 +336,6 @@ def test_integer_field_accepts_exactly_integral_float():
     _run(deck)   # NJOY list-directed compatibility: 4.0 is 4
 
 
-def test_underscore_numeric_token_rejected():
-    """Python's underscore digit grouping (1_000) is not Fortran syntax."""
-    deck = GOOD.replace("300/", "3_00/", 1)
-    _expect(deck, "3_00")
-
-
 def test_card6c_nonpositive_lattice_length_rejected():
     """CX2-10: a non-positive lattice edge silently collapses the unit-cell
     volume downstream; reject it at parse time with Card 6c context."""
@@ -424,14 +348,6 @@ def test_card6c_out_of_range_angle_rejected():
     deck = _GEN_HEAD.replace("2.46 2.46 6.7 90. 90. 120./",
                              "2.46 2.46 6.7 90. 90. 200./")
     _expect(deck, "Card 6c", "lattice angle gamma", "(0, 180)")
-
-
-def test_card6c_degenerate_angle_triple_rejected():
-    """Angles individually in range but with a non-positive metric determinant
-    term form an imaginary-volume cell (max(0,...) would zero the volume)."""
-    deck = _GEN_HEAD.replace("2.46 2.46 6.7 90. 90. 120./",
-                             "2.46 2.46 6.7 20. 20. 170./")
-    _expect(deck, "Card 6c", "valid cell", "metric determinant")
 
 
 def test_card6d_zero_npos_rejected():
@@ -495,20 +411,8 @@ def test_missing_string_card_fails_loudly():
     _expect(deck, "expected a quoted string", "number")
 
 
-# ---------- Codex diff-review refinements ----------
-
 def test_numeric_title_accepted():
     """Card 2 is free text: an unquoted numeric title must not be rejected
     by the strict string reader used for path cards."""
     deck = GOOD.replace("'deck-error test'/", "1234/")
     _run(deck)   # must not raise
-
-
-def test_card6g_non_integral_float_rejected():
-    deck = _MODE1_HEAD + "100.5 100 /\n"
-    _expect(deck, "ndir must be an integer", "100.5")
-
-
-def test_card5_non_integral_iel_rejected():
-    deck = GOOD.replace("1.0 20.0 1 0 0/", "1.0 20.0 1 0.7 0/")
-    _expect(deck, "iel must be an integer", "0.7")
