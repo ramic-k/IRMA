@@ -24,7 +24,7 @@ from irma.spectra.chopper_resolution import (
 )
 from irma.spectra.elastic import (
     ElasticModel, from_endf_mf7mt2, from_engine_elastic_state,
-    bank_elastic_area, bank_bragg_lines, selftest,
+    bank_elastic_area, selftest,
 )
 from irma.spectra.instruments import (
     Instrument, VISION, indirect, direct, simulate,
@@ -51,7 +51,7 @@ __all__ = [
     "available_instruments", "available_packages", "INSTRUMENT_DB",
     # elastic
     "ElasticModel", "from_endf_mf7mt2", "from_engine_elastic_state",
-    "bank_elastic_area", "bank_bragg_lines", "selftest",
+    "bank_elastic_area", "selftest",
     # instruments
     "Instrument", "VISION", "indirect", "direct", "simulate",
     # engine key selector + forward orchestrator

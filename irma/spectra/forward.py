@@ -214,66 +214,49 @@ def _build_mode0_elastic_model(*, dos_species, m0, dos_crystal, elastic_kind,
                                temperature_k, emax_eV, geometry, progress):
     """Tape-free mode-0 elastic line from the DOS-derived isotropic DW f0.
 
-    Routes by ``elastic_kind`` and the presence of ``dos_crystal`` exactly like
-    the 1-D spectrum path: ``'incoherent'`` (or ``'both'`` degraded when no
-    crystal is given) builds the lattice-free Debye-Waller line; a crystal
-    (lattice + per-species ``b_coh_fm``/``positions``) enables the coherent
-    Bragg peaks. Returns ``None`` (with a NOTE) when the requested channel
-    cannot be built -- the result is then inelastic-only. Shared by
-    ``compute_spectrum`` and ``compute_sqe_map`` so the map carries the SAME
-    elastic line as the 1-D spectra.
+    A crystal (``dos_crystal`` lattice + per-species ``b_coh_fm``/``positions``)
+    enables the coherent Bragg peaks; without it only the incoherent
+    Debye-Waller line is built. Returns ``None`` (with a NOTE) for a
+    coherent-only request without a crystal -- the result is then
+    inelastic-only. Shared by ``compute_spectrum`` and ``compute_sqe_map`` so
+    the map carries the SAME elastic line as the 1-D spectra.
     """
-    awr_l = [float(sp["awr"]) for sp in dos_species]
-    sinc_l = [float(sp.get("sigma_inc_b", 0.0)) for sp in dos_species]
-    f0_l = [float(ps["dw_lambda"]) for ps in m0["per_species"]]
-    if elastic_kind == "incoherent" or (elastic_kind == "both"
-                                        and dos_crystal is None):
-        # lattice-free: 'incoherent' by request, or 'both' degraded to
-        # its available channel when no crystal was given
-        from irma.spectra.elastic import from_dos_incoherent_only
-        mult_l = [int(sp.get("multiplicity", 1)) for sp in dos_species]
-        elastic_model = from_dos_incoherent_only(
-            awr=awr_l, sigma_inc_b=sinc_l, f0_lambda=f0_l,
-            multiplicity=mult_l, T_K=float(temperature_k),
-            label=f"IRMA {geometry} mode-0 elastic (incoherent)")
-        progress(f"mode-0 elastic (incoherent): "
-                 f"sigma_b={elastic_model.sigma_b:.4g} b (lattice-free)")
-        if elastic_kind == "both":
-            progress("NOTE: elastic_kind='both' without material.lattice "
-                     "builds the incoherent line only; add the lattice "
-                     "(+ per-species positions) for the coherent Bragg "
-                     "peaks.")
-        return elastic_model
-    if dos_crystal is not None:
-        from irma.spectra.elastic import from_dos_and_lattice
+    if dos_crystal is None and elastic_kind == "coherent":
+        progress("NOTE: the mode-0 coherent elastic line needs "
+                 "material.lattice (+ per-species positions); the result "
+                 "is inelastic-only. Use elastic_kind='incoherent' "
+                 "(or 'both') for a lattice-free elastic line.")
+        return None
+    from irma.spectra.elastic import from_dos_elastic
+    crystal = None
+    if dos_crystal is not None and elastic_kind != "incoherent":
         from irma.core.crystal import CrystalStructure, AtomSite
-        sites = []
-        for sp in dos_species:
-            if sp.get("positions") is None or sp.get("b_coh_fm") is None:
-                raise ValueError(
-                    "the mode-0 coherent elastic line needs b_coh_fm + "
-                    f"positions for every species; "
-                    f"{sp.get('symbol', '?')!r} is missing one")
-            sites.append(AtomSite(b_coh_fm=float(sp["b_coh_fm"]),
-                                  positions=[tuple(float(x) for x in p)
-                                             for p in sp["positions"]]))
-        a_, b_, c_, al_, be_, ga_ = (float(x) for x in dos_crystal)
-        crystal = CrystalStructure(a_, b_, c_, al_, be_, ga_, sites)
-        elastic_model = from_dos_and_lattice(
-            crystal, awr=awr_l, sigma_inc_b=sinc_l, f0_lambda=f0_l,
-            T_K=float(temperature_k), elastic_kind=elastic_kind,
-            emax_eV=emax_eV,
-            label=f"IRMA {geometry} mode-0 elastic ({elastic_kind})")
-        progress(f"mode-0 elastic ({elastic_kind}): "
+        sites = [AtomSite(b_coh_fm=float(sp["b_coh_fm"]),
+                          positions=[tuple(float(x) for x in p)
+                                     for p in sp["positions"]])
+                 for sp in dos_species]
+        crystal = CrystalStructure(*(float(x) for x in dos_crystal), sites)
+    kind = elastic_kind if crystal is not None else "incoherent"
+    elastic_model = from_dos_elastic(
+        crystal, awr=[float(sp["awr"]) for sp in dos_species],
+        sigma_inc_b=[float(sp.get("sigma_inc_b", 0.0)) for sp in dos_species],
+        f0_lambda=[float(ps["dw_lambda"]) for ps in m0["per_species"]],
+        multiplicity=[int(sp.get("multiplicity", 1)) for sp in dos_species],
+        T_K=float(temperature_k), elastic_kind=kind, emax_eV=emax_eV,
+        label=f"IRMA {geometry} mode-0 elastic ({kind})")
+    if crystal is not None:
+        progress(f"mode-0 elastic ({kind}): "
                  f"{elastic_model.Q_bragg.size} Bragg edges, "
                  f"sigma_b={elastic_model.sigma_b:.4g} b")
         return elastic_model
-    # elastic_kind == 'coherent' with no crystal
-    progress("NOTE: the mode-0 coherent elastic line needs "
-             "material.lattice (+ per-species positions); the result "
-             "is inelastic-only. Use elastic_kind='incoherent' "
-             "(or 'both') for a lattice-free elastic line.")
-    return None
+    progress(f"mode-0 elastic (incoherent): "
+             f"sigma_b={elastic_model.sigma_b:.4g} b (lattice-free)")
+    if elastic_kind == "both":
+        progress("NOTE: elastic_kind='both' without material.lattice "
+                 "builds the incoherent line only; add the lattice "
+                 "(+ per-species positions) for the coherent Bragg "
+                 "peaks.")
+    return elastic_model
 
 
 def _build_engine_elastic_model(*, elastic_state, elastic_scatterers,

@@ -8,8 +8,8 @@ section dsigma/dOmega(Q) [barn/sr] for the coherent (Bragg) and incoherent
 :class:`ElasticModel`: :func:`from_endf_mf7mt2` reads the MF7/MT2 section of an
 ENDF tape (the one IRMA itself writes); :func:`from_engine_elastic_state`
 builds the line tape-free from the noncubic engine's Debye-Waller state; and
-the mode-0 pair :func:`from_dos_and_lattice` / :func:`from_dos_incoherent_only`
-builds it from a phonon DOS (isotropic Debye-Waller).
+the mode-0 :func:`from_dos_elastic` builds it from a phonon DOS (isotropic
+Debye-Waller).
 
 Why MF7/MT2 and not OCLIMAX?  OCLIMAX can *add* an elastic line, but its exact
 elastic treatment is not documented and may be approximate.  IRMA computes the
@@ -71,19 +71,19 @@ def _endf_float(s: str) -> float:
     return float(mant + rest)
 
 
-def _mf7mt2_lines(path):
-    """Return the data fields (col 1-66) of every MF7/MT2 record, as a flat
-    list of floats laid out 6 fields per source line."""
+def _mf7_rows(path, mt):
+    """The six 11-character data fields of every MF7 record with this MT."""
     rows = []
     with open(path, "r", errors="replace") as fh:
         for line in fh:
-            if len(line) < 75:
-                continue
-            if line[70:72] == " 7" and line[72:75] == "  2":
-                body = line[:66]
-                fields = [body[i:i + 11] for i in range(0, 66, 11)]
-                rows.append(fields)
+            if len(line) >= 75 and line[70:75] == f" 7{mt:3d}":
+                rows.append([line[i:i + 11] for i in range(0, 66, 11)])
     return rows
+
+
+def _mf7mt2_lines(path):
+    """The data fields of every MF7/MT2 record, 6 per source line."""
+    return _mf7_rows(path, 2)
 
 
 def _mf7mt4_npr(path):
@@ -97,14 +97,7 @@ def _mf7mt4_npr(path):
     B(6) is not positive -- a bare MT2-only tape genuinely cannot say, and 1.0
     leaves SB as stored (correct only for npr=1 tapes; see _parse_incoherent).
     """
-    rows = []
-    with open(path, "r", errors="replace") as fh:
-        for line in fh:
-            if len(line) < 75:
-                continue
-            if line[70:72] == " 7" and line[72:75] == "  4":
-                body = line[:66]
-                rows.append([body[i:i + 11] for i in range(0, 66, 11)])
+    rows = _mf7_rows(path, 4)
     if not rows:
         return 1.0
     cur = _Cursor(rows)
@@ -275,10 +268,6 @@ class ElasticModel:
         """Total elastic dsigma/dOmega(Q) = coherent + incoherent [barn/sr]."""
         return (self.coherent_dsigma_dOmega(Q, q_res=q_res)
                 + self.incoherent_dsigma_dOmega(Q))
-
-    def sigma_elastic(self, E_meV):
-        """Total angle-integrated elastic cross section [barn]."""
-        return self.sigma_coherent(E_meV) + self.sigma_incoherent(E_meV)
 
 
 # -----------------------------------------------------------------------------
@@ -466,8 +455,7 @@ def _group_atoms_by_symbol(symbols):
 
 def _finalize_bragg_peaks(E_edge_meV, f_bragg):
     """Edge-energy [meV] + structure-factor lists -> arrays sorted by Q, with the
-    matching ``Q_bragg = 2 sqrt(E/C_E)``. The shared tail of the coherent Bragg
-    builders (engine + DOS+lattice)."""
+    matching ``Q_bragg = 2 sqrt(E/C_E)``."""
     E_edge_meV = np.asarray(E_edge_meV, float)
     f_bragg = np.asarray(f_bragg, float)
     Q_bragg = 2.0 * np.sqrt(E_edge_meV / C_E) if E_edge_meV.size else np.array([])
@@ -475,8 +463,49 @@ def _finalize_bragg_peaks(E_edge_meV, f_bragg):
     return E_edge_meV[order], f_bragg[order], Q_bragg[order]
 
 
+def _bragg_peaks(crystal, awr, b_coh_fm, f0, T_K, emax_eV, directional=None):
+    """Debye-Waller-attenuated Bragg peaks of ``crystal`` up to ``emax_eV``
+    -> (E_edge_meV, f_bragg, Q_bragg), shared by the engine and DOS builders.
+
+    ``awr``, ``b_coh_fm`` and ``f0`` (the dimensionless isotropic DW
+    coefficient) are per species in ``crystal.sites`` order. ``directional``
+    holds the engine's F-matrices (``F_species_per_temp``, ``F_sites_per_temp``,
+    ``dir_tensors_uniform``) and selects the directional DW kernel; without it
+    the per-species isotropic kernel is used. The kernels are the byte-pinned
+    irma.core.elastic_dw ones the MF7/MT2 writer uses.
+    """
+    from irma.core.crystal import compute_bragg_edges_general
+    from irma.core.elastic_dw import resolve_species_dw, make_edge_delta
+
+    bragg_data, nedge, species_corr, bragg_dir_terms = compute_bragg_edges_general(
+        crystal, emax=float(emax_eV))
+    bragg = [(float(bragg_data[j, 0]), float(bragg_data[j, 1]))
+             for j in range(nedge)]
+    crystal_info = {
+        "atom_types": [{"awr": float(awr[si]), "b_coh": float(b_coh_fm[si]),
+                        "dwpix": [float(f0[si])]} for si in range(len(awr))],
+        "species_corr": species_corr,
+    }
+    if directional is not None:
+        crystal_info.update(directional, bragg_dir_terms=bragg_dir_terms)
+    tempr = [float(T_K)]
+    species_dw = resolve_species_dw(crystal_info, tempr, 1)
+    # species_corr is always set, so species_dw is never None and the scalar
+    # isotropic fallback (dwpix_iso) is not used. scale=1.0 keeps the native
+    # per-atom normalization (the 1/N in the xsectfact).
+    edge_delta = make_edge_delta(bragg, None, scale=1.0,
+                                 species_dw=species_dw, tempr=tempr)
+    E_edge_meV, f_bragg = [], []
+    for j in range(nedge):
+        d = float(edge_delta(j, 0))            # barn*eV (DW-attenuated)
+        if d > 0.0:
+            E_edge_meV.append(bragg[j][0] / EV_PER_MEV)   # eV -> meV
+            f_bragg.append(d / EV_PER_MEV)                # barn*eV -> barn*meV
+    return _finalize_bragg_peaks(E_edge_meV, f_bragg)
+
+
 def _incoherent_channels(weight, sigma_inc, f0_lambda, awr, kT_meV):
-    """Per-atom incoherent Debye-Waller channels shared by the three ElasticModel
+    """Per-atom incoherent Debye-Waller channels shared by the ElasticModel
     builders: ``((weight_i * sigma_inc_i, W'_i))`` over species with
     ``sigma_inc_i > 0``, where ``weight_i = mult_i / N`` is the per-atom
     multiplicity weight and ``W'_i = f0_i / (awr_i * kT)`` [1/meV]."""
@@ -485,10 +514,17 @@ def _incoherent_channels(weight, sigma_inc, f0_lambda, awr, kT_meV):
         for i in range(len(awr)) if sigma_inc[i] > 0.0)
 
 
+def _incoherent_summary(channels):
+    """Display fields for the channel list: total sigma_b and the W' of the
+    largest-sigma channel."""
+    if not channels:
+        return 0.0, 0.0
+    return float(sum(sb for sb, _ in channels)), max(channels, key=lambda c: c[0])[1]
+
+
 def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
-                              T_K=None, elastic_kind="both",
-                              principal_species=None, emax_eV=5.0, label=None,
-                              incoherent_elastic_mode="isotropic"):
+                              T_K=None, elastic_kind="both", emax_eV=5.0,
+                              label=None, incoherent_elastic_mode="isotropic"):
     """Build an :class:`ElasticModel` from a noncubic-engine ``elastic_state``.
 
     Parameters
@@ -508,11 +544,6 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
         ``"incoherent"`` -> DW line only. (Unlike the ENDF MF7/MT2 SEF path,
         there is NO ``(sigma_coh+sigma_inc)/sigma_coh`` fold -- the incoherent
         piece is carried explicitly, so both channels add without double count.)
-    principal_species : int, optional
-        Species index of the principal scatterer (defaults to the largest
-        ``|b_coh|``); selects the isotropic Debye-Waller reference for the
-        coherent Bragg peaks. The incoherent line sums EVERY species' channel
-        and does not depend on this choice.
     emax_eV : float
         Bragg-edge enumeration cutoff [eV]. The 5 eV default is the ENDF
         MF7/MT2 tape convention (Q = 2*sqrt(E/C_E) ~ 98 1/A); spectra callers
@@ -535,11 +566,9 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     which this per-atom builder deliberately does not apply.
     """
     from irma.core.crystal import (
-        CrystalStructure, AtomSite, compute_bragg_edges_general,
-        _site_tensors_uniform, lattice_to_cell_params,
+        CrystalStructure, AtomSite, _site_tensors_uniform, lattice_to_cell_params,
     )
     from irma.core.phonopy_io import thermal_displacements_to_f_matrix
-    from irma.core.elastic_dw import resolve_species_dw, make_edge_delta
 
     U = np.asarray(elastic_state["thermal_displacement_matrices_ang2"], float)
     symbols = list(elastic_state["primitive_symbols"])
@@ -554,7 +583,6 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     awr_atom = np.broadcast_to(np.asarray(awr, float), (n_atoms,))
 
     species_symbols, groups = _group_atoms_by_symbol(symbols)
-    nsp = len(groups)
 
     # per-species DW: F = A kT U / (hbar^2/2m_n) averaged over each species' sites
     kT_eV = BK * float(T_K)
@@ -565,12 +593,6 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     bcoh_species = np.array([b_coh_fm[g[0]] for g in groups], float)
     sinc_species = np.array([sigma_inc_b[g[0]] for g in groups], float)
 
-    if principal_species is None:
-        principal_species = int(np.argmax(np.abs(bcoh_species)))
-    pidx = int(principal_species)
-
-    tempr = [float(T_K)]
-
     # Channels. 'both' (default) is the physical mixed elastic: the PURE
     # coherent Bragg peaks (scale=1.0 -- no ENDF-SEF sigma_inc fold) PLUS a
     # separate incoherent Debye-Waller line. The single-channel modes isolate
@@ -579,73 +601,44 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     want_coh = elastic_kind in ("both", "coherent")
     want_inc = elastic_kind in ("both", "incoherent")
 
-    E_edge_meV, f_bragg = [], []
+    E_edge_meV = f_bragg = Q_bragg = np.array([])
     if want_coh:
-        # crystal structure (species in group order) -> deterministic Bragg
-        # edges, enumerated only up to emax_eV (the caller's reach); skipped
-        # entirely for the incoherent-only line, which never uses them.
-        a, b, c, al, be, ga = lattice_to_cell_params(lattice)
+        # Species in group order; the per-site tensors follow the same
+        # species-then-position order (which fixes crystal.py's site_terms
+        # order). dir_tensors_uniform keeps the species-averaged fast path
+        # when every group's tensors are identical (up to bit noise).
         sites = [AtomSite(b_coh_fm=float(b_coh_fm[g[0]]),
                           positions=[tuple(frac[i]) for i in g]) for g in groups]
-        crystal = CrystalStructure(a, b, c, al, be, ga, sites)
-        bragg_data, nedge, species_corr, bragg_dir_terms = compute_bragg_edges_general(
-            crystal, emax=float(emax_eV))
-        bragg = [(float(bragg_data[j, 0]), float(bragg_data[j, 1]))
-                 for j in range(nedge)]
-        crystal_info = {
-            "atom_types": [
-                {"Z": 0, "A": 0, "awr": float(awr_species[si]),
-                 "b_coh": float(bcoh_species[si]), "sigma_inc": float(sinc_species[si]),
-                 "dwpix": [float(f0_species[si])]}     # dimensionless f0 per temp
-                for si in range(nsp)],
-            "principal_atom_idx": pidx,
-            "species_corr": species_corr,
-            "F_species_per_temp": [F_species],         # all ntempr entries populated
-            "bragg_dir_terms": bragg_dir_terms,
-            # Site-resolved directional DW (review finding P3): per-site
-            # tensors in the same species-then-position order as the AtomSite
-            # construction above (which fixes crystal.py's site_terms order),
-            # plus the uniformity flag that keeps the species-averaged fast
-            # path when every group's tensors are identical (up to bit noise).
+        crystal = CrystalStructure(*lattice_to_cell_params(lattice), sites)
+        directional = {
+            "F_species_per_temp": [F_species],
             "F_sites_per_temp": [F_atom[np.concatenate(groups)]],
             "dir_tensors_uniform": all(
                 _site_tensors_uniform(F_atom, list(g)) for g in groups),
         }
-        dwpix_iso = [f0_species[pidx] / (awr_species[pidx] * kT_eV)]    # W' [1/eV]
-        species_dw = resolve_species_dw(crystal_info, tempr, 1)
-        edge_delta = make_edge_delta(bragg, dwpix_iso, scale=1.0,
-                                     species_dw=species_dw, tempr=tempr)
-        for j in range(nedge):
-            d = float(edge_delta(j, 0))            # barn*eV (DW-attenuated)
-            if d > 0.0:
-                E_edge_meV.append(bragg[j][0] / EV_PER_MEV)   # eV -> meV
-                f_bragg.append(d / EV_PER_MEV)                # barn*eV -> barn*meV
-    E_edge_meV, f_bragg, Q_bragg = _finalize_bragg_peaks(E_edge_meV, f_bragg)
+        E_edge_meV, f_bragg, Q_bragg = _bragg_peaks(
+            crystal, awr_species, bcoh_species, f0_species, T_K, emax_eV,
+            directional=directional)
 
     has_coh = want_coh and E_edge_meV.size > 0
     # Multi-species incoherent: every element keeps its Debye-Waller line,
     # weighted per represented atom (mult_d/N) to match the engine inelastic's
     # per-atom normalization. Summing all species keeps the dominant H line of
-    # a hydrogenous sample even when a non-H species is the coherent principal
-    # (single-species materials reduce to the previous principal-only result).
+    # a hydrogenous sample even when a non-H species is the coherent principal.
     kT_meV = BK * 1000.0 * float(T_K)
-    weight = np.array([len(groups[si]) for si in range(nsp)], float) / n_atoms
-    channels = _incoherent_channels(weight, sinc_species, f0_species, awr_species, kT_meV)
-    has_inc = want_inc and bool(channels)
-    SB = sum(sb for sb, _ in channels) if has_inc else 0.0     # total, for display
-    Wp = channels[0][1] if has_inc else 0.0                    # representative
+    weight = np.array([len(g) for g in groups], float) / n_atoms
+    channels = (_incoherent_channels(weight, sinc_species, f0_species, awr_species, kT_meV)
+                if want_inc else ())
+    has_inc = bool(channels)
+    SB, Wp = _incoherent_summary(channels)
 
     # Directional incoherent channels: one per atom (1/N weight, exact for
     # symmetry-equivalent sites since f depends on U only through its
     # eigenvalues), evaluated by the ElasticModel incoherent methods via
     # irma.core.incoherent_dw. The isotropic channels above stay populated
     # for the SB/W' display fields.
-    if incoherent_elastic_mode not in ("isotropic", "directional"):
-        raise ValueError(
-            "incoherent_elastic_mode must be 'isotropic' or 'directional', "
-            f"got {incoherent_elastic_mode!r}")
     channels_dir = ()
-    if incoherent_elastic_mode == "directional" and want_inc:
+    if incoherent_elastic_mode == "directional" and has_inc:
         from irma.core.incoherent_dw import u_eigenvalues
         channels_dir = tuple(
             (float(sigma_inc_b[i]) / n_atoms, tuple(u_eigenvalues(U[i])))
@@ -653,10 +646,9 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
 
     return ElasticModel(
         T_K=float(T_K), Q_bragg=Q_bragg, f_bragg=f_bragg, E_edge_meV=E_edge_meV,
-        sigma_b=float(SB), Wprime_invmeV=float(Wp),
+        sigma_b=SB, Wprime_invmeV=float(Wp),
         has_coherent=has_coh, has_incoherent=has_inc,
-        incoherent_channels=channels if has_inc else (),
-        incoherent_channels_dir=channels_dir if has_inc else (),
+        incoherent_channels=channels, incoherent_channels_dir=channels_dir,
         label=label or f"engine elastic_state ({elastic_kind})")
 
 
@@ -676,32 +668,32 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
 # apply). The user supplies the crystal structure (lattice + per-species
 # coherent scattering length + fractional sites) -- the spectra analogue
 # of the ENDF iel=10 coherent-elastic option.
-def from_dos_and_lattice(crystal, *, awr, sigma_inc_b, f0_lambda, T_K,
-                         elastic_kind="both", emax_eV=5.0, label=None):
-    """Build an :class:`ElasticModel` from a crystal structure + per-species
-    isotropic Debye-Waller coefficients (the mode-0 / DOS elastic line).
+def from_dos_elastic(crystal, *, awr, sigma_inc_b, f0_lambda, multiplicity, T_K,
+                     elastic_kind="both", emax_eV=5.0, label=None):
+    """Build an :class:`ElasticModel` from per-species isotropic Debye-Waller
+    coefficients (the mode-0 / DOS elastic line).
 
     PER-ATOM (per represented atom), matching the mode-0 inelastic and
     inelastic_mode 1/2: the coherent Bragg peaks keep their native per-atom
     normalization (the ``1/N`` in ``compute_bragg_edges_general``'s xsectfact), and
     the incoherent line is the per-atom average over EVERY species,
     ``sum_d (mult_d/N) (sigma_inc_d/4pi) exp(-2 W_d(Q))`` with
-    ``mult_d = len(site.positions)`` and ``N = crystal.n_atoms`` -- summing all
-    species keeps the H line (:func:`from_engine_elastic_state` uses the same
-    multi-species channel sum). So mode-0 {coherent, incoherent, inelastic}
-    share one per-atom scale, directly comparable to mode 1/2.
+    ``N = sum(multiplicity)`` -- summing all species keeps the H line
+    (:func:`from_engine_elastic_state` uses the same multi-species channel
+    sum). So mode-0 {coherent, incoherent, inelastic} share one per-atom
+    scale, directly comparable to mode 1/2.
 
     Parameters
     ----------
-    crystal : irma.core.crystal.CrystalStructure
-        Lattice + per-species coherent scattering length and fractional sites.
-        Species order here defines the order of ``awr``/``sigma_inc_b``/
-        ``f0_lambda`` (one value per ``crystal.sites`` entry); each species'
-        atom multiplicity is ``len(site.positions)``.
-    awr, sigma_inc_b, f0_lambda : sequence (per species, in crystal.sites order)
-        Mass ratio A=M/m_n, bound incoherent xs [barn], and the dimensionless
-        LEAPR Debye-Waller coefficient ``lambda_s`` (= ``contin`` f0) of each
-        species.
+    crystal : irma.core.crystal.CrystalStructure or None
+        Lattice + per-species coherent scattering length and fractional sites,
+        in the order of the per-species arrays below. ``None`` builds the
+        incoherent line only (no Bragg peaks).
+    awr, sigma_inc_b, f0_lambda, multiplicity : sequence (per species)
+        Mass ratio A=M/m_n, bound incoherent xs [barn], the dimensionless
+        LEAPR Debye-Waller coefficient ``lambda_s`` (= ``contin`` f0), and the
+        number of atoms of the species in the represented cell (with a crystal,
+        ``len(site.positions)``).
     T_K : float
     elastic_kind : {"both", "coherent", "incoherent"}
         ``"both"`` -> coherent Bragg peaks AND the summed incoherent DW line; the
@@ -715,116 +707,29 @@ def from_dos_and_lattice(crystal, *, awr, sigma_inc_b, f0_lambda, T_K,
     Returns the SAME ``ElasticModel`` object the tape/engine builders return
     (with ``incoherent_channels`` populated for the multi-species line).
     """
-    from irma.core.elastic_dw import resolve_species_dw, make_edge_delta
-    from irma.core.crystal import compute_bragg_edges_general
-
-    if elastic_kind not in ("both", "coherent", "incoherent"):
-        raise ValueError(f"elastic_kind must be both/coherent/incoherent, got {elastic_kind!r}")
-    nsp = len(crystal.sites)
-    awr = np.asarray(awr, float)
-    sigma_inc_b = np.asarray(sigma_inc_b, float)
-    f0 = np.asarray(f0_lambda, float)
-    if not (awr.shape == sigma_inc_b.shape == f0.shape == (nsp,)):
-        raise ValueError(
-            f"awr/sigma_inc_b/f0_lambda must each have one value per crystal "
-            f"species (nsp={nsp}); got {awr.shape}/{sigma_inc_b.shape}/{f0.shape}")
-    if not np.all(awr > 0.0):
-        raise ValueError("awr must be > 0 for every species")
-    if not np.all(sigma_inc_b >= 0.0):
-        raise ValueError("sigma_inc_b must be >= 0 for every species")
-    if not np.all(f0 >= 0.0):
-        raise ValueError("f0_lambda (Debye-Waller coefficient) must be >= 0")
-
     T_K = float(T_K)
-    kT_meV = BK * 1000.0 * T_K
-    mult = np.array([len(s.positions) for s in crystal.sites], float)
-    N_cell = float(mult.sum())                          # atoms per cell
-    bcoh_species = np.array([s.b_coh_fm for s in crystal.sites], float)
-
-    want_coh = elastic_kind in ("both", "coherent")
-    want_inc = elastic_kind in ("both", "incoherent")
-
-    E_edge_meV, f_bragg = [], []
-    if want_coh:
-        # Bragg edges only up to emax_eV (the caller's reach); the enumeration
-        # is skipped entirely for the incoherent-only line, which never uses it.
-        bragg_data, nedge, species_corr, _dir = compute_bragg_edges_general(
-            crystal, emax=float(emax_eV))
-        bragg = [(float(bragg_data[j, 0]), float(bragg_data[j, 1]))
-                 for j in range(nedge)]
-        tempr = [T_K]
-        # crystal_info with species_corr but NO F_species_per_temp/bragg_dir_terms ->
-        # resolve_species_dw selects the per-species ISOTROPIC kernel (use_ps).
-        crystal_info = {
-            "atom_types": [
-                {"Z": 0, "A": 0, "awr": float(awr[si]), "b_coh": float(bcoh_species[si]),
-                 "sigma_inc": float(sigma_inc_b[si]), "dwpix": [float(f0[si])]}
-                for si in range(nsp)],
-            "principal_atom_idx": 0,
-            "species_corr": species_corr,
-        }
-        if nedge > 0:
-            dwpix_iso = [0.0]                            # scalar fallback (unused vs species_dw)
-            species_dw = resolve_species_dw(crystal_info, tempr, 1)
-            # scale=1.0: keep the peaks' native PER-ATOM normalization (the 1/N in
-            # compute_bragg_edges_general's xsectfact), matching the per-atom inelastic.
-            edge_delta = make_edge_delta(bragg, dwpix_iso, scale=1.0,
-                                         species_dw=species_dw, tempr=tempr)
-            for j in range(nedge):
-                d = float(edge_delta(j, 0))              # barn*eV (DW-attenuated, per cell)
-                if d > 0.0:
-                    E_edge_meV.append(bragg[j][0] / EV_PER_MEV)   # eV -> meV
-                    f_bragg.append(d / EV_PER_MEV)                # barn*eV -> barn*meV
-    E_edge_meV, f_bragg, Q_bragg = _finalize_bragg_peaks(E_edge_meV, f_bragg)
-
-    # incoherent: PER-ATOM average over ALL species (keeps every element so the
-    # H line is never dropped), channel = (mult_d/N * sigma_inc_d, W'_d) with
-    # W'_d = lambda_s / (awr_d kT_meV). The mult_d/N (not mult_d) is the per-atom
-    # weight, matching the per-atom coherent Bragg peaks and inelastic.
-    channels = (_incoherent_channels(mult / N_cell, sigma_inc_b, f0, awr, kT_meV)
-                if want_inc else ())
-
-    has_coh = want_coh and E_edge_meV.size > 0
-    has_inc = bool(channels)
-    SB = float(sum(sb for sb, _ in channels))           # total incoherent (display)
-    # representative W' for the scalar field: the largest-sigma channel
-    Wp = max(channels, key=lambda c: c[0])[1] if channels else 0.0
-
-    return ElasticModel(
-        T_K=T_K, Q_bragg=Q_bragg, f_bragg=f_bragg, E_edge_meV=E_edge_meV,
-        sigma_b=float(SB), Wprime_invmeV=float(Wp),
-        has_coherent=has_coh, has_incoherent=has_inc,
-        incoherent_channels=channels,
-        label=label or f"DOS+lattice elastic ({elastic_kind})")
-
-
-def from_dos_incoherent_only(*, awr, sigma_inc_b, f0_lambda, multiplicity, T_K,
-                             label=""):
-    """Lattice-free mode-0 elastic: the incoherent Debye-Waller line only.
-
-    The incoherent line needs no crystal — just each species' ``sigma_inc_b``,
-    mass ratio, DOS-derived isotropic Debye-Waller integral ``f0`` (lambda_s
-    from ``contin``), and atom multiplicity. Channels are per represented atom,
-    ``((mult_d/N) sigma_inc_d, W'_d = f0_d/(awr_d kT))`` — the same convention
-    as :func:`from_dos_and_lattice`'s incoherent part — so an
-    ``elastic_kind='incoherent'`` run (e.g. a hydrogenous powder with no cell
-    information) shares the mode-0 per-atom scale.
-    """
     awr = np.asarray(awr, float)
     sigma_inc_b = np.asarray(sigma_inc_b, float)
     f0 = np.asarray(f0_lambda, float)
     mult = np.asarray(multiplicity, float)
-    N = float(mult.sum())
-    kT_meV = BK * 1000.0 * float(T_K)
-    channels = _incoherent_channels(mult / N, sigma_inc_b, f0, awr, kT_meV)
-    SB = float(sum(sb for sb, _ in channels))
-    Wp = max(channels, key=lambda c: c[0])[1] if channels else 0.0
+
+    E_edge_meV = f_bragg = Q_bragg = np.array([])
+    if crystal is not None and elastic_kind in ("both", "coherent"):
+        bcoh_species = np.array([s.b_coh_fm for s in crystal.sites], float)
+        E_edge_meV, f_bragg, Q_bragg = _bragg_peaks(
+            crystal, awr, bcoh_species, f0, T_K, emax_eV)
+
+    kT_meV = BK * 1000.0 * T_K
+    channels = (_incoherent_channels(mult / float(mult.sum()), sigma_inc_b, f0, awr, kT_meV)
+                if elastic_kind in ("both", "incoherent") else ())
+    SB, Wp = _incoherent_summary(channels)
+
     return ElasticModel(
-        T_K=float(T_K), Q_bragg=np.array([]), f_bragg=np.array([]),
-        E_edge_meV=np.array([]), sigma_b=SB, Wprime_invmeV=float(Wp),
-        has_coherent=False, has_incoherent=bool(channels),
+        T_K=T_K, Q_bragg=Q_bragg, f_bragg=f_bragg, E_edge_meV=E_edge_meV,
+        sigma_b=SB, Wprime_invmeV=float(Wp),
+        has_coherent=E_edge_meV.size > 0, has_incoherent=bool(channels),
         incoherent_channels=channels,
-        label=label or "DOS incoherent elastic (lattice-free)")
+        label=label or f"DOS elastic ({elastic_kind})")
 
 
 # -----------------------------------------------------------------------------
@@ -851,16 +756,13 @@ def _Q_elastic(E_fixed, two_theta_deg):
 
 
 def bank_elastic_area(model: ElasticModel, E_fixed, two_theta_deg,
-                      geometry="indirect", dtheta_deg=5.0, n_theta=721,
-                      per_sr=True):
+                      dtheta_deg=5.0, n_theta=721, per_sr=True):
     """Elastic-line area for one detector bank [barn/sr] (or barn if per_sr=False).
 
     E_fixed   : Ef (indirect) or Ei (direct), meV  -- sets the elastic wavevector
     two_theta_deg : bank centre scattering angle
     dtheta_deg : half-width of the bank's 2theta acceptance (>0 integrates the
                  Bragg peaks robustly; 0 falls back to the point differential)
-    geometry   : 'indirect' or 'direct' (only affects the label; E_fixed already
-                 carries Ef/Ei)
     Returns the integrated elastic differential cross section suitable to pass as
     ``elastic_area`` to ``instrument_spectrum``.
     """
@@ -893,15 +795,6 @@ def bank_elastic_area(model: ElasticModel, E_fixed, two_theta_deg,
                             - np.cos(np.deg2rad(tt.max())))  # sr
     total_xs = coh_xs + inc_xs                              # barn
     return total_xs / dOmega if per_sr else total_xs
-
-
-def bank_bragg_lines(model: ElasticModel, E_fixed, two_theta_deg, dtheta_deg=5.0):
-    """List the Bragg reflections (tau, f_i, E_edge) a bank collects, for
-    diagnostics."""
-    q_lo = float(_Q_elastic(E_fixed, two_theta_deg - dtheta_deg))
-    q_hi = float(_Q_elastic(E_fixed, two_theta_deg + dtheta_deg))
-    m = (model.Q_bragg >= q_lo) & (model.Q_bragg <= q_hi)
-    return q_lo, q_hi, model.Q_bragg[m], model.f_bragg[m], model.E_edge_meV[m]
 
 
 # -----------------------------------------------------------------------------
