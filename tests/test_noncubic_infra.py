@@ -10,8 +10,7 @@ Covers the concurrency / native-thread / CLI-validation findings:
 * C8    -- the pool worker initializer FORCE-sets the native-thread env vars to
           "1" (overriding inherited values), while the parent-side limiter only
           setdefaults them.
-* F17   -- the native-thread env vars are pinned at module import (before numpy),
-          and the direct CLI ``main`` clamps threads before heavy numpy work.
+* F17   -- the native-thread env vars are pinned when irma is imported (before numpy).
 * F18   -- BrokenProcessPool is imported by name, not via the ``cf.process``
           attribute side-effect.
 * C2    -- the converter CLI / conversion path validate temperature > 0 and
@@ -35,16 +34,9 @@ from irma.core import noncubic_engine as ne
 # F17 -- native-thread env pinned at import, before numpy
 # --------------------------------------------------------------------------- #
 def test_native_thread_env_pinned_at_import():
-    # Importing the engine module sets every native-thread var (the module-top
-    # setdefault runs before ``import numpy``).
+    # Importing irma (irma/__init__.py) sets every native-thread var before numpy.
     for name in ne.NATIVE_THREAD_ENV_VARS:
         assert os.environ.get(name) == "1", name
-
-
-def test_main_clamps_threads_before_heavy_work():
-    # The direct CLI entry must call limit_native_threads_to_one() up front.
-    src = inspect.getsource(ne.main)
-    assert "limit_native_threads_to_one()" in src
 
 
 def test_limit_native_threads_setdefault_preserves_override(monkeypatch):
