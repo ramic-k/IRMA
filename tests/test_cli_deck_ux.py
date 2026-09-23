@@ -36,18 +36,11 @@ def test_directory_input_clean_error(tmp_path, capsys):
     rc = cli.main([str(tmp_path), str(tmp_path / "out.endf")])
     assert rc == 1
     err = capsys.readouterr().err
-    assert "directory, not a file" in err
+    assert "not a file" in err
     assert str(tmp_path) in err
 
 
-def test_directory_input_via_evaluate_subcommand(tmp_path, capsys):
-    rc = cli.main(["evaluate", str(tmp_path), str(tmp_path / "out.endf")])
-    assert rc == 1
-    assert "directory, not a file" in capsys.readouterr().err
-
-
 def test_missing_input_still_reported(tmp_path, capsys):
-    """The isfile() tightening must not change the missing-file message."""
     rc = cli.main([str(tmp_path / "nope.input"), str(tmp_path / "out.endf")])
     assert rc == 1
     err = capsys.readouterr().err

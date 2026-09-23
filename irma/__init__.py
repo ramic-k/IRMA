@@ -32,35 +32,9 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
            "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "BLIS_NUM_THREADS"):
     _os.environ.setdefault(_v, "1")
 
-# Stable top-level public API. Importing these from `irma` directly
-# (`from irma import run_leapr, DeckError`) decouples callers from the internal
-# module layout, so the core modules can be refactored without breaking them.
-# Exposed LAZILY (PEP 562 __getattr__) so `import irma` stays light -- the heavy
-# engine is only imported when one of these names is actually accessed, and the
-# light core (numpy + endf-parserpy) install never pulls an optional extra.
+# Stable top-level public API: `from irma import run_leapr, DeckError`.
+from irma.core.deck import DeckError, parse_leapr_input  # noqa: E402
+from irma.core.driver import LeaprResult, run_leapr  # noqa: E402
+
 __all__ = ["run_leapr", "LeaprResult", "parse_leapr_input", "DeckError",
            "__version__", "__author__"]
-
-# public name -> "module:attr" it is loaded from on first access
-_PUBLIC_API = {
-    "run_leapr": "irma.core.engine:run_leapr",
-    "LeaprResult": "irma.core.driver:LeaprResult",
-    "parse_leapr_input": "irma.core.deck:parse_leapr_input",
-    "DeckError": "irma.core.deck:DeckError",
-}
-
-
-def __getattr__(name):
-    """Lazily resolve the public API symbols (PEP 562)."""
-    target = _PUBLIC_API.get(name)
-    if target is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    import importlib
-    module_name, attr = target.split(":")
-    value = getattr(importlib.import_module(module_name), attr)
-    globals()[name] = value          # cache so later access skips __getattr__
-    return value
-
-
-def __dir__():
-    return sorted(set(globals()) | set(__all__))

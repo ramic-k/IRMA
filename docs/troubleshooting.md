@@ -20,11 +20,9 @@ traceback:
 ```
 Input deck error:
   expected an integer for field 1, got the non-integral value 1.9 while reading Card 3 (ntempr iprint nphon) (input line 4 of mydeck.input)
-Fix the input deck and rerun (see the README card-by-card input reference).
 ```
 
-In this manual that card-by-card reference is the
-[Input file reference](input-reference.md) page.
+The card-by-card reference is the [Input file reference](input-reference.md) page.
 
 The message has three parts: **what** went wrong (the field and the bad
 value), **which card** was being read, and **where** in the file it lives
