@@ -18,6 +18,8 @@ The tabulated $S(\alpha,\beta)$ is the only thing the cross-section integrators 
 | Phonon region | Linear, spacing $\text{freq\_max}/\text{N\,phonon}$ over $(0, \text{freq\_max})$ | **Beta N phonon (linear)** | The phonon spectrum itself: peaks and singularities resolved uniformly |
 | Upper tail | Logarithmic for log-lin (`iint=0`) input files; step-capped out to a few ridge widths past the back-scatter alpha for lin-lin (`iint=1`) input files (see [the lin-lin upper tail](#the-upper-tail-on-lin-lin-int2-grids)) | **Beta N upper (log)** and **Beta max** | Multiphonon contributions and the smooth exponential high-energy tail |
 
+For `inelastic_mode` 1/2 the one-phonon term is zero below the lowest mesh-mode energy of the phonopy q-mesh (the run prints it), however fine the lower tail is.
+
 The linear phonon region runs up to the maximum phonon frequency `freq_max`, which you can enter directly or auto-detect from a DOS file or `phonopy.yaml` in the GUI. The upper tail extends to **Beta max** (default 5 eV). The 5 eV default suits most solid moderators, but hydrogen's large recoil pushes significant scattering well past 5 eV; give hydrogen 10 eV or more so the tabulated $S(\alpha,\beta)$ is not truncated.
 
 ## The alpha grid: linear in momentum transfer

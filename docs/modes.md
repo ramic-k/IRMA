@@ -98,6 +98,11 @@ multiphonons. `inelastic_mode=2` is the same as mode 1 except that the
 one-phonon term is exact (coherent plus incoherent) on top of the
 incoherent-approximation multiphonons.
 
+In modes 1 and 2 the one-phonon term comes from the phonon modes of the
+phonopy q-mesh, so it is zero for energy transfers below the lowest kept
+mesh-mode energy; a finer mesh reaches lower. The run prints that energy
+and the number of output energies below it.
+
 Even in mode 2, only the one-phonon term is coherent. The multiphonon
 orders (n ≥ 2) use the incoherent-approximation model (a per-atom self
 kernel scaled by the atom's total scattering cross section), so coherent
