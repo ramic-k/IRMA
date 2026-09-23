@@ -410,6 +410,52 @@ class FileSelector(_Field):
             self.var.set(path)
 
 
+# The phonopy-model inputs shared by the NS and NCrystal panels: (attribute,
+# label, filetypes). Each panel passes its own HELP text.
+_PHONOPY_FILES = (
+    ("phonopy_yaml", "phonopy.yaml:",
+     [("phonopy YAML", "*.yaml *.yml"), ("All files", "*.*")]),
+    ("born", "BORN (optional):", [("All files", "*.*")]),
+    ("force_constants", "FORCE_CONSTANTS (opt):", [("All files", "*.*")]),
+    ("force_sets", "FORCE_SETS (opt):", [("All files", "*.*")]),
+)
+_OPTIONAL_PHONOPY_FILES = ("born", "force_constants", "force_sets")
+
+
+def build_phonopy_fields(panel, parent, help_texts):
+    """Build the phonopy.yaml, BORN, FORCE_CONSTANTS, FORCE_SETS and mesh
+    fields into ``parent`` as attributes of ``panel``."""
+    for key, label, filetypes in _PHONOPY_FILES:
+        field = FileSelector(parent, label, filetypes=filetypes,
+                             help_text=help_texts[key])
+        field.pack(fill=tk.X, pady=2)
+        setattr(panel, key, field)
+    panel.mesh = LabeledEntry(parent, "mesh (nx ny nz):", default="40 40 40",
+                              width=12, help_text=help_texts["mesh"])
+    panel.mesh.pack(fill=tk.X, pady=2)
+
+
+def phonopy_material(panel):
+    """The material entries of the phonopy fields: phonopy_yaml and mesh,
+    then each optional file that is set."""
+    material = {
+        "phonopy_yaml": panel.phonopy_yaml.get().strip() or None,
+        "mesh": [parse_int("mesh (nx ny nz)", x)
+                 for x in panel.mesh.get().replace(",", " ").split()]}
+    for key in _OPTIONAL_PHONOPY_FILES:
+        path = getattr(panel, key).get().strip()
+        if path:
+            material[key] = path
+    return material
+
+
+def load_phonopy_fields(panel, m):
+    """Fill the phonopy fields from a loaded material config ``m``."""
+    for key, _label, _ft in _PHONOPY_FILES:
+        getattr(panel, key).set(getattr(m, key) or "")
+    panel.mesh.set(" ".join(str(x) for x in m.mesh))
+
+
 class ToolTip:
     """Tooltip shown below a widget after a short hover delay.
 

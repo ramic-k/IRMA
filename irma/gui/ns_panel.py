@@ -20,7 +20,8 @@ from tkinter import ttk, filedialog, messagebox
 
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    RunPanel, check_with_help, form_section, init_form_styles,
+    RunPanel, build_phonopy_fields, check_with_help, form_section,
+    init_form_styles, load_phonopy_fields, phonopy_material,
     scrolled_columns, parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.element_table import ElementTable
@@ -575,26 +576,7 @@ class NSPanel(RunPanel):
 
         # phonopy branch
         self.phonopy_frame = ttk.Frame(self._source_slot)
-        self.phonopy_yaml = FileSelector(
-            self.phonopy_frame, "phonopy.yaml:",
-            filetypes=[("phonopy YAML", "*.yaml *.yml"), ("All files", "*.*")],
-            help_text=HELP["phonopy_yaml"])
-        self.phonopy_yaml.pack(fill=tk.X, pady=2)
-        self.born = FileSelector(self.phonopy_frame, "BORN (optional):",
-                                 filetypes=[("All files", "*.*")],
-                                 help_text=HELP["born"])
-        self.born.pack(fill=tk.X, pady=2)
-        self.force_constants = FileSelector(
-            self.phonopy_frame, "FORCE_CONSTANTS (opt):",
-            filetypes=[("All files", "*.*")], help_text=HELP["force_constants"])
-        self.force_constants.pack(fill=tk.X, pady=2)
-        self.force_sets = FileSelector(
-            self.phonopy_frame, "FORCE_SETS (opt):",
-            filetypes=[("All files", "*.*")], help_text=HELP["force_sets"])
-        self.force_sets.pack(fill=tk.X, pady=2)
-        self.mesh = LabeledEntry(self.phonopy_frame, "mesh (nx ny nz):",
-                                 default="40 40 40", width=12, help_text=HELP["mesh"])
-        self.mesh.pack(fill=tk.X, pady=2)
+        build_phonopy_fields(self, self.phonopy_frame, HELP)
         self.inelastic_mode = LabeledCombobox(
             self.phonopy_frame, "inelastic mode:", self._MODE_LABELS,
             default=self._MODE_LABELS[1], help_text=HELP["inelastic_mode"])
@@ -1191,15 +1173,7 @@ class NSPanel(RunPanel):
             # DOS-files mode 0: no phonopy artifacts; mesh stays at its default
             material["phonopy_yaml"] = None
         else:
-            material["phonopy_yaml"] = self.phonopy_yaml.get().strip() or None
-            material["mesh"] = [parse_int("mesh (nx ny nz)", x)
-                                for x in self.mesh.get().replace(",", " ").split()]
-            if self.born.get().strip():
-                material["born"] = self.born.get().strip()
-            if self.force_constants.get().strip():
-                material["force_constants"] = self.force_constants.get().strip()
-            if self.force_sets.get().strip():
-                material["force_sets"] = self.force_sets.get().strip()
+            material.update(phonopy_material(self))
         if want_crystal and self.lattice.get().strip():
             # comma- OR space-separated, matching the field help and the mesh
             # field; parse_float raises ValueError (caught by the handlers),
@@ -1328,11 +1302,7 @@ class NSPanel(RunPanel):
     def load_config(self, cfg):
         """Populate every widget from a SpectraConfig (for Open / round-trip)."""
         m, p, g, ins = cfg.material, cfg.physics, cfg.grid, cfg.instrument
-        self.phonopy_yaml.set(m.phonopy_yaml or "")
-        self.born.set(m.born or "")
-        self.force_constants.set(m.force_constants or "")
-        self.force_sets.set(m.force_sets or "")
-        self.mesh.set(" ".join(str(x) for x in m.mesh))
+        load_phonopy_fields(self, m)
         self.temperature.set(m.temperature_K)
         self.lattice.set(",".join(str(x) for x in m.lattice) if m.lattice else "")
         self.element_table.set_rows([self._scatterer_to_row(s) for s in m.scatterers])

@@ -25,7 +25,8 @@ from tkinter import ttk, filedialog, messagebox
 
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    RunPanel, form_section, init_form_styles, scrolled_columns,
+    RunPanel, build_phonopy_fields, form_section, init_form_styles,
+    load_phonopy_fields, phonopy_material, scrolled_columns,
     parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.grid_form import SabGridForm, GRID_EXPORT_KEYS
@@ -230,26 +231,7 @@ class NCrystalPanel(RunPanel):
         """Build the material/model section."""
         g = form_section(parent, "Material (phonon model)")
 
-        self.phonopy_yaml = FileSelector(
-            g, "phonopy.yaml:",
-            filetypes=[("phonopy YAML", "*.yaml *.yml"), ("All files", "*.*")],
-            help_text=HELP["phonopy_yaml"])
-        self.phonopy_yaml.pack(fill=tk.X, pady=2)
-        self.born = FileSelector(g, "BORN (optional):",
-                                 filetypes=[("All files", "*.*")],
-                                 help_text=HELP["born"])
-        self.born.pack(fill=tk.X, pady=2)
-        self.force_constants = FileSelector(
-            g, "FORCE_CONSTANTS (opt):",
-            filetypes=[("All files", "*.*")], help_text=HELP["force_constants"])
-        self.force_constants.pack(fill=tk.X, pady=2)
-        self.force_sets = FileSelector(
-            g, "FORCE_SETS (opt):",
-            filetypes=[("All files", "*.*")], help_text=HELP["force_sets"])
-        self.force_sets.pack(fill=tk.X, pady=2)
-        self.mesh = LabeledEntry(g, "mesh (nx ny nz):", default="40 40 40",
-                                 width=12, help_text=HELP["mesh"])
-        self.mesh.pack(fill=tk.X, pady=2)
+        build_phonopy_fields(self, g, HELP)
         self.temperature = LabeledEntry(g, "temperature (K):", default="296",
                                         width=10, help_text=HELP["temperature"])
         self.temperature.pack(fill=tk.X, pady=2)
@@ -359,20 +341,10 @@ class NCrystalPanel(RunPanel):
         """Assemble an :class:`NCrystalExportConfig` from the current widgets."""
         scat = [self._row_to_scatterer(r)
                 for r in self.element_table.get_rows() if r["symbol"]]
-        material = {
-            "phonopy_yaml": self.phonopy_yaml.get().strip() or None,
-            "mesh": [parse_int("mesh (nx ny nz)", x)
-                     for x in self.mesh.get().replace(",", " ").split()],
-            "temperature_K": parse_float("temperature (K)",
-                                         self.temperature.get()),
-            "scatterers": scat,
-        }
-        if self.born.get().strip():
-            material["born"] = self.born.get().strip()
-        if self.force_constants.get().strip():
-            material["force_constants"] = self.force_constants.get().strip()
-        if self.force_sets.get().strip():
-            material["force_sets"] = self.force_sets.get().strip()
+        material = phonopy_material(self)
+        material["temperature_K"] = parse_float("temperature (K)",
+                                                self.temperature.get())
+        material["scatterers"] = scat
 
         mpo = self.multiphonon_max_order.get().strip()
         # Settings a loaded config carried that this form has no control for
@@ -464,11 +436,7 @@ class NCrystalPanel(RunPanel):
         caller validates FIRST (``from_yaml``) and calls this only on success.
         """
         m = cfg.material
-        self.phonopy_yaml.set(m.phonopy_yaml or "")
-        self.born.set(m.born or "")
-        self.force_constants.set(m.force_constants or "")
-        self.force_sets.set(m.force_sets or "")
-        self.mesh.set(" ".join(str(x) for x in m.mesh))
+        load_phonopy_fields(self, m)
         self.temperature.set(m.temperature_K)
         self._load_scatterers(m.scatterers)
 
