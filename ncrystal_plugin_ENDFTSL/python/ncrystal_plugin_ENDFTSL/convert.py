@@ -9,13 +9,8 @@ from .pack import ENDFTSLPack
 
 
 def build_pack(ev: TSLEvaluation, T: float, material_id: str,
-               element_symbol: str, element_mass_amu: float,
-               *, include_coherent: bool = True,
-               inelastic_scale: float = 1.0,
+               element_mass_amu: float, *, inelastic_scale: float = 1.0,
                coherent_scale: float = 1.0) -> ENDFTSLPack:
-    if not (inelastic_scale > 0.0 and coherent_scale > 0.0):  # also rejects NaN
-        raise ValueError("inelastic_scale and coherent_scale must be > 0, got "
-                         f"{inelastic_scale}, {coherent_scale}")
     law = physics.physical_inelastic(ev, T)
     awr = law.awr
     alpha_nc = [a * awr for a in law.alpha_phys]            # α_ncrystal = α_phys · AWR
@@ -43,7 +38,7 @@ def build_pack(ev: TSLEvaluation, T: float, material_id: str,
     #     1), so the caller decides coherent_scale (see build_packs).
     # Monatomic (both scales = 1) is unchanged. The physical species bound is kept
     # in metadata.
-    coh = physics.coherent_edges(ev, T) if include_coherent else None
+    coh = physics.coherent_edges(ev, T)
     coh_cumS = [s * coherent_scale for s in coh[1]] if coh else []
     inc = physics.incoherent_msd(ev, T)
     inc_xs = (inc[1] * inelastic_scale) if inc else None
@@ -176,6 +171,6 @@ def build_packs(specs, T: float, material_id: str,
                 "(standard ENDF, scale 1) and 1/f_DC-scaled edges (IRMA SEF, scale "
                 "f). Set coherent_convention to 'per_atom' or 'cef_scaled'.")
         packs.append(build_pack(
-            ev, T, f"{material_id}__{sp.symbol}", sp.symbol, sp.mass,
-            include_coherent=True, inelastic_scale=f, coherent_scale=coh_scale))
+            ev, T, f"{material_id}__{sp.symbol}", sp.mass,
+            inelastic_scale=f, coherent_scale=coh_scale))
     return packs

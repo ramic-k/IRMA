@@ -1,7 +1,6 @@
 """ENDFTSLPACK_TEXT_V1 text container (key=value), ported pattern from irma.ncrystal.pack."""
 from __future__ import annotations
 import math
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,48 +36,18 @@ def _fl(vs):
     return " ".join(_f(v) for v in vs)
 
 
-_META_KEY_RE = re.compile(r"[A-Za-z0-9_.\-]+")
-
-
 def _validate(pack: ENDFTSLPack) -> None:
-    """Shared write_pack/read_pack validation: raises ValueError naming the field.
-
-    Rejects unphysical scalars, malformed grids and metadata that would inject raw
-    key=value lines into the text container (the format is line-oriented, so a
-    newline in a metadata value becomes an arbitrary pack field on re-read)."""
+    """Shared write_pack/read_pack validation (guards read_pack against
+    hand-edited files): raises ValueError naming the field."""
     def bad(fieldname, msg):
         raise ValueError(f"invalid ENDFTSL pack field {fieldname}: {msg}")
 
-    # material_id is written verbatim into a line-oriented key=value file:
-    # a newline inside it injects arbitrary pack fields on re-read, exactly
-    # the hole the metadata VALUES were already guarded against (post-fix
-    # review PACK-1 sub-finding). Keep it a single safe token.
-    mid = pack.material_id
-    if (not isinstance(mid, str) or not mid
-            or any(ord(c) < 32 or ord(c) == 127 for c in mid)
-            or "=" in mid):
-        bad("material_id", "must be a non-empty single-line string without "
-            f"'=', newlines or control characters, got {mid!r}")
-
-    # The optional elastic block is all-or-none: an orphan MSD used to crash
-    # the writer with a raw TypeError (float(None)) and an orphan cross
-    # section was SILENTLY DROPPED on write (post-fix review PACK-1
-    # sub-finding).
-    has_msd = pack.elastic_msd_a2 is not None
-    has_xs = pack.elastic_incoherent_xs_barn is not None
-    if has_msd != has_xs:
-        present = "elastic_msd_a2" if has_msd else "elastic_incoherent_xs_barn"
-        missing = "elastic_incoherent_xs_barn" if has_msd else "elastic_msd_a2"
-        bad(missing, f"the elastic block is all-or-none: {present} is set "
-            f"but {missing} is None (an orphan field would be silently "
-            "dropped or crash the writer)")
-
     for name, v in (("temperature_K", pack.temperature_K),
                     ("element_mass_amu", pack.element_mass_amu)):
-        if not (isinstance(v, (int, float)) and math.isfinite(v) and v > 0.0):
+        if not (math.isfinite(v) and v > 0.0):
             bad(name, f"must be a finite positive number, got {v!r}")
     v = pack.bound_xs_barn
-    if not (isinstance(v, (int, float)) and math.isfinite(v) and v >= 0.0):
+    if not (math.isfinite(v) and v >= 0.0):
         bad("bound_xs_barn", f"must be a finite non-negative number, got {v!r}")
 
     for name, grid in (("alpha_grid", pack.alpha_grid),
@@ -110,14 +79,6 @@ def _validate(pack: ENDFTSLPack) -> None:
             bad("coh_cumulative_s", "must be finite and non-negative")
         if any(b < a for a, b in zip(s, s[1:])):
             bad("coh_cumulative_s", "must be non-decreasing")
-
-    for k, mv in pack.metadata.items():
-        if not isinstance(k, str) or not _META_KEY_RE.fullmatch(k):
-            bad(f"metadata key {k!r}", "must be a simple token matching "
-                "[A-Za-z0-9_.-]+ (no '=', whitespace or control characters)")
-        if not isinstance(mv, str) or any(ord(c) < 32 or ord(c) == 127 for c in mv):
-            bad(f"meta.{k}", "must be a single-line string without newlines "
-                "or control characters")
 
 
 def write_pack(pack: ENDFTSLPack, path) -> None:
