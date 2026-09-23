@@ -44,7 +44,7 @@ def _parse_2col(path):
     return np.asarray(freq, float), np.asarray(dos, float)
 
 
-def read_dos_2col(path, *, unit="meV", resample=True, d_omega_mev=None):
+def read_dos_2col(path, *, unit="meV"):
     """Read a generic 2-column phonon DOS into ``(omega_ev, rho)`` on a UNIFORM
     omega grid (eV).
 
@@ -52,14 +52,12 @@ def read_dos_2col(path, *, unit="meV", resample=True, d_omega_mev=None):
     ----------
     path : the 2-column text file (freq, DOS).
     unit : frequency unit of column 0 -- 'meV' (default), 'eV', 'cm-1', or 'THz'.
-    resample : if True (default), interpolate onto a uniform grid from 0 to the
-        max frequency (the kernel requires uniform spacing starting at omega=0).
-        If False, the input must already be uniform and start at ~0.
-    d_omega_mev : target uniform spacing [meV] when resampling; default = the
-        input's median spacing, clamped to 0.01--0.5 meV (the upper clamp
-        preserves structure; the lower keeps a very finely gridded file --
-        e.g. an MD/VACF export -- from blowing up the O(npt^2) phonon-expansion
-        kernel).
+
+    The DOS is interpolated onto a uniform grid from 0 to the max frequency
+    (the kernel requires uniform spacing starting at omega=0). The spacing is
+    the input's median spacing, clamped to 0.01--0.5 meV: the upper clamp
+    preserves structure, the lower keeps a very finely gridded file (e.g. an
+    MD/VACF export) from blowing up the O(npt^2) phonon-expansion kernel.
 
     Rows with negative frequency (imaginary modes) are dropped with a warning;
     DOS values below zero are clipped to zero; rho(omega=0) is set to 0 (the
@@ -84,32 +82,16 @@ def read_dos_2col(path, *, unit="meV", resample=True, d_omega_mev=None):
             f"{float(dos[neg].sum()):.3g}; fix the phonon model if this "
             "weight is significant", stacklevel=2)
         w_ev, dos = w_ev[~neg], dos[~neg]
-    # Clip negative DOS to 0 AFTER the imaginary-row drop+warning: clipping first
-    # would zero any negative DOS on the dropped rows and understate the reported
-    # weight. The retained positive-frequency rows clip identically either way.
     dos = np.clip(dos, 0.0, None)
     if w_ev.size < 2:
         raise ValueError(f"{path}: fewer than 2 rows remain after dropping "
                          "negative frequencies")
 
-    if not resample:
-        d = np.diff(w_ev)
-        if w_ev[0] > 1e-9 or d.size == 0 or not np.allclose(d, d[0], rtol=1e-4):
-            raise ValueError(f"{path}: resample=False requires a uniform grid "
-                             f"starting at omega=0; pass resample=True")
-        rho = dos.copy()
-        rho[0] = 0.0
-        return w_ev, rho
-
     w_max = float(w_ev.max())
     if not w_max > 0.0:
         raise ValueError(f"{path}: DOS has no positive frequencies")
-    pos = np.diff(np.unique(w_ev))
-    med_mev = float(np.median(pos)) * 1000.0 if pos.size else 0.5
-    if d_omega_mev:
-        step_mev = d_omega_mev
-    else:
-        step_mev = min(max(med_mev, 0.01) if med_mev > 0 else 0.5, 0.5)
+    med_mev = float(np.median(np.diff(np.unique(w_ev)))) * 1000.0
+    step_mev = min(max(med_mev, 0.01), 0.5)
     n = max(int(round(w_max * 1000.0 / step_mev)) + 1, 4)
     omega_ev = np.linspace(0.0, w_max, n)
     rho = np.interp(omega_ev, w_ev, dos, left=0.0, right=0.0)
