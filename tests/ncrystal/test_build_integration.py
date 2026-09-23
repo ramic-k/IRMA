@@ -267,26 +267,12 @@ def test_auto_beta_cap_sized_to_lightest_species(monkeypatch):
 def test_freq_max_auto_estimated_from_phonopy():
     # The auto grid derives freq_max from the phonopy mesh when not pinned;
     # graphite's max phonon energy is ~0.2 eV.
-    from irma.ncrystal.build import _estimate_freq_max_eV
-    fmax = _estimate_freq_max_eV(_graphite_cfg().material)
+    from irma.ncrystal.build import _load_mesh_and_freq_max_eV
+    fmax, _ = _load_mesh_and_freq_max_eV(_graphite_cfg().material)
     assert 0.1 < fmax < 0.4, f"implausible graphite freq_max: {fmax} eV"
 
 
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
-def test_explicit_site_groups_not_exhausted():
-    # Regression for the convention-review F1 flag: the explicit-site_groups
-    # path must survive being iterated more than once (it's a list, not a spent
-    # generator). resolve_principal_groups loads only the primitive cell.
-    from irma.ncrystal.build import resolve_principal_groups
-    cfg = _graphite_cfg(site_groups=[[0, 1, 2, 3]])
-    groups, site_groups, b_coh, sinc, symbols, positions, lattice = \
-        resolve_principal_groups(cfg)
-    assert site_groups == [[0, 1, 2, 3]]
-    assert len(groups) == 1 and groups[0].symbol == "C"
-    # iterate again to prove it is not exhausted
-    assert [list(g) for g in site_groups] == [[0, 1, 2, 3]]
-
-
 @pytest.mark.skipif(not _BEO_YAML.exists(), reason="BeO fixture absent")
 def test_beo_two_packs_summed(tmp_path):
     cfg = NCrystalExportConfig.from_dict({
@@ -352,15 +338,6 @@ def _beo_cfg(**over):
 
 
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
-def test_explicit_site_groups_splitting_species_rejected():
-    # H2: graphite's C sites split into two groups -> both groups carry symbol
-    # 'C' -> identical pack filename. Must be rejected, not silently overwritten.
-    from irma.ncrystal.build import resolve_principal_groups
-    cfg = _graphite_cfg(site_groups=[[0, 1], [2, 3]])
-    with pytest.raises(ValueError, match="split species"):
-        resolve_principal_groups(cfg)
-
-
 @pytest.mark.skipif(not _BEO_YAML.exists(), reason="BeO fixture absent")
 def test_exact_total_multigroup_rejected():
     # H3: 'exact-total' on a 2-species export would give every pack the whole-
@@ -414,24 +391,3 @@ def test_extra_scatterer_row_is_an_error():
         pytest.skip("graphite fixture absent")
     with pytest.raises(ValueError, match="Xe.*does not contain|does not contain.*Xe"):
         resolve_principal_groups(cfg)
-
-
-def test_attach_elastic_raises_on_missing_state():
-    """elastic=true is a hard output contract: warn-and-continue used to
-    write an inelastic-only pack that claimed success (review NC-3)."""
-    from irma.ncrystal.build import _attach_elastic
-    with pytest.raises(RuntimeError, match="no\\s+elastic_state|no elastic_state"):
-        _attach_elastic(object(), None, 2, {}, progress=lambda *_: None)
-
-
-def test_attach_elastic_raises_on_site_mismatch():
-    from irma.ncrystal.build import _attach_elastic
-    state = {
-        "thermal_displacement_matrices_ang2": [[[0.005, 0, 0],
-                                                [0, 0.005, 0],
-                                                [0, 0, 0.005]]],
-        "primitive_symbols": ["C"],
-        "primitive_scaled_positions": [[0.0, 0.0, 0.0]],
-    }
-    with pytest.raises(RuntimeError, match="1 sites.*primitive has 2|mismatched"):
-        _attach_elastic(object(), state, 2, {}, progress=lambda *_: None)

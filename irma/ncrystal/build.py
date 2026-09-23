@@ -73,11 +73,6 @@ def _load_mesh_and_freq_max_eV(mat):
     return freq_max, mesh_data
 
 
-def _estimate_freq_max_eV(mat) -> float:
-    """Max phonon frequency [eV] for the automatic grid (thin wrapper)."""
-    return _load_mesh_and_freq_max_eV(mat)[0]
-
-
 def _auto_beta_grid(cfg, t_ref, recoil_awr, progress=print):
     """Build the shared converged beta grid (generate_beta_grid, lin-lin)
     AND return a phonopy ``Mesh`` to reuse downstream.
@@ -128,15 +123,8 @@ def _group_grids(cfg, awr, auto_beta, t_ref):
 # -- primitive-cell geometry --------------------------------------------------
 def load_primitive_info(phonopy_yaml: str | Path):
     """Return ``(symbols, masses_amu, scaled_positions, lattice_ang)`` for the
-    phonopy primitive cell, without a mesh eigensolve.
-
-    Symbols/positions/masses are read straight from the phonopy primitive so the
-    exporter groups sites by species exactly as the engine sees them. The
-    lattice comes back in ANGSTROM: phonopy stores it in the calculator's native
-    unit (bohr for qe/abinit/...), and ``phonopy_io.angstrom_primitive`` is the
-    one place in the package that converts it -- the same call the mode-1/2
-    engine context makes, so the base NCMAT cell and the packs agree.
-    """
+    phonopy primitive cell, without a mesh eigensolve (the lattice in Angstrom,
+    converted by ``phonopy_io.angstrom_primitive`` as in the engine)."""
     from irma.core.phonopy_io import angstrom_primitive, load_phonopy
     ph = load_phonopy(phonopy_yaml, geometry_only=True)
     prim = angstrom_primitive(ph)
@@ -162,73 +150,33 @@ def site_groups_by_species(symbols: list[str]) -> list[list[int]]:
 
 
 def resolve_principal_groups(cfg: NCrystalExportConfig):
-    """Resolve principal groups + per-site neutron arrays + cell geometry.
-
-    Returns ``(groups, site_groups, site_b_coh_angstrom, site_sigma_inc_barn,
-    symbols, scaled_positions, lattice_ang)`` — the last two are the phonopy
-    primitive cell, used to write a matching base ``.ncmat``. Each species in the
-    structure must have a matching scatterer in
-    ``material.scatterers`` carrying at least ``sigma_bound_b`` and ``awr`` (or a
-    mass-derived awr); ``b_coh_fm``/``sigma_inc_b`` are required for the elastic
-    line and the coherent partition.
-    """
+    """Resolve the principal groups (one per species) and the per-site neutron
+    arrays -> ``(groups, site_groups, site_b_coh_angstrom, site_sigma_inc_barn,
+    symbols)``. Every structure species needs a ``material.scatterers`` row and
+    every row a structure species."""
     mat = cfg.material
-    symbols, masses, scaled_positions, lattice = load_primitive_info(mat.phonopy_yaml)
-    site_groups = ([[int(i) for i in g] for g in cfg.site_groups]
-                   if cfg.site_groups is not None
-                   else site_groups_by_species(symbols))
-
+    symbols, masses, _positions, _lattice = load_primitive_info(mat.phonopy_yaml)
+    site_groups = site_groups_by_species(symbols)
     by_symbol = {s.symbol: s for s in mat.scatterers}
+    extra = sorted(set(by_symbol) - set(symbols))
+    if extra:
+        raise ValueError(
+            f"material.scatterers lists species {extra} that the phonopy "
+            f"structure does not contain (structure species: "
+            f"{sorted(set(symbols))}); remove the row(s) or fix the symbol")
     n_atoms = len(symbols)
-    # Explicit site_groups must cover every primitive site exactly once: an out-of-
-    # range index would crash (or, negative, silently pick the last atom = wrong
-    # species), and omitting sites would silently drop a species' scattering while the
-    # per-atom fraction (len(site_indices)/n_atoms) still divides by ALL atoms ->
-    # under-normalized cross sections. The default grouping always covers all sites.
-    if cfg.site_groups is not None:
-        flat = [i for g in site_groups for i in g]
-        if any(not (0 <= i < n_atoms) for i in flat):
-            raise ValueError(
-                f"explicit site_groups index out of range [0, {n_atoms}); got {flat}")
-        if sorted(flat) != list(range(n_atoms)):
-            raise ValueError(
-                f"explicit site_groups must cover every primitive site exactly once "
-                f"(0..{n_atoms - 1}); got sites {sorted(flat)}. Omitted sites are silently "
-                "dropped while per-atom fractions still divide by all atoms.")
     site_b_coh_ang = [0.0] * n_atoms
     site_sigma_inc = [0.0] * n_atoms
     groups: list[PrincipalGroup] = []
     for g in site_groups:
         sym = symbols[g[0]]
-        if any(symbols[i] != sym for i in g):
-            raise ValueError(
-                f"site group {g} mixes species; groups must be single-species "
-                "(one principal scatterer per species)")
         sc = by_symbol.get(sym)
         if sc is None:
             raise ValueError(
                 f"material.scatterers has no entry for species {sym!r} "
                 f"(structure species: {sorted(set(symbols))})")
-        # (the reverse mismatch -- a scatterer row for a species the
-        # structure does not contain -- is checked once after the loop)
-        if sc.sigma_bound_b is None:
-            raise ValueError(f"scatterer {sym!r} is missing sigma_bound_b")
         mass = float(np.mean([masses[i] for i in g]))
         awr = float(sc.awr) if sc.awr is not None else mass / AMASSN
-        # The neutron constants are a hard requirement REGARDLESS of
-        # cfg.elastic (the config validates YAML paths; this guards
-        # direct-construction callers): the inelastic engine derives its
-        # channel weights from them, so substituting 0.0 bakes an identically
-        # zero S(alpha,beta) while bound_xs advertises real physics
-        # (review NC-1).
-        if sc.b_coh_fm is None or sc.sigma_inc_b is None:
-            missing = [f for f in ("b_coh_fm", "sigma_inc_b")
-                       if getattr(sc, f) is None]
-            raise ValueError(
-                f"scatterer {sym!r} is missing {', '.join(missing)}: the "
-                "mode-1/2 inelastic engine derives its channel weights from "
-                "b_coh_fm and sigma_inc_b, so both are required even for an "
-                "inelastic-only pack (elastic=False)")
         b_coh_fm = float(sc.b_coh_fm)
         sigma_inc_b = float(sc.sigma_inc_b)
         for i in g:
@@ -238,33 +186,7 @@ def resolve_principal_groups(cfg: NCrystalExportConfig):
             symbol=sym, site_indices=[int(i) for i in g], mass_amu=mass, awr=awr,
             sigma_bound_b=float(sc.sigma_bound_b), b_coh_fm=b_coh_fm,
             sigma_inc_b=sigma_inc_b))
-    # One principal group per species: an explicit site_groups that splits a
-    # species across >1 group yields groups with the SAME symbol, which collide
-    # on the symbol-derived pack filename (one silently overwrites the other,
-    # possibly the elastic-bearing one) and break the per-species summation.
-    # A scatterer row for a species the structure does not contain used to
-    # be SILENTLY ignored (review NC-2) -- a typo'd symbol meant the intended
-    # species ran with defaults while the user believed their constants were
-    # in effect.
-    configured = {s.symbol for s in cfg.material.scatterers}
-    structural = set(symbols)
-    extra = sorted(configured - structural)
-    if extra:
-        raise ValueError(
-            f"material.scatterers lists species {extra} that the phonopy "
-            f"structure does not contain (structure species: "
-            f"{sorted(structural)}); remove the row(s) or fix the symbol")
-    syms = [g.symbol for g in groups]
-    if len(set(syms)) != len(syms):
-        dups = sorted({s for s in syms if syms.count(s) > 1})
-        raise ValueError(
-            f"explicit site_groups split species {dups} across multiple groups; "
-            "the per-species pack-summation contract requires exactly one "
-            "principal group per species (pack filenames derive from the species "
-            "symbol and would collide, silently overwriting a pack). Merge each "
-            "species into a single group.")
-    return (groups, site_groups, site_b_coh_ang, site_sigma_inc, symbols,
-            scaled_positions, lattice)
+    return groups, site_groups, site_b_coh_ang, site_sigma_inc, symbols
 
 
 def _coherent_bearing_index(groups: list[PrincipalGroup]) -> int:
@@ -304,16 +226,8 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
     from irma.core.noncubic_workers import limit_native_threads_to_one
     limit_native_threads_to_one()
 
-    if cfg.gain_side == "asym":
-        # The full-asymmetric ('sab') table is a deferred opt-in (see the design
-        # spec); the current path always bakes the validated scaled-symmetric
-        # half-table. Fail loudly rather than silently ignoring the request.
-        raise NotImplementedError(
-            "gain_side='asym' (full-asymmetric S table) is not implemented yet; "
-            "use the default gain_side='scaled_sym' (downscatter half-table; "
-            "NCrystal reconstructs the gain side by detailed balance).")
-    (groups, site_groups, site_b_coh_ang, site_sigma_inc, symbols,
-     scaled_positions, lattice) = resolve_principal_groups(cfg)
+    (groups, site_groups, site_b_coh_ang, site_sigma_inc,
+     symbols) = resolve_principal_groups(cfg)
     # 'exact-total' gives every per-principal pack the WHOLE-crystal coherent
     # one-phonon total; with >1 group, summing the packs over-counts that channel
     # by the number of species. Only valid for a single principal group.
@@ -352,19 +266,11 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
                              progress=progress))
 
     packs: list[IRMAPack] = []
-    # Geometry + dynamics for the NCMAT: prefer the EXACT positions/lattice the
-    # coherent-bearing pack baked its DW tensors from (guarantees the 1e-6
-    # position match in the plugin); fall back to the phonopy primitive cell for
-    # an inelastic-only export. The engine's thermal-displacement matrices give
-    # the per-element Debye temperature NCrystal needs to construct the crystal.
-    # The whole-crystal elastic line (coherent Bragg edges over ALL sites + the
-    # full incoherent DW) is carried by exactly ONE pack — the coherent-bearing
-    # principal — and the other packs are inelastic-only. This is verified
-    # double-count-free end-to-end on BeO: the C++ builds F(hkl) from
-    # the pack's full tensor set + NC::Info b_coh, so a single pack already
-    # captures the cross-species interference; spreading the tensors across packs
-    # would double-count the coherent line (the C++ does not weight the coherent
-    # tensor path by elastic_scale).
+    # The whole-crystal elastic line (Bragg edges over all sites + the full
+    # incoherent DW) is carried by exactly one pack, the coherent-bearing
+    # principal: the C++ builds F(hkl) from that pack's full tensor set, so
+    # spreading the tensors across packs would double-count it. The NCMAT
+    # takes that pack's exact geometry (the plugin matches sites to 1e-6).
     coh_elastic_state = None
     for gi, group in enumerate(groups):
         # alpha is awr-dependent (per species) in the auto grid; explicit grids
@@ -379,46 +285,36 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
             alpha, beta, attach_elastic=(gi == coh_index), progress=progress,
             preloaded_full_mesh=preloaded_mesh, neutron_by_symbol=neutron_by_symbol)
         packs.append(pack)
-        if gi == coh_index and elastic_state is not None:
+        if gi == coh_index:
             coh_elastic_state = elastic_state
 
     pack_names = [f"{cfg.material_id}__{g.symbol}.irmapack" for g in groups]
     pack_filenames = ([str(Path(pack_path_prefix) / n) for n in pack_names]
                       if pack_path_prefix is not None else pack_names)
     masses_by_symbol = {g.symbol: g.mass_amu for g in groups}
-    if coh_elastic_state is not None:
-        pos = np.asarray(coh_elastic_state["primitive_scaled_positions"], float)
-        syms = list(coh_elastic_state["primitive_symbols"])
-        lat = np.asarray(coh_elastic_state["primitive_lattice_ang"], float)
-    else:
-        pos, syms, lat = scaled_positions, symbols, lattice
     debye_temps = _debye_temperatures(
-        coh_elastic_state, syms, masses_by_symbol, float(cfg.material.temperature_K))
+        coh_elastic_state, masses_by_symbol, float(cfg.material.temperature_K))
     material_ncmat = assemble_material_ncmat(
-        lattice_ang=lat, scaled_positions=pos, symbols=syms,
+        lattice_ang=np.asarray(coh_elastic_state["primitive_lattice_ang"], float),
+        scaled_positions=np.asarray(coh_elastic_state["primitive_scaled_positions"], float),
+        symbols=list(coh_elastic_state["primitive_symbols"]),
         pack_filenames=pack_filenames, debye_temperatures=debye_temps)
     return packs, material_ncmat
 
 
-def _debye_temperatures(elastic_state, symbols, masses_by_symbol, temperature_K):
-    """Per-element Debye temperature from the engine's mean-squared displacements.
-
-    Averages each element's site MSDs (Tr(U)/3) and maps to a Debye temperature
-    so the NCMAT has a valid MSD source. Falls back to 300 K per element when no
-    elastic state is available.
-    """
+def _debye_temperatures(elastic_state, masses_by_symbol, temperature_K):
+    """Per-element Debye temperature from the engine's mean-squared
+    displacements (each element's site average of Tr(U)/3), so the NCMAT has a
+    valid MSD source."""
     from .ncmat import debye_temperature_from_msd
-    out: dict[str, float] = {}
-    if elastic_state is None:
-        return {s: 300.0 for s in dict.fromkeys(symbols)}
     U = np.asarray(elastic_state["thermal_displacement_matrices_ang2"], float)
     es_symbols = list(elastic_state["primitive_symbols"])
     msd_site = (U[:, 0, 0] + U[:, 1, 1] + U[:, 2, 2]) / 3.0
+    out: dict[str, float] = {}
     for sym in dict.fromkeys(es_symbols):
         idx = [i for i, s in enumerate(es_symbols) if s == sym]
-        msd = float(np.mean(msd_site[idx])) if idx else 0.0
-        mass = float(masses_by_symbol.get(sym, 0.0))
-        out[sym] = debye_temperature_from_msd(msd, mass, temperature_K)
+        out[sym] = debye_temperature_from_msd(
+            float(np.mean(msd_site[idx])), float(masses_by_symbol[sym]), temperature_K)
     return out
 
 
@@ -438,36 +334,32 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         multiphonon_num_directions=cfg.multiphonon_num_directions,
         multiphonon_max_order=cfg.effective_multiphonon_max_order,
         auto_multiphonon_order=cfg.auto_multiphonon_order,
-        min_phonon_energy_mev=float(cfg.min_phonon_energy_meV))
+        min_phonon_energy_mev=cfg.min_phonon_energy_meV)
 
     result = run_noncubic_standalone_sab(
         alpha=np.asarray(alpha, float),
         beta=np.asarray(beta, float),
-        lat=int(cfg.lat),
+        lat=cfg.lat,
         temperature_k=float(mat.temperature_K),
-        awr=float(group.awr),
+        awr=group.awr,
         phonopy_yaml_path=str(mat.phonopy_yaml),
-        mesh_dim=tuple(int(m) for m in mat.mesh),
+        mesh_dim=tuple(mat.mesh),
         born_path=mat.born,
         num_jobs=resolve_jobs(cfg.jobs),
         controls=controls,
-        inelastic_mode=int(cfg.inelastic_mode),
+        inelastic_mode=cfg.inelastic_mode,
         represented_principal_site_count=len(group.site_indices),
-        principal_group_index=int(group_index),
+        principal_group_index=group_index,
         site_groups=site_groups,
-        coherent_partition_mode=str(cfg.coherent_partition_mode),
-        sab_sigma_barn=float(group.sigma_bound_b),
+        coherent_partition_mode=cfg.coherent_partition_mode,
+        sab_sigma_barn=group.sigma_bound_b,
         site_scattering_lengths_angstrom=site_b_coh_ang,
         site_incoherent_cross_sections_barn=site_sigma_inc,
         preloaded_full_mesh=preloaded_full_mesh)
 
-    # The SAB table keeps the engine's full-sigma normalization
-    # (sab_sigma_barn = group.sigma_bound_b); the per-atom weighting for a
-    # multi-species material is applied ONLY through the pack's advertised
-    # bound_xs (atom_fraction * sigma_bound_b, below). Do NOT insert a
-    # rescale_sab_to_bound_xs call here: with source == target it is a
-    # no-op whose provenance line would claim a transform that never
-    # happened; the helper exists for genuine convention changes only.
+    # The SAB table keeps the engine's full-sigma normalization; the per-atom
+    # weighting of a multi-species material goes only into the pack's
+    # advertised bound_xs (atom_fraction * sigma_bound_b, below).
     sab_downscatter = result["sab_downscatter_qe"]
     atom_fraction = len(group.site_indices) / float(n_atoms)
 
@@ -476,7 +368,7 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         temperature_K=mat.temperature_K, num_directions=cfg.num_directions,
         multiphonon_num_directions=cfg.multiphonon_num_directions,
         multiphonon_max_order=cfg.multiphonon_max_order,
-        min_phonon_energy_meV=float(cfg.min_phonon_energy_meV),
+        min_phonon_energy_meV=cfg.min_phonon_energy_meV,
         inelastic_mode=cfg.inelastic_mode,
         born=mat.born,
         extra={
@@ -526,67 +418,29 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
     # NCrystal's comp=coh_elas / comp=incoh_elas if needed.
     elastic_state = result.get("elastic_state")
     if cfg.elastic and attach_elastic:
-        _attach_elastic(pack, elastic_state, n_atoms, neutron_by_symbol or {},
-                        progress=progress,
+        _attach_elastic(pack, elastic_state, neutron_by_symbol,
                         incoherent_elastic_mode=cfg.incoherent_elastic_mode)
     return pack, elastic_state
 
 
-def _attach_elastic(pack, elastic_state, n_atoms, neutron_by_symbol, *, progress,
+def _attach_elastic(pack, elastic_state, neutron_by_symbol, *,
                     incoherent_elastic_mode="isotropic") -> None:
-    """Populate the (whole-crystal) elastic block from the engine's
-    anisotropic-DW state — structure mode: full primitive-cell U tensors, no
-    scalar MSD / incoherent-xs (the C++ derives both channels from the tensors +
-    NC::Info per-species data). Both coherent and incoherent are always enabled.
-    ``incoherent_elastic_mode = 'directional'`` is carried as a pack field
-    (``incoherent_elastic_mode``, within the schema-2 format) so the C++ samples
-    the orientation-averaged incoherent-elastic Debye-Waller factor instead of
-    the trace/3 scalar collapse.
-    """
-    if elastic_state is None:
-        # elastic=true is a hard output contract (review NC-3): silently
-        # writing an inelastic-only pack (and dropping a requested
-        # directional mode with it) let a defensive branch masquerade as
-        # success. Both branches are unreachable through the normal engine
-        # path; if they fire, something upstream is genuinely broken.
-        raise RuntimeError(
-            "elastic export requested but the engine surfaced no "
-            "elastic_state; refusing to write a pack that silently omits "
-            "the requested elastic block"
-            + (" (and the requested directional incoherent-elastic mode)"
-               if incoherent_elastic_mode == "directional" else ""))
+    """Stamp the whole-crystal elastic block from the engine's anisotropic-DW
+    state: the per-site U tensors (row-major 3x3), symbols, fractional
+    positions and per-site neutron data (the config's b_coh [sqrt(barn)] and
+    sigma_inc, in the tensor site order). The C++ builds both elastic channels
+    from these; ``incoherent_elastic_mode='directional'`` has it sample the
+    orientation-averaged incoherent Debye-Waller factor."""
     U = np.asarray(elastic_state["thermal_displacement_matrices_ang2"], float)
-    symbols = list(elastic_state["primitive_symbols"])
+    symbols = [str(s) for s in elastic_state["primitive_symbols"]]
     frac = np.asarray(elastic_state["primitive_scaled_positions"], float)
-    if U.shape[0] != n_atoms:
-        raise RuntimeError(
-            f"elastic_state has {U.shape[0]} sites but the primitive has "
-            f"{n_atoms}; refusing to write a pack with a mismatched or "
-            "missing elastic block (review NC-3)")
-
     pack.elastic_coherent = True            # full physical elastic (both channels)
-    # Whole-structure per-site anisotropic U tensors (row-major 3x3 flattened),
-    # symbols and fractional positions — the coherent structure factor and the
-    # per-site incoherent DW both read these. elastic_scale is left at the C++
-    # default (1.0) — the per-atom normalization is automatic.
-    pack.elastic_u_tensors_a2 = [float(v) for v in U.reshape(n_atoms, 9).reshape(-1)]
-    pack.elastic_u_symbols = [str(s) for s in symbols]
+    pack.elastic_u_tensors_a2 = [float(v) for v in U.reshape(-1)]
+    pack.elastic_u_symbols = symbols
     pack.elastic_u_frac_positions = [float(v) for v in frac.reshape(-1)]
-    # Per-tensor-site neutron data (config b_coh/sigma_inc), in the SAME site order as
-    # the tensors above, so the C++ coherent F(hkl) + incoherent DW use exactly what
-    # the IRMA config specified rather than NCrystal's atom DB. Looked up per-symbol.
-    try:
-        pack.elastic_u_coherent_scatlen_sqrtbarn = [
-            float(neutron_by_symbol[s][0]) for s in symbols]
-        pack.elastic_u_incoherent_xs_barn = [
-            float(neutron_by_symbol[s][1]) for s in symbols]
-    except KeyError as exc:
-        raise ValueError(
-            f"elastic site symbol {exc.args[0]!r} has no scatterer neutron data "
-            "(b_coh_fm / sigma_inc_b); cannot stamp the per-site elastic neutron "
-            "arrays the C++ plugin requires alongside the U tensors.") from None
-    # Structure mode: leave elastic_msd_a2 / elastic_incoherent_xs_barn unset
-    # (None). The anisotropic tensors supersede the scalar-MSD pair.
+    pack.elastic_u_coherent_scatlen_sqrtbarn = [
+        float(neutron_by_symbol[s][0]) for s in symbols]
+    pack.elastic_u_incoherent_xs_barn = [float(neutron_by_symbol[s][1]) for s in symbols]
     pack.incoherent_elastic_mode = str(incoherent_elastic_mode)
 
 
@@ -606,29 +460,16 @@ def write_packs(cfg: NCrystalExportConfig, outdir: str | Path, *,
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    outdir_resolved = outdir.resolve()
-
-    def _within_outdir(path: Path) -> Path:
-        """Assert ``path`` resolves inside ``outdir`` and return it."""
-        # material_id is validated as a safe stem in NCrystalExportConfig; re-assert
-        # every write lands inside outdir as defense in depth, so a future caller
-        # that bypasses that validation still cannot escape the directory.
-        if not path.resolve().is_relative_to(outdir_resolved):
-            raise ValueError(
-                f"refusing to write {path} outside the output directory "
-                f"{outdir_resolved}")
-        return path
-
     packs, material_ncmat = build_packs(
-        cfg, pack_path_prefix=outdir_resolved, progress=progress)
+        cfg, pack_path_prefix=outdir.resolve(), progress=progress)
     pack_paths: list[Path] = []
     for pack in packs:
         # material_id is "<id>__<symbol>"; file mirrors it.
-        path = _within_outdir(outdir / f"{pack.material_id}.irmapack")
+        path = outdir / f"{pack.material_id}.irmapack"
         write_pack(pack, path)
         pack_paths.append(path)
         progress(f"[irma.ncrystal] wrote {path}")
-    ncmat_path = _within_outdir(outdir / f"{cfg.material_id}.ncmat")
+    ncmat_path = outdir / f"{cfg.material_id}.ncmat"
     ncmat_path.write_text(material_ncmat, encoding="utf-8")
     progress(f"[irma.ncrystal] wrote {ncmat_path}")
     return pack_paths, ncmat_path

@@ -75,7 +75,7 @@ def test_config_rejects_unknown_export_key():
 def test_config_rejects_unknown_scatterer_key():
     d = _cfg_dict()
     d["material"]["scatterers"][0]["typo"] = 1
-    with pytest.raises(SpectraConfigError, match="unknown scatterer key"):
+    with pytest.raises(SpectraConfigError, match="unknown field"):
         NCrystalExportConfig.from_dict(d)
 
 
@@ -106,11 +106,6 @@ def test_config_rejects_missing_phonopy_yaml():
         NCrystalExportConfig.from_dict(d)
 
 
-def test_config_rejects_negative_site_group_index():
-    with pytest.raises(SpectraConfigError, match="site_groups index"):
-        NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[[0], [-1]]))
-
-
 # -- export-config sibling validations ----------------------------------------
 
 def test_config_rejects_nonpositive_temperature():
@@ -132,16 +127,6 @@ def test_config_accepts_valid_partition_modes():
     for mode in ("auto", "exact-total", "principal-xs-weighted"):
         cfg = NCrystalExportConfig.from_dict(_cfg_dict(coherent_partition_mode=mode))
         assert cfg.coherent_partition_mode == mode
-
-
-def test_config_rejects_empty_site_groups():
-    with pytest.raises(SpectraConfigError, match="site_groups must be non-empty"):
-        NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[]))
-
-
-def test_config_rejects_empty_inner_group():
-    with pytest.raises(SpectraConfigError, match="empty group"):
-        NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[[0, 1], []]))
 
 
 def test_auto_grid_is_the_endf_converged_grid_not_uniform():
@@ -287,17 +272,6 @@ def test_gain_side_asym_rejected_at_config_load():
     # after any preceding work).
     with pytest.raises(SpectraConfigError, match="asym"):
         NCrystalExportConfig.from_dict(_cfg_dict(gain_side="asym"))
-
-
-def test_gain_side_asym_build_guard_still_present():
-    # Defense in depth: a caller that bypasses validation (mutating the config
-    # after construction) must still fail loudly in build_packs BEFORE any
-    # phonopy work (so this needs no fixture).
-    from irma.ncrystal.build import build_packs
-    cfg = NCrystalExportConfig.from_dict(_cfg_dict())
-    cfg.gain_side = "asym"
-    with pytest.raises(NotImplementedError, match="asym"):
-        build_packs(cfg, progress=lambda *a: None)
 
 
 def test_config_inelastic_mode_string_aliases():
@@ -454,15 +428,6 @@ def test_mesh_rejects_fractional_entries():
     d["material"]["mesh"] = [4.9, 4, 4]
     with pytest.raises(SpectraConfigError, match="mesh"):
         NCrystalExportConfig.from_dict(d)
-
-
-def test_site_groups_reject_fractional_and_duplicate_indices():
-    with pytest.raises(SpectraConfigError, match="must be an integer"):
-        NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[[0.9, 1]]))
-    with pytest.raises(SpectraConfigError, match="more than once"):
-        NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[[0, 1], [1]]))
-    cfg = NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[[0, 1.0]]))
-    assert cfg.site_groups == [[0, 1]]
 
 
 # ---- review NC-2: export config fails fast on nonphysical scalars/grids ----

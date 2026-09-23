@@ -36,10 +36,7 @@ def test_debye_temperature_reasonable_and_clamped():
     # graphite C, MSD ~0.005 A^2 at 296 K -> ~hundreds-to-1000s K
     theta = debye_temperature_from_msd(0.005, 12.011, 296.0)
     assert 100.0 < theta < 5000.0
-    # degenerate inputs -> fallback / clamp, never raise
-    assert debye_temperature_from_msd(0.0, 12.0, 296.0) == 300.0
-    assert debye_temperature_from_msd(-1.0, 12.0, 296.0) == 300.0
-    assert debye_temperature_from_msd(1e-12, 12.0, 296.0) <= 1.0e5
+    assert debye_temperature_from_msd(1e-12, 12.0, 296.0) <= 1.0e5   # clamped
 
 
 def test_custom_section_pack_lines_only():

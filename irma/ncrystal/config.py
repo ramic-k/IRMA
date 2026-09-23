@@ -39,13 +39,9 @@ from typing import Optional, Union
 
 from irma.core.grids import AUTO_GRID_DEFAULTS
 from irma.spectra.config import (MaterialConfig, Scatterer, SpectraConfigError,
-                                 _require_exact_int, _strict_bool)
+                                 _build, _require_exact_int, _strict_bool)
 
 
-# 'asym' (a full-asymmetric S table) is a designed-but-unimplemented option:
-# it is NOT accepted here, so the config contract and the builder agree. When
-# the full-asymmetric bake lands, add it back here and drop the builder guard.
-VALID_GAIN_SIDES = ("scaled_sym",)
 # Coherent one-phonon partition across per-principal packs; kept in sync with
 # irma.core.noncubic_engine ('auto' resolves to exact-total for a single group,
 # principal-xs-weighted otherwise).
@@ -88,7 +84,6 @@ class NCrystalExportConfig:
     elastic: bool = True
     coherent_partition_mode: str = "principal-xs-weighted"
     incoherent_elastic_mode: str = "isotropic"
-    site_groups: Optional[list] = None          # explicit override; else grouped by species
     # S(alpha,beta) grid (ENDF dimensionless convention, lat=1 -> 0.0253 eV ref).
     # TWO ways to set it, mirroring the ENDF-evaluation side EXACTLY:
     #   EXPLICIT  -> give BOTH alpha_grid and beta_grid (dimensionless, lat units).
@@ -130,9 +125,7 @@ class NCrystalExportConfig:
                 "export.material_id must be a safe file stem matching "
                 "[A-Za-z0-9][A-Za-z0-9_.-]* (letters, digits, '.', '_', '-'; no "
                 f"path separators or '..'), got {self.material_id!r}")
-        # Strict boolean FIRST: later checks (directional-requires-elastic, the
-        # elastic neutron-constant requirement) must see a real bool, and a
-        # quoted YAML "false" is truthy -- it would silently ENABLE elastic.
+        # strict bool first: a quoted YAML "false" is truthy
         self.elastic = _strict_bool("export.elastic", self.elastic)
         if isinstance(self.inelastic_mode, str):
             _alias = self.inelastic_mode.strip().lower()
@@ -148,13 +141,9 @@ class NCrystalExportConfig:
             raise SpectraConfigError(
                 f"export.inelastic_mode must be 1 or 2 (or 'incoherent'/"
                 f"'coherent'), got {self.inelastic_mode!r}")
-        if self.gain_side not in VALID_GAIN_SIDES:
-            hint = (" ('asym' is designed but not implemented yet; the "
-                    "scaled_sym half-table is the validated path)"
-                    if self.gain_side == "asym" else "")
+        if self.gain_side != "scaled_sym":
             raise SpectraConfigError(
-                f"export.gain_side must be one of {list(VALID_GAIN_SIDES)}, "
-                f"got {self.gain_side!r}{hint}")
+                f"export.gain_side must be 'scaled_sym', got {self.gain_side!r}")
         if isinstance(self.multiphonon_max_order, str):
             if self.multiphonon_max_order != "auto":
                 raise SpectraConfigError(
@@ -182,10 +171,7 @@ class NCrystalExportConfig:
             raise SpectraConfigError(
                 "provide BOTH export.alpha_grid and export.beta_grid for an "
                 "explicit grid, or NEITHER for the automatic Q/E grid")
-        # Explicit grid semantics were only checked AFTER the (expensive)
-        # engine run, by the pack converter (review NC-2): validate the same
-        # contract up front -- >= 2 points, finite, strictly increasing,
-        # alpha positive and beta nonnegative.
+        # explicit grids: >= 2 points, finite, strictly increasing
         if self.alpha_grid is not None:
             for name, grid, lower in (("alpha_grid", self.alpha_grid, "positive"),
                                       ("beta_grid", self.beta_grid, "nonnegative")):
@@ -205,13 +191,7 @@ class NCrystalExportConfig:
                         f"export.{name} values must be {lower}, got "
                         f"{vals[0]!r} first")
                 setattr(self, name, vals)
-        # lat selects the grid convention: only 0 (physical) and 1 (alpha,beta-
-        # scaled) exist; grids.py treats any other value as lat=0, so a typo like
-        # lat=2 would silently change the grid rather than error. Reject bools too
-        # (int(True) == 1 would otherwise slip through).
-        # `self.lat not in (0, 1)` (NOT int(self.lat) not in ...) so a non-integral
-        # float like 1.5 is rejected rather than silently truncated to 1; 1.0 still
-        # passes (1.0 == 1). The bool guard is first (int(True) == 1 would slip through).
+        # only 0 and 1 exist (grids.py would treat any other value as 0)
         if isinstance(self.lat, bool) or self.lat not in (0, 1):
             raise SpectraConfigError(f"export.lat must be 0 or 1, got {self.lat!r}")
         self.lat = int(self.lat)
@@ -227,18 +207,9 @@ class NCrystalExportConfig:
             raise SpectraConfigError(
                 f"material.scatterers lists duplicate symbol(s) {_dupes}; one "
                 "scatterer entry per species")
-        # The neutron constants are REQUIRED for every species REGARDLESS of
-        # export.elastic: the mode-1/2 inelastic engine derives its coherent,
-        # incoherent, and multiphonon channel weights from b_coh_fm and
-        # sigma_inc_b, so a missing value used to substitute 0.0 and bake an
-        # identically zero S(alpha,beta) with exit 0 while bound_xs still
-        # advertised real physics (review NC-1). Disabling the elastic OUTPUT
-        # block does not make the constants irrelevant to the inelastic
-        # physics. b_coh_fm may be negative (e.g. H); sigma_inc_b may not.
+        # The inelastic engine derives its channel weights from b_coh_fm and
+        # sigma_inc_b, so both are required even without the elastic block.
         for s in self.material.scatterers:
-            # sigma_bound_b normalizes S(alpha,beta); awr scales alpha. A NaN
-            # or negative value used to sail through to the engine and fail
-            # late (or not at all) -- review NC-2.
             v = s.sigma_bound_b
             if v is None or not math.isfinite(float(v)) or float(v) <= 0.0:
                 raise SpectraConfigError(
@@ -267,19 +238,11 @@ class NCrystalExportConfig:
                         f"scatterer {s.symbol!r} {field} must be finite"
                         f"{'' if allow_negative else ' and >= 0'}, got "
                         f"{val!r}")
-        # Temperature must be finite and positive: alpha,beta ~ 1/kT, so T<=0 makes
-        # the whole dimensionless grid singular and T=+inf collapses it. (SpectraConfig
-        # enforces this; the exporter constructs MaterialConfig directly and bypassed
-        # it.) math.isfinite rejects both NaN and +/-inf, which a bare `T > 0` check
-        # (inf > 0 is True) would let through into the alpha/beta grid.
         _temp_K = float(self.material.temperature_K)
         if not math.isfinite(_temp_K) or _temp_K <= 0.0:
             raise SpectraConfigError(
                 f"material.temperature_K must be a finite value > 0, got "
                 f"{self.material.temperature_K!r}")
-        # mesh + phonopy_yaml are required by the phonon engine; validate up front
-        # (the exporter builds MaterialConfig directly and otherwise fails minutes
-        # later with an opaque phonopy/IndexError).
         mesh = self.material.mesh
         try:
             mesh_ok = mesh is not None and len(mesh) == 3
@@ -294,8 +257,6 @@ class NCrystalExportConfig:
             raise SpectraConfigError(
                 "material.phonopy_yaml is required for the phonon (inelastic_mode "
                 "1/2) export")
-        # Validate the partition mode up front so a typo fails at config load
-        # instead of minutes into the engine.
         if self.coherent_partition_mode not in VALID_PARTITION_MODES:
             raise SpectraConfigError(
                 f"export.coherent_partition_mode must be one of "
@@ -313,39 +274,9 @@ class NCrystalExportConfig:
                 "export.incoherent_elastic_mode = directional requires "
                 "export.elastic = true (the mode is carried by the pack's "
                 "elastic block)")
-        # An explicit site_groups override must be non-empty with non-empty
-        # groups (an empty list silently produces zero packs / an empty NCMAT).
-        if self.site_groups is not None:
-            if len(self.site_groups) == 0:
-                raise SpectraConfigError(
-                    "export.site_groups must be non-empty (omit it entirely to "
-                    "group sites by species)")
-            if any(not g for g in self.site_groups):
-                raise SpectraConfigError(
-                    "export.site_groups contains an empty group; each group must "
-                    "list at least one site index")
-            # Exact integral indices: int(0.9) would silently select site 0
-            # (a different site), so fractional indices are rejected, not
-            # truncated. Coverage/range checks live in resolve_principal_groups
-            # (they need the structure's atom count).
-            self.site_groups = [
-                [_require_exact_int(i, "export.site_groups index", 0)
-                 for i in g]
-                for g in self.site_groups]
-            flat = [i for g in self.site_groups for i in g]
-            if len(set(flat)) != len(flat):
-                raise SpectraConfigError(
-                    "export.site_groups lists a site index more than once; "
-                    f"each primitive site belongs to exactly one group. Got {flat}")
-        # Automatic-grid knobs: only used when alpha_grid/beta_grid are omitted,
-        # but validate AND normalize eagerly -- coerce to int/float and write the
-        # coerced value back, so a YAML string ("6") or fractional int never slips
-        # through config load to crash later in generate_*_grid / geomspace.
+        # automatic-grid knobs: validated and normalized even for an explicit grid
         if self.freq_max_eV is not None:
             self.freq_max_eV = float(self.freq_max_eV)
-            # isfinite as well as sign: inf > 0 is True, and a YAML `.inf`
-            # slip would otherwise ride into generate_beta_grid and produce a
-            # non-finite grid (mirrors the temperature check above).
             if not math.isfinite(self.freq_max_eV) or self.freq_max_eV <= 0.0:
                 raise SpectraConfigError(
                     "export.freq_max_eV must be finite and > 0 (or omitted to "
@@ -354,15 +285,7 @@ class NCrystalExportConfig:
         for _f in ("n_lower", "n_upper"):
             setattr(self, _f, _require_exact_int(
                 getattr(self, _f), f"export.{_f}", 0))
-        # alpha_nlog < 2 makes geomspace(...)[1:] EMPTY in generate_alpha_grid:
-        # the log tail vanishes and the alpha grid silently ends at q_cut
-        # instead of the kinematic alpha_max (a factor ~67 coverage loss on
-        # a graphite-like case). generate_alpha_grid rejects it too; the
-        # guard here makes the config fail at load, not at bake time.
-        # (>= 2 because the log alpha tail carries the grid from alpha_qcut to
-        # the kinematic alpha_max; fewer points silently truncate the grid at
-        # q_cut. generate_alpha_grid rejects it too; failing at config load is
-        # friendlier than at bake time.)
+        # alpha_nlog < 2 would leave no log tail (the alpha grid would stop at q_cut)
         self.alpha_nlog = _require_exact_int(
             self.alpha_nlog, "export.alpha_nlog", 2)
         for _f in ("beta_max_eV", "alpha_dq_invA", "alpha_qcut_invA"):
@@ -425,34 +348,9 @@ class NCrystalExportConfig:
 
 
 def _material_from_dict(mat_d: dict) -> MaterialConfig:
-    """Build a :class:`MaterialConfig` from a parsed mapping (strict on typos).
-
-    Mirrors the material-section handling in ``SpectraConfig.from_dict`` so the
-    export config and the spectra config accept identical ``material`` blocks.
-    """
-    known = {f.name for f in dataclasses.fields(MaterialConfig)}
-    unknown = set(mat_d) - known
-    if unknown:
-        raise SpectraConfigError(
-            f"unknown material key(s) {sorted(unknown)}; allowed: {sorted(known)}")
-    scat_raw = mat_d.pop("scatterers", [])
-    scatterers = []
-    scat_fields = {f.name for f in dataclasses.fields(Scatterer)}
-    for s in scat_raw:
-        s = dict(s)
-        bad = set(s) - scat_fields
-        if bad:
-            raise SpectraConfigError(
-                f"unknown scatterer key(s) {sorted(bad)}; allowed: {sorted(scat_fields)}")
-        scatterers.append(Scatterer(**s))
-    material = MaterialConfig(**mat_d)
+    """Build a :class:`MaterialConfig` from a parsed mapping (strict on typos),
+    as ``SpectraConfig.from_dict`` does for its material section."""
+    scatterers = [_build(Scatterer, dict(s)) for s in mat_d.pop("scatterers", [])]
+    material = _build(MaterialConfig, mat_d)
     material.scatterers = scatterers
-    if material.mesh is not None:
-        material.mesh = [_require_exact_int(x, "material.mesh entry", 1)
-                         for x in material.mesh]
-    if material.lattice is not None:
-        material.lattice = [float(x) for x in material.lattice]
-    for sc in material.scatterers:
-        if sc.positions is not None:
-            sc.positions = [[float(x) for x in p] for p in sc.positions]
     return material
