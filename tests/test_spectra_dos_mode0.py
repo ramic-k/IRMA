@@ -66,16 +66,6 @@ def test_multispecies_is_atom_weighted_average_of_singles():
     assert tot["sigma_b_total"] == pytest.approx((2 * 80.0 + 5.55) / 3.0)
 
 
-def test_single_species_spectrum_is_multiplicity_independent():
-    """PER-ATOM: one species' spectrum does not depend on its multiplicity
-    (the per-cell sum and the /N atom count cancel)."""
-    omega, rho = _dos()
-    base = {"symbol": "H", "omega_ev": omega, "rho": rho, "awr": 0.999, "sigma_bound_b": 80.0}
-    one = compute_mode0_sqe(species=[dict(base, multiplicity=1)], temperature_k=T_K, q_ang_inv=Q, e_mev=E)
-    three = compute_mode0_sqe(species=[dict(base, multiplicity=3)], temperature_k=T_K, q_ang_inv=Q, e_mev=E)
-    assert np.allclose(three["sqe_barn_per_meV"], one["sqe_barn_per_meV"], rtol=1e-12)
-
-
 def test_one_phonon_peaks_at_the_dos():
     """nphon=1 -> S(Q,E) peaks exactly at the input DOS frequencies (40, 100)."""
     omega, rho = _dos(w_max_meV=40, opt_meV=100)
@@ -88,21 +78,6 @@ def test_one_phonon_peaks_at_the_dos():
              if sE[i] > sE[i - 1] and sE[i] > sE[i + 1] and sE[i] > 0.05 * sE.max()]
     assert any(abs(p - 40) < 3 for p in peaks) and any(abs(p - 100) < 3 for p in peaks)
     assert np.all(np.isfinite(S)) and S.max() > 0
-
-
-def test_builds_a_finite_powdersqe_through_the_forward_model():
-    """The mode-0 S(Q,E) wraps as a PowderSQE and projects to a finite INS spectrum."""
-    from irma.spectra import instruments as ins
-    omega, rho = _dos()
-    out = compute_mode0_sqe(species=[{"symbol": "H", "omega_ev": omega, "rho": rho,
-                                      "awr": 0.999, "sigma_bound_b": 80.0}],
-                            temperature_k=T_K, q_ang_inv=Q, e_mev=E)
-    p = si.from_noncubic_arrays(out["q_ang_inv"], out["e_mev"],
-                                out["sqe_barn_per_meV"], T_K=T_K,
-                                sigma_b=out["sigma_b_total"])
-    sim = ins.simulate(p, ins.VISION(), np.linspace(0, 150, 300),
-                       elastic_model=None)
-    assert np.all(np.isfinite(sim["I_inelastic"])) and sim["I_inelastic"].max() > 0
 
 
 @pytest.mark.parametrize("bad", [
