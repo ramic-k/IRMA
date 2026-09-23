@@ -122,11 +122,6 @@ def _error_hint(text: str) -> str | None:
         return ("the potential env's torch was built against NumPy 1.x "
                 "but NumPy >= 2 sits next to it; install numpy<2 in that "
                 "env (<env python> -m pip install 'numpy<2')")
-    if "TF32" in text and "cuDNN" in text:
-        return ("known torch.export defect with mixed cuDNN TF32 flags "
-                "on bleeding-edge torch; recreate the env with uv "
-                "installed so it is provisioned on the pinned Python "
-                f"{_ENV_PYTHON} series with a mature torch")
     return None
 
 
@@ -212,12 +207,10 @@ def register_interpreter(potential: str, interpreter: str):
     table = _load_registry()
     table[potential] = interpreter
     _save_registry(table)
-    _invalidate_meta(potential)
 
 
 def unregister_interpreter(potential: str) -> bool:
     table = _load_registry()
-    _invalidate_meta(potential)
     if potential not in table:
         return False
     del table[potential]
@@ -241,31 +234,7 @@ def is_dispatched(potential: str) -> bool:
         os.path.normcase(os.path.abspath(sys.executable))
 
 
-def pin_interpreter_env(potential: str):
-    """Freeze the dispatch decision for this process AND its children.
-
-    Writing the resolved interpreter into IRMA_MLIP_PYTHON_<POTENTIAL>
-    means a registry edit mid-build cannot split relaxation, the cache
-    fingerprint, and spawned pool workers across different environments
-    (the env var both overrides the registry file and is inherited
-    through multiprocessing spawn).
-    """
-    interp = registered_interpreter(potential)
-    if interp and is_dispatched(potential):
-        os.environ[_env_var(potential)] = interp
-
-
 # --- protocol client ---------------------------------------------------------
-
-# init meta per (potential, interpreter), so the fingerprint can use the
-# EXECUTING environment's package version without a second server spawn
-_META_CACHE: dict = {}
-
-
-def _invalidate_meta(potential: str):
-    for key in [k for k in _META_CACHE if k[0] == potential]:
-        del _META_CACHE[key]
-
 
 class _ServerHandle:
     """One force-server subprocess speaking the JSON-lines protocol. A force
@@ -329,8 +298,7 @@ def _oneshot(interpreter: str, payload: dict, what: str) -> dict:
 
 
 def spec_payload(spec) -> dict:
-    """The spec as the force-server protocol carries it: every field,
-    so a pinned checkpoint digest reaches the foreign loader."""
+    """The spec as the force-server protocol carries it (every field)."""
     from dataclasses import asdict
     return asdict(spec)
 
@@ -353,13 +321,6 @@ def remote_identity(spec, interpreter: str) -> tuple[str, str]:
     return reply["identity"], reply["version"]
 
 
-def cached_package_version(potential: str) -> str | None:
-    """Package version reported by the last server init, if any."""
-    interp = registered_interpreter(potential)
-    meta = _META_CACHE.get((potential, interp))
-    return meta.get("package_version") if meta else None
-
-
 def remote_calculator(spec, interpreter: str):
     """(RemoteCalculator, meta) proxying to the foreign environment."""
     from ase.calculators.calculator import (
@@ -375,7 +336,6 @@ def remote_calculator(spec, interpreter: str):
         raise
     meta = dict(reply["meta"])
     meta["dispatch_interpreter"] = interpreter
-    _META_CACHE[(spec.potential, interpreter)] = meta
 
     class RemoteCalculator(Calculator):
         implemented_properties = ["energy", "free_energy", "forces",

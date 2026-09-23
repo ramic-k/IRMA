@@ -157,11 +157,7 @@ def _dispatch_interpreter(potential: str) -> str | None:
     """The foreign interpreter to dispatch to, or None for in-process."""
     if _DISPATCH_DISABLED or potential == "emt":
         return None
-    try:
-        from irma.mlip import envs
-    except ImportError:
-        # standalone load without the irma package present
-        return None
+    from irma.mlip import envs
     if envs.is_dispatched(potential):
         return envs.registered_interpreter(potential)
     return None
@@ -197,42 +193,21 @@ class CalculatorSpec:
 
     potential: one of POTENTIALS.
     model: checkpoint name or path; None selects the potential's default.
-    threads: native torch threads for force calls made by THIS process.
-        The parallel displacement loop passes 1 (one native thread per
-        worker, the measured-oversubscription convention shared with
-        irma.core.noncubic_workers); the serial path passes the user's
-        --threads.
-    checkpoint_sha256: content digest of a checkpoint FILE, pinned by
-        canonicalize_spec in the parent process (MACE family). Every
-        loader verifies the bytes it deserializes against it, so the
-        parent, the pool workers, and a force server cannot silently load
-        different files under one identity. None for named models and
-        for potentials that resolve their own files.
+    threads: native torch threads for force calls made by THIS process
+        (the parallel displacement loop passes 1 per worker; the serial
+        path passes the user's --threads).
     """
     potential: str
     model: str | None = None
     threads: int = 1
-    checkpoint_sha256: str | None = None
 
     def __post_init__(self):
         if self.potential not in _VALID:
             raise ValueError(
                 f"unknown potential {self.potential!r}; choose from "
                 f"{', '.join(POTENTIALS)}")
-        if isinstance(self.threads, bool) or not isinstance(self.threads, int):
-            raise ValueError(f"threads must be an integer, got {self.threads!r}")
         if self.threads < 1:
             raise ValueError(f"threads must be >= 1, got {self.threads}")
-        if self.checkpoint_sha256 is not None and not _is_sha256_hex(
-                self.checkpoint_sha256):
-            raise ValueError(
-                f"checkpoint_sha256 must be a 64-character lowercase hex "
-                f"digest, got {self.checkpoint_sha256!r}")
-
-
-def _is_sha256_hex(text) -> bool:
-    return (isinstance(text, str) and len(text) == 64
-            and all(c in "0123456789abcdef" for c in text))
 
 
 def _require(potential: str):
@@ -475,54 +450,11 @@ def _nequip_mode() -> tuple[str, str]:
     return "torchscript", ".nequip.pth"
 
 
-def _cached_nequip_artifact(zoo_id: str) -> str | None:
-    """The cached compiled artifact this environment can use, if any.
-
-    With torch importable, only the artifact matching the running torch's
-    compile mode counts (a stale TorchScript file is unloadable on torch
-    >= 2.10). Without torch (bare cache inspection), any cached artifact
-    is reported -- actually LOADING it will demand the nequip package and
-    fail with a clean dependency error later.
-    """
-    try:
-        exts = (_nequip_mode()[1],)
-    except ImportError:
-        exts = (".nequip.pt2", ".nequip.pth")
-    for ext in exts:
-        path = _nequip_artifact_path(zoo_id, ext)
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-# Bootstrap for the nequip-compile subprocess. Beyond the thread pin,
-# it guards a torch.export defect seen on bleeding-edge torch: when the
-# import chain sets the cuDNN conv TF32 flag through the new per-op API
-# while the RNN flag keeps its legacy value, export's own bookkeeping
-# calls a getter that RAISES on the mixed state ("cuDNN conv and cuDNN
-# RNN have different TF32 flags"). The compile runs --device cpu, so
-# TF32 is irrelevant to the result: the legacy setter writes both flags
-# consistently, and the getter shim returns the conv flag instead of
-# raising if something re-mixes them later in the run. UNVERIFIED
-# against a live CUDA torch as of 2026-08-19 (needs a machine with a
-# CUDA build); remove both once torch or nequip fixes the flag handling.
+# Bootstrap for the nequip-compile subprocess: one torch thread, because
+# the thread count is baked into the compiled kernels.
 _NEQUIP_COMPILE_BOOTSTRAP = """\
-import os
-import sys
 import torch
 torch.set_num_threads(1)
-try:
-    torch.backends.cudnn.allow_tf32 = False
-except Exception:
-    pass
-if hasattr(torch._C, "_get_cudnn_allow_tf32"):
-    _orig_get_tf32 = torch._C._get_cudnn_allow_tf32
-    def _tf32_no_raise():
-        try:
-            return _orig_get_tf32()
-        except RuntimeError:
-            return False
-    torch._C._get_cudnn_allow_tf32 = _tf32_no_raise
 from nequip.scripts.compile import main
 main()
 """
@@ -575,48 +507,14 @@ def _compile_nequip_model(zoo_id: str) -> str:
 # --- MACE-family checkpoints -------------------------------------------------
 
 MACE_FAMILY = ("mace", "mace-off")
-STORED_DTYPE_UNKNOWN = "unknown"
-
-
-def read_verified_checkpoint(path: str,
-                             expected_sha256: str | None) -> tuple[bytes, str]:
-    """Read a checkpoint file once and return (bytes, sha256 of the bytes).
-
-    The bytes returned are the bytes that get deserialized, so the digest
-    the manifest and the force-cache fingerprint record describes exactly
-    the model that produced the forces. When a digest was pinned into the
-    spec (canonicalize_spec does this in the parent, before the pool
-    workers and any force server start), a file that no longer matches
-    is refused: it was replaced between pinning and loading.
-    """
-    with open(path, "rb") as fh:
-        data = fh.read()
-    actual = hashlib.sha256(data).hexdigest()
-    if expected_sha256 and actual != expected_sha256:
-        raise RuntimeError(
-            f"checkpoint {path} changed after the build pinned it: sha256 "
-            f"{actual} != pinned {expected_sha256}; refusing to load it. "
-            f"Restart the build so every process reads the same file.")
-    return data, actual
-
-
-def _floating_dtypes(module) -> list[str]:
-    """Distinct floating-point dtypes of a module's parameters and
-    buffers, in first-seen order, as plain names ('float32')."""
-    names = []
-    tensors = list(module.parameters()) + list(module.buffers())
-    for tensor in tensors:
-        dt = getattr(tensor, "dtype", None)
-        if dt is None or not getattr(dt, "is_floating_point", False):
-            continue
-        name = str(dt).replace("torch.", "")
-        if name not in names:
-            names.append(name)
-    return names
+MACE_OFF_NOTE = (
+    "the MACE-OFF checkpoints are distributed under the Academic Software "
+    "License: research-only, non-commercial; commercial use needs a "
+    "separate license")
 
 
 def inspect_mace_model(loaded, origin: str) -> dict:
-    """Describe a deserialized MACE module BEFORE any dtype conversion.
+    """Describe a deserialized MACE module (class, cutoff, elements, heads).
 
     Raises ValueError when the object is not a full serialized MACE model:
     a state dict or a training checkpoint lacks the attributes MACE's own
@@ -624,24 +522,15 @@ def inspect_mace_model(loaded, origin: str) -> dict:
     contents.
     """
     if not (hasattr(loaded, "atomic_numbers") and hasattr(loaded, "r_max")
-            and callable(getattr(loaded, "parameters", None))
-            and callable(getattr(loaded, "buffers", None))):
+            and callable(getattr(loaded, "parameters", None))):
         raise ValueError(
             f"{origin} is not a serialized MACE model (a state dict or a "
             f"training checkpoint, perhaps); MACE writes the full model as "
             f"<name>.model at the end of training, pass that file")
-    dtypes = _floating_dtypes(loaded)
-    if len(dtypes) == 1:
-        stored = dtypes[0]
-    elif dtypes:
-        stored = "mixed (" + ", ".join(dtypes) + ")"
-    else:
-        stored = STORED_DTYPE_UNKNOWN
     heads = getattr(loaded, "heads", None)
     n_int = getattr(loaded, "num_interactions", None)
     return {
         "model_class": type(loaded).__name__,
-        "stored_dtype": stored,
         "r_max_A": float(loaded.r_max),
         "num_interactions": int(n_int) if n_int is not None else None,
         "atomic_numbers": [int(z) for z in loaded.atomic_numbers],
@@ -649,14 +538,11 @@ def inspect_mace_model(loaded, origin: str) -> dict:
     }
 
 
-def _mace_calculator_from_file(path: str, expected_sha256: str | None):
-    """(MACECalculator, description) for a checkpoint FILE, loaded once.
-
-    One deserialized module is described (stored dtype before MACE's
-    float64 conversion, class, cutoff, elements, heads) and then handed
-    to MACECalculator, so the description and the forces come from the
-    same object. Genuine multi-head checkpoints are refused: IRMA has no
-    head selection, and MACE would otherwise pick a head silently.
+def _mace_calculator_from_file(path: str):
+    """(MACECalculator, description) for a checkpoint FILE, read once: the
+    recorded sha256 is that of the bytes deserialized. Genuine multi-head
+    checkpoints are refused: IRMA has no head selection, and MACE would
+    otherwise pick a head silently.
 
     Trust note: a MACE model file is a pickle, and loading it runs code
     from the file. The user chose the file; nothing here makes an
@@ -666,7 +552,9 @@ def _mace_calculator_from_file(path: str, expected_sha256: str | None):
 
     import torch
     from mace.calculators import MACECalculator
-    data, digest = read_verified_checkpoint(path, expected_sha256)
+    with open(path, "rb") as fh:
+        data = fh.read()
+    digest = hashlib.sha256(data).hexdigest()
     loaded = torch.load(io.BytesIO(data), map_location="cpu",
                         weights_only=False)
     info = inspect_mace_model(loaded, f"checkpoint {path}")
@@ -689,93 +577,22 @@ def missing_elements(covered_symbols, structure_symbols) -> list[str]:
     return sorted({str(s) for s in structure_symbols} - covered)
 
 
-def _guard_elements(calc, covered_numbers, origin: str):
-    """Wrap an ASE calculator so it refuses atoms outside its element table.
-
-    The check runs before every delegated calculation, on every path
-    that builds a calculator (parent, pool workers, force server), so a
-    structure the checkpoint was never trained on fails closed instead of
-    producing forces from an untrained embedding.
-    """
-    from ase.calculators.calculator import Calculator, all_changes
+def _finish_mace(calc):
+    """Provenance of a constructed MACE-family calculator."""
     from ase.data import chemical_symbols
-    covered = frozenset(int(z) for z in covered_numbers)
-    covered_text = " ".join(chemical_symbols[z] for z in sorted(covered))
-
-    class ElementCoverageGuard(Calculator):
-        implemented_properties = list(getattr(
-            calc, "implemented_properties", ("energy", "forces")))
-
-        def __init__(self):
-            super().__init__()
-            self.inner = calc
-            self.covered_numbers = covered
-
-        def calculate(self, atoms=None, properties=("energy",),
-                      system_changes=all_changes):
-            Calculator.calculate(self, atoms)
-            present = {int(z) for z in self.atoms.get_atomic_numbers()}
-            missing = sorted(present - covered)
-            if missing:
-                raise ValueError(
-                    f"{origin} covers {covered_text}; the structure "
-                    f"contains "
-                    f"{' '.join(chemical_symbols[z] for z in missing)}, "
-                    f"which it was not trained on; refusing the force call")
-            self.inner.calculate(self.atoms, list(properties),
-                                 system_changes)
-            self.results = dict(self.inner.results)
-
-        def close(self):
-            close = getattr(self.inner, "close", None)
-            if close is not None:
-                close()
-
-    return ElementCoverageGuard()
-
-
-def _finish_mace(calc, info: dict | None, origin: str):
-    """Element guard plus provenance for a constructed MACE-family
-    calculator. `info` is the pre-conversion description of a file
-    checkpoint, or None for a named model (its stored dtype is unknown
-    once MACE has converted it)."""
-    from ase.data import chemical_symbols
-    try:
-        numbers = [int(z) for z in calc.z_table.zs]
-        r_max = float(calc.r_max)
-        first = calc.models[0]
-    except (AttributeError, IndexError, TypeError) as exc:
-        raise RuntimeError(
-            f"{origin}: the MACE calculator exposes no element table, so "
-            f"element coverage cannot be guarded") from exc
-    if info is not None:
-        # the description and the calculator must come from one object
-        if info["atomic_numbers"] != numbers or info["r_max_A"] != r_max:
-            raise RuntimeError(
-                f"{origin}: the loaded model and the calculator built from "
-                f"it disagree on their element table or cutoff")
+    first = calc.models[0]
     n_int = getattr(first, "num_interactions", None)
-    meta = {
+    return calc, {
         "checkpoint_model_class": type(first).__name__,
-        "checkpoint_stored_dtype": (info["stored_dtype"] if info
-                                    else STORED_DTYPE_UNKNOWN),
-        "checkpoint_r_max_A": r_max,
+        "checkpoint_r_max_A": float(calc.r_max),
         "checkpoint_num_interactions": (int(n_int) if n_int is not None
                                         else None),
-        "checkpoint_elements": [chemical_symbols[z] for z in numbers],
+        "checkpoint_elements": [chemical_symbols[int(z)] for z in calc.z_table.zs],
         "checkpoint_heads": (list(calc.available_heads)
                              if getattr(calc, "available_heads", None)
                              else None),
         "checkpoint_head": getattr(calc, "head", None),
     }
-    stored = meta["checkpoint_stored_dtype"]
-    if stored not in ("float64", STORED_DTYPE_UNKNOWN):
-        meta["dtype_note"] = (
-            f"stored weights: {stored}; evaluation: float64, to reduce "
-            f"numerical error in the finite-displacement forces. The "
-            f"conversion does not restore precision lost when the weights "
-            f"were stored.")
-    return _guard_elements(calc, numbers, origin), meta
 
 
 def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
@@ -786,20 +603,15 @@ def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
     the version listing and the checkpoint download in upet's alias path
     are network calls that every spawned worker would otherwise repeat,
     and a mid-run upstream release could split the build across versions.
-    dpa3 aliases get their '::head' made explicit. A MACE-family
-    checkpoint FILE gets its absolute path and content digest pinned, so
-    every later loader verifies the bytes it reads. The returned spec is
-    what relaxation, every pool worker, and the cache fingerprint all
-    see. Other potentials pass through unchanged.
+    dpa3 aliases get their '::head' made explicit and a MACE-family
+    checkpoint FILE its absolute path. The returned spec is what
+    relaxation, every pool worker, and the cache fingerprint all see.
+    Other potentials pass through unchanged.
     """
     if spec.potential in MACE_FAMILY:
-        model = spec.model
-        if model and os.path.isfile(str(model)):
-            path = os.path.abspath(str(model))
-            if spec.checkpoint_sha256 and path == str(model):
-                return spec
-            digest = spec.checkpoint_sha256 or _checkpoint_sha256(path)
-            return replace(spec, model=path, checkpoint_sha256=digest)
+        if spec.model and os.path.isfile(str(spec.model)):
+            path = os.path.abspath(str(spec.model))
+            return spec if path == spec.model else replace(spec, model=path)
         return spec
     if spec.potential == "pet-mad":
         model = spec.model or _DEFAULT_MODELS["pet-mad"]
@@ -843,9 +655,6 @@ def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
             from irma.mlip import envs
             return replace(spec,
                            model=envs.remote_canonicalize(spec, interp))
-        cached = _cached_nequip_artifact(zoo_id)   # torch-tolerant
-        if cached:                            # compiled rerun: offline,
-            return replace(spec, model=cached)     # no nequip needed
         _require("nequip")
         return replace(spec, model=_compile_nequip_model(zoo_id))
     return spec
@@ -854,22 +663,15 @@ def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
 def resolved_checkpoint_identity(spec: CalculatorSpec) -> str:
     """The string that stands for the checkpoint in cache fingerprints.
 
-    Local files are content-hashed (a digest pinned in the spec is the
-    hash of the bytes every loader verified). pet-mad aliases resolve to
+    Local files are content-hashed. pet-mad aliases resolve to
     'alias@version' (a released version names immutable weights); dpa3
     aliases resolve to the downloaded file's content hash plus the head,
     because the head selects a different fitting net from the same file.
-    For every pre-existing potential this reproduces the historical
-    formula byte for byte, so old force caches stay valid.
     """
     model = spec.model or _DEFAULT_MODELS.get(spec.potential, "builtin")
     if spec.potential == "pet-mad" and not os.path.isfile(str(model)):
         alias, version = _split_pet_model(model)
         if version is None:
-            interp = _dispatch_interpreter("pet-mad")
-            if interp:
-                from irma.mlip import envs
-                return envs.remote_identity(spec, interp)[0]
             _require("pet-mad")
             version = _resolve_pet_version(alias, None)
         return f"{alias}@{version}"
@@ -877,27 +679,17 @@ def resolved_checkpoint_identity(spec: CalculatorSpec) -> str:
         base, head = _split_dpa_model(model)
         path = _resolve_dpa_checkpoint(base)
         return f"{_checkpoint_sha256(path)}|head={head}"
-    return (spec.checkpoint_sha256 or _checkpoint_sha256(spec.model)
-            or str(model))
+    return _checkpoint_sha256(spec.model) or str(model)
 
 
-def effective_package_version(spec: CalculatorSpec) -> str:
-    """The potential package version in the environment that RUNS it.
-
-    For a dispatched potential the local `_package_version` would report
-    "unknown" (or a stale local install); the fingerprint must carry the
-    executing environment's version. The last server init is preferred
-    (populated by relaxation in the CLI flow); otherwise one identity
-    round-trip fetches it.
-    """
+def fingerprint_identity(spec: CalculatorSpec) -> tuple[str, str]:
+    """(checkpoint identity, package version) for the force-cache
+    fingerprint, from the environment that runs the potential."""
     interp = _dispatch_interpreter(spec.potential)
     if interp:
         from irma.mlip import envs
-        cached = envs.cached_package_version(spec.potential)
-        if cached:
-            return cached
-        return envs.remote_identity(spec, interp)[1]
-    return _package_version(spec.potential)
+        return envs.remote_identity(spec, interp)
+    return resolved_checkpoint_identity(spec), _package_version(spec.potential)
 
 
 def make_calculator(spec: CalculatorSpec):
@@ -916,30 +708,18 @@ def make_calculator(spec: CalculatorSpec):
         from irma.mlip import envs
         return envs.remote_calculator(spec, interp)
 
-    # clamp BEFORE the backend import: tensorpotential initializes
-    # TensorFlow at import time, and TF reads TF_NUM_* only once
+    # Threads are set before the backend import (tensorpotential starts
+    # TensorFlow, and a torch op starts the inter-op pool, at import time).
+    # A missing torch is reported by _require below; set_num_interop_threads
+    # raises once the pool exists (a second calculator in this process).
     _clamp_native_threads(spec.threads)
     if spec.potential not in ("grace", "emt"):
-        # torch thread setup must also precede the backend import: an
-        # import-time tensor op would otherwise start the inter-op pool
-        # at its all-cores default (review finding). A MISSING torch is
-        # not an error here -- _require() below then fails on the backend
-        # package and raises the properly-named dependency error (a raw
-        # ModuleNotFoundError('torch') broke the exit-4 contract in CI).
         try:
             import torch
-        except ImportError:
-            torch = None
-        if torch is not None:
             torch.set_num_threads(spec.threads)
-            try:
-                torch.set_num_interop_threads(1)
-            except RuntimeError:
-                import warnings
-                warnings.warn(
-                    "torch's inter-op pool was already initialized before "
-                    "IRMA could clamp it; force calls may oversubscribe",
-                    RuntimeWarning, stacklevel=2)
+            torch.set_num_interop_threads(1)
+        except (ImportError, RuntimeError):
+            pass
     _require(spec.potential)
 
     if spec.potential == "emt":
@@ -966,16 +746,10 @@ def make_calculator(spec: CalculatorSpec):
         torch.set_default_dtype(torch.float32)
         calc = MatterSimCalculator(load_path=model, device="cpu")
     elif spec.potential == "orb":
-        # orb-models changed its API across releases: older builders return a
-        # bare model for ORBCalculator(model, device=...); current ones return
-        # (model, atoms_adapter) and the calculator takes the adapter. Support
-        # both, and treat a filesystem path as a weights_path for the default
-        # conservative builder rather than a builder name.
+        # a filesystem path is a weights_path for the default conservative
+        # builder rather than a builder name
         from orb_models.forcefield import pretrained
-        try:
-            from orb_models.forcefield.calculator import ORBCalculator
-        except ImportError:                                # newer layout
-            from orb_models.forcefield.inference.calculator import ORBCalculator
+        from orb_models.forcefield.inference.calculator import ORBCalculator
         if os.path.isfile(str(model)):
             builder = pretrained.orb_v3_conservative_inf_omat
             built = builder(weights_path=str(model), device="cpu",
@@ -998,11 +772,8 @@ def make_calculator(spec: CalculatorSpec):
                     "checkpoint file path (loaded through the conservative "
                     "builder); direct-force heads give unreliable phonons.")
             built = builder(device="cpu", precision="float32-high")
-        if isinstance(built, tuple):                       # (model, adapter)
-            orbff, adapter = built
-            calc = ORBCalculator(orbff, atoms_adapter=adapter, device="cpu")
-        else:
-            calc = ORBCalculator(built, device="cpu")
+        orbff, adapter = built
+        calc = ORBCalculator(orbff, atoms_adapter=adapter, device="cpu")
         dtype = "float32-high"
     elif spec.potential == "sevennet":
         from sevenn.calculator import SevenNetCalculator
@@ -1011,19 +782,20 @@ def make_calculator(spec: CalculatorSpec):
             calc = SevenNetCalculator(model=model, modal="mpa", device="cpu")
         else:
             calc = SevenNetCalculator(model=model, device="cpu")
-    elif spec.potential == "mace":
-        if os.path.isfile(str(model)):
-            calc, info = _mace_calculator_from_file(
-                str(model), spec.checkpoint_sha256)
+    elif spec.potential in MACE_FAMILY:
+        is_file = os.path.isfile(str(model))
+        if is_file:
+            calc, info = _mace_calculator_from_file(str(model))
             checkpoint_sha256 = info["sha256"]
         else:
-            from mace.calculators import mace_mp
-            calc = mace_mp(model=model, default_dtype="float64",
-                           device="cpu")
-            info = None
-        calc, extra_meta = _finish_mace(calc, info, f"MACE model {model}")
+            from mace.calculators import mace_mp, mace_off
+            loader = mace_mp if spec.potential == "mace" else mace_off
+            calc = loader(model=model, default_dtype="float64", device="cpu")
+        calc, extra_meta = _finish_mace(calc)
         dtype = "float64"
-        license_note = _mace_license_note(model)
+        # the named MACE-OFF checkpoints are ASL; a user file carries its own
+        license_note = (_mace_license_note(model) if spec.potential == "mace"
+                        else None if is_file else MACE_OFF_NOTE)
     elif spec.potential == "pet-mad":
         # non_conservative=False is passed EXPLICITLY on every construction:
         # upet's direct-force mode returns forces that are not gradients of
@@ -1042,28 +814,20 @@ def make_calculator(spec: CalculatorSpec):
     elif spec.potential == "dpa3":
         base, head = _split_dpa_model(model)
         path = _resolve_dpa_checkpoint(base)
-        # the import sits INSIDE the armor: deepmd.calculator imports
-        # DeepPot at module load, so both known environment failures (the
-        # missing 'mpich' wheel whose libmpi the cibuildwheel binaries
-        # dlopen, and a torch-ABI-mismatched optional C++ op library) can
-        # fire here as well as at construction.
+        # the missing-mpich and torch-ABI failures can fire at import or
+        # at construction
         try:
             from deepmd.calculator import DP
             calc = DP(model=path, head=head)
         except ImportError as exc:
             raise MlipDependencyError(
-                f"deepmd-kit could not load ({exc}); if 'mpich' is named, "
-                f"pip install mpich alongside deepmd-kit") from exc
+                f"deepmd-kit could not load ({exc}); pip install mpich if "
+                f"it is named") from exc
         except RuntimeError as exc:
             if "ABI" in str(exc) or "deepmd_op_pt" in str(exc):
                 raise MlipDependencyError(
-                    "deepmd-kit's optional C++ op library was built against "
-                    "a different torch than this environment runs "
-                    f"({str(exc).splitlines()[0]}). Install the torch this "
-                    "deepmd-kit wheel targets (deepmd-kit 3.1.3 -> torch "
-                    "2.10), or delete the optional "
-                    "site-packages/deepmd/lib/libdeepmd_op_pt.* library -- "
-                    "DPA inference does not use the custom ops.") from exc
+                    "deepmd-kit's C++ op library does not match this torch: "
+                    + str(exc).splitlines()[0]) from exc
             raise
         dtype = "float64"
         checkpoint_sha256 = _checkpoint_sha256(path)
@@ -1074,9 +838,7 @@ def make_calculator(spec: CalculatorSpec):
         except ImportError:                    # pre-0.19 (old path)
             from nequip.ase import NequIPCalculator
         if not os.path.isfile(str(model)):
-            zoo_id = _normalize_nequip_zoo_id(model)
-            model = _cached_nequip_artifact(zoo_id) \
-                or _compile_nequip_model(zoo_id)
+            model = _compile_nequip_model(_normalize_nequip_zoo_id(model))
         calc = NequIPCalculator.from_compiled_model(str(model),
                                                     device="cpu")
         dtype = "model-default"
@@ -1103,27 +865,6 @@ def make_calculator(spec: CalculatorSpec):
             "distributed under the Academic Software License: "
             "research-only, non-commercial; commercial use needs a "
             "separate license from ICAMS")
-    else:  # mace-off
-        if os.path.isfile(str(model)):
-            calc, info = _mace_calculator_from_file(
-                str(model), spec.checkpoint_sha256)
-            checkpoint_sha256 = info["sha256"]
-        else:
-            from mace.calculators import mace_off
-            calc = mace_off(model=model, default_dtype="float64",
-                            device="cpu")
-            info = None
-        calc, extra_meta = _finish_mace(calc, info,
-                                        f"MACE-OFF model {model}")
-        dtype = "float64"
-        if not os.path.isfile(str(model)):
-            # the NAMED MACE-OFF checkpoints are ASL (github.com/ACEsuit/
-            # mace-off LICENSE.md); a user-supplied checkpoint file (e.g.
-            # MIT-licensed Egret-1) carries its own license, so no note
-            license_note = (
-                "the MACE-OFF checkpoints are distributed under the "
-                "Academic Software License: research-only, "
-                "non-commercial; commercial use needs a separate license")
 
     if checkpoint_sha256 is None:    # dpa3 and MACE files hashed above
         checkpoint_sha256 = _checkpoint_sha256(spec.model)
