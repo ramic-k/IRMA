@@ -24,7 +24,7 @@ file's own annotations:
 20 /  $ run (from the repo root): python -m irma examples/tsl/graphite_mode2.input graphite_mode2.endf
 'tsl C in graphite - phonopy-backed noncubic mode 2, full multiphonon' /
 1 1 1 /  $ Card 3: ntempr iprint nphon (auto-sized upward by Card 6g auto_order=1)
-28 6000 0 /
+28 6000 0 0 1e-75 1 /  $ Card 4: iint=1 (lin-lin), the mode-2 production form
 11.898 4.724022566 1 10 0 0 /
 0 0 0 0 0 /
 1 1 0 2 /
@@ -41,13 +41,15 @@ single-channel elastic format (SEF: one elastic component per tape; see
 [Scattering modes](../modes.md)) and `inelastic_mode=2`. Card 6f names
 the phonopy calculation, the reciprocal-space mesh (40x40x40, the production
 default), and the worker-process count. Card 6g sets the directional
-sampling: 10000 powder directions for the one-phonon term, 1000 for
-the multiphonon Debye-Waller average, and `auto_order=1`, which lets
+sampling: 10000 powder directions for the one-phonon terms, 1000 for
+the multiphonon orders, and `auto_order=1`, which lets
 the engine raise the multiphonon order as far as the grid actually
-requires. The rest of the input file is the alpha and beta grids, written
-out explicitly here; the [automatic grid generator](../grids.md)
-builds the same grids from the phonon spectrum if you prefer not to
-carry them in the file. Card-by-card definitions are in the
+requires. Card 4 ends with `iint=1`: the MF7/MT4 law is stored for
+lin-lin interpolation, which the coherent one-phonon law needs (log
+interpolation floors its structural near-zeros). The rest of the input
+file is the alpha and beta grids, written out explicitly here; they are
+the grids the [automatic grid generator](../grids.md) builds for
+`iint=1` from the phonon spectrum, as `irma mlip emit` writes them. Card-by-card definitions are in the
 [input file reference](../input-reference.md).
 
 ## Run it
@@ -79,9 +81,9 @@ the engine computes that bound from the grid and the mean-squared
 displacements and raises the order itself; without it, a truncated
 order would silently underpopulate $S(\alpha,\beta)$ at high alpha.
 
-With the input file's eight worker processes the run takes 57 seconds of
-wall clock on a recent laptop (about 340 CPU-seconds across the
-workers). The result, `graphite_mode2.endf`, is a 2.7 MB ENDF-6 file
+With the input file's eight worker processes the run takes about 1.5
+minutes of wall clock on a recent laptop (about 560 CPU-seconds across the
+workers). The result, `graphite_mode2.endf`, is a 6.2 MB ENDF-6 file
 carrying the MF1/MT451 header built from the input file's closing
 comment cards (the trailing quoted lines, not shown in the excerpt
 above), the coherent-elastic Bragg edges in MF7/MT2, and the inelastic

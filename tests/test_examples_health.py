@@ -83,6 +83,9 @@ def test_mode2_deck_is_production_shaped():
         "(ndir mpdir auto): without it the deck's nphon=1 yields a "
         "one-phonon-only law that the examples/tsl/README.md §3 walkthrough "
         "would then present as ready-to-run")
+    card_4 = next(line for line in deck.splitlines() if line.startswith("28 6000"))
+    assert card_4.split("/")[0].split()[5] == "1", (
+        "Card 4 must set iint=1 (lin-lin), the mode-2 production form")
 
 
 def test_examples_index_mentions_every_family_member():
