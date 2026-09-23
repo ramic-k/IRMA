@@ -39,110 +39,36 @@ _NO_SPECIES_HINT = ("could not read a species list from this bundle's "
                     "natural element for every species.")
 
 
-# ---------------------------------------------------------------------------
-# Species discovery: the bundle's OWN phonopy.yaml, read as plain YAML.
-#
-# The GUI process is not guaranteed to have ase or phonopy (the potentials
-# often live in their own environments), so neither the structure file nor
-# phonopy itself may be touched here. The symbol list comes from the same
-# light parser the NS tab's auto-fill button uses, so the two tabs can never
-# disagree about what a model contains.
-# ---------------------------------------------------------------------------
-def _bundle_phonopy_yaml(bundle_dir):
-    """The bundle's phonopy.yaml path, or None."""
-    if not bundle_dir or not os.path.isdir(bundle_dir):
-        return None
-    try:
-        from irma.mlip.bundle import load_bundle
-        path = load_bundle(bundle_dir).phonopy_yaml
-    except Exception:
-        # not a bundle (yet), or an unreadable manifest: the conventional
-        # name is still worth a try, and a miss just yields no species
-        path = os.path.join(bundle_dir, "phonopy.yaml")
-    return path if os.path.isfile(path) else None
-
-
-def _phonopy_masses(path):
-    """{symbol: mass in amu} from a phonopy.yaml, best effort.
-
-    Walks the same cells in the same order as
-    ``irma.spectra.config.phonopy_species`` so the masses line up with the
-    symbols that function returns. First occurrence of a symbol wins; any
-    parse failure yields {} and only costs the mass warning.
-
-    Only the text BEFORE the embedded ``force_constants`` block is parsed.
-    A bundle's phonopy.yaml carries its force constants inline and they are
-    the overwhelming bulk of the file (94% of a 4-atom aluminium bundle,
-    and the fraction grows with the supercell), while every cell is written
-    ahead of them. Parsing the whole document here would double the cost of
-    a bundle selection on the Tk thread for nothing.
-    """
+# The GUI process may lack ase and phonopy (the potentials often live in
+# their own environments), so the bundle's phonopy.yaml is read as plain YAML.
+def bundle_species(bundle_dir):
+    """``(symbols, {symbol: mass_amu})`` from a bundle's phonopy.yaml, or
+    ``([], {})`` when it is missing or unreadable. Only the text ahead of
+    the embedded force constants (most of the file) is parsed."""
+    if not bundle_dir:
+        return [], {}
     try:
         import yaml
         head = []
-        with open(path) as fh:
+        with open(os.path.join(bundle_dir, "phonopy.yaml")) as fh:
             for line in fh:
                 if line.startswith("force_constants:"):
                     break
                 head.append(line)
-        doc = yaml.safe_load("".join(head))
+        doc = yaml.safe_load("".join(head)) or {}
+        for key in ("primitive_cell", "unit_cell", "supercell"):
+            symbols, masses = [], {}
+            for pt in (doc.get(key) or {}).get("points") or []:
+                sym = pt.get("symbol")
+                if sym and sym not in symbols:
+                    symbols.append(sym)
+                    if isinstance(pt.get("mass"), (int, float)):
+                        masses[sym] = float(pt["mass"])
+            if symbols:
+                return symbols, masses
     except Exception:
-        return {}
-    if not isinstance(doc, dict):
-        return {}
-    for key in ("primitive_cell", "unit_cell", "supercell"):
-        cell = doc.get(key)
-        if not (isinstance(cell, dict) and isinstance(cell.get("points"), list)):
-            continue
-        out = {}
-        for pt in cell["points"]:
-            if not isinstance(pt, dict):
-                continue
-            sym, mass = pt.get("symbol"), pt.get("mass")
-            if sym and isinstance(mass, (int, float)) \
-                    and not isinstance(mass, bool) and str(sym) not in out:
-                out[str(sym)] = float(mass)
-        if out:
-            return out
-    return {}
-
-
-# The species read costs one plain-YAML parse of a file that embeds force
-# constants, and it runs on the Tk thread from a variable trace. Memoize on
-# (path, mtime, size) so re-selecting or retyping the same bundle is free
-# and only a genuinely new (or rebuilt) bundle pays.
-_SPECIES_CACHE = {}
-_SPECIES_CACHE_MAX = 16
-
-
-def bundle_species(bundle_dir):
-    """``(symbols, {symbol: mass_amu})`` for a bundle directory.
-
-    Returns ``([], {})`` for every degenerate case -- no directory, not a
-    bundle, missing or unparseable phonopy.yaml, a cell the light parser
-    does not recognise -- so the caller shows a hint instead of an empty
-    grid and never has to catch anything.
-    """
-    path = _bundle_phonopy_yaml(bundle_dir)
-    if not path:
-        return [], {}
-    try:
-        st = os.stat(path)
-    except OSError:
-        return [], {}
-    key = (path, st.st_mtime_ns, st.st_size)
-    if key not in _SPECIES_CACHE:
-        try:
-            from irma.spectra.config import phonopy_species
-            symbols = list(phonopy_species(path))
-        except Exception:
-            symbols = []
-        masses = _phonopy_masses(path) if symbols else {}
-        if len(_SPECIES_CACHE) >= _SPECIES_CACHE_MAX:
-            _SPECIES_CACHE.clear()
-        _SPECIES_CACHE[key] = (symbols, masses)
-    symbols, masses = _SPECIES_CACHE[key]
-    return list(symbols), dict(masses)
+        pass
+    return [], {}
 
 
 # ---------------------------------------------------------------------------
@@ -731,28 +657,16 @@ class MlipPanel(RunPanel):
         return cmd
 
     def _sync_species_table(self):
-        """Fill the nuclear-data table from the selected bundle.
-
-        Runs on the Tk thread from a variable trace, so it must never
-        raise: every failure mode collapses into "no rows plus a hint".
-        """
-        try:
-            path = self.bundle.get().strip()
-            symbols, masses = (bundle_species(path) if path else ([], {}))
-            self.species_table.set_species(symbols, masses)
-            if not path:
-                self.species_table.set_hint(_NO_BUNDLE_HINT)
-            elif not symbols:
-                self.species_table.set_hint(_NO_SPECIES_HINT)
-            else:
-                self.species_table.set_hint("")
-        except Exception as exc:                       # never on the UI thread
-            try:
-                self.species_table.set_species([])
-                self.species_table.set_hint(
-                    f"{_NO_SPECIES_HINT} ({exc.__class__.__name__})")
-            except Exception:
-                pass
+        """Fill the nuclear-data table from the selected bundle."""
+        path = self.bundle.get().strip()
+        symbols, masses = bundle_species(path)
+        self.species_table.set_species(symbols, masses)
+        if not path:
+            self.species_table.set_hint(_NO_BUNDLE_HINT)
+        elif not symbols:
+            self.species_table.set_hint(_NO_SPECIES_HINT)
+        else:
+            self.species_table.set_hint("")
 
     def _nuclear_data_args(self):
         """``[(flag, value), ...]`` from the per-species nuclear-data table.
@@ -917,8 +831,6 @@ class MlipPanel(RunPanel):
         and elastic format are ENDF-only, material id is NCrystal-only,
         allow-unstable is read by the endf and spectra emitters;
         everything else applies to every target)."""
-        if not hasattr(self, "_overwrite_row"):
-            return                      # section not fully built yet
         endf = self.targets["endf"].get()
         spectra = self.targets["spectra"].get()
         ncrystal = self.targets["ncrystal"].get()
@@ -1031,16 +943,9 @@ class MlipPanel(RunPanel):
         if not os.path.isfile(dos_path):
             messagebox.showerror("DOS", f"no dos.dat in {bundle_dir}")
             return
-        if os.path.getsize(dos_path) > 32 * 1024 * 1024:
-            messagebox.showerror("DOS", f"{dos_path} is implausibly large "
-                                        f"for a DOS table (>32 MB)")
-            return
         try:
             import numpy as np
             data = np.loadtxt(dos_path, ndmin=2)
-            if data.ndim != 2 or data.shape[1] < 2 or data.shape[0] < 2 \
-                    or not np.isfinite(data[:, :2]).all():
-                raise ValueError("expected a finite Nx2 table")
             title = os.path.basename(os.path.normpath(bundle_dir))
             try:
                 m = json.load(open(os.path.join(bundle_dir,
