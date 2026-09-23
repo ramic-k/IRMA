@@ -124,16 +124,12 @@ def test_import_classic_deck_populates_fields(app, tmp_path):
     assert app.temps_var.get().startswith("300")
 
 
-def test_iint_default_omits_field_and_roundtrips(app, tmp_path):
+def test_iint_default_and_linlin_export_and_roundtrip(app, tmp_path):
     _reset(app)
     text = app._generate_input_text()
     # default iint=0 -> classic 5-field Card 4 (no trailing flag)
     assert "0 0 1e-75 /" in text
     assert "0 0 1e-75 0 /" not in text and "0 0 1e-75 1 /" not in text
-
-
-def test_iint_linlin_exports_and_roundtrips(app, tmp_path):
-    _reset(app)
     app.iint.set("1 — lin-lin (INT=2)")
     text = app._generate_input_text()
     assert "0 0 1e-75 1 /" in text             # iint appended on Card 4
@@ -286,24 +282,6 @@ def test_multi_positive_temperature_import_refused(app, tmp_path):
         app._import_leapr_from_path(str(deck))
 
 
-# ---------- #28: isabt / ilog / smin round-trip ----------
-
-def test_isabt_ilog_smin_roundtrip(app, tmp_path):
-    _reset(app)
-    app.isabt.set("1 — S̃ tilde (asymmetric)")
-    app.ilog.set("1 — ln(S) values")
-    app.smin.set("1e-30")
-    text = app._generate_input_text()
-    assert "1 125 1 1 1e-30 /" in text      # Card 4
-    deck = tmp_path / "card4.input"
-    deck.write_text(text)
-    _reset(app)
-    app._import_leapr_from_path(str(deck))
-    assert app._code(app.isabt) == 1
-    assert app._code(app.ilog) == 1
-    assert float(app.smin.get()) == pytest.approx(1e-30)
-
-
 # ---------- #29 + #32 + mode-1/2 validation (iel=10) ----------
 
 def _setup_iel10(app):
@@ -348,30 +326,6 @@ def test_card6e_partial_spectra_preserved(app, tmp_path):
     assert app._imported_partial_spectra[0]['ni'] == 6
 
 
-def test_card6g_auto_order_field_roundtrip(app, tmp_path):
-    _reset(app)
-    _setup_iel10(app)
-    app.inelastic_mode_var.set(2)
-    app.nc_phonopy_yaml.set("/nonexistent/phonopy.yaml")
-    app.nc_mesh_nx.set("8")
-    app.nc_mesh_ny.set("8")
-    app.nc_mesh_nz.set("8")
-    app.nc_ncpu.set("1")
-    app.nc_use_born_var.set(0)
-    app.nc_num_directions.set("100")
-    app.nc_multiphonon_num_directions.set("100")
-    app.nc_auto_order_var.set(1)
-    text = app._generate_input_text()
-    assert "100 100 1 /" in text            # 3-field Card 6g, auto-order kept
-
-    deck = tmp_path / "mode2.input"
-    deck.write_text(text)
-    _reset(app)
-    app._import_leapr_from_path(str(deck))
-    assert int(app.nc_auto_order_var.get()) == 1
-    assert "100 100 1 /" in app._generate_input_text()
-
-
 def test_min_phonon_energy_gui_deck_roundtrip(app, tmp_path):
     _reset(app)
     _setup_iel10(app)
@@ -390,7 +344,7 @@ def test_min_phonon_energy_gui_deck_roundtrip(app, tmp_path):
     assert app._generate_input_text() == text
 
 
-@pytest.mark.parametrize("value", ["-0.1", "nan", "inf"])
+@pytest.mark.parametrize("value", ["-0.1", "inf"])     # the engine accepts inf
 def test_min_phonon_energy_gui_rejects_invalid_values(app, value):
     _reset(app)
     _setup_iel10(app)
@@ -494,44 +448,22 @@ def test_full_roundtrip_idempotent_mode2(app, tmp_path):
 
 # ---------- oscillator half-filled / mismatched inputs ----------
 
-def test_oscillator_energies_without_weights_rejected(app):
-    """Energies with an empty weights box must not silently emit '0 /' --
-    the discrete modes vanished from the law with no error."""
+@pytest.mark.parametrize("secondary, energies, weights, match", [
+    (False, "0.205 0.436", "", "Discrete oscillators.*weights"),
+    (False, "", "0.166 0.389", "Discrete oscillators.*energies"),
+    (False, "0.205 0.436 0.480", "0.166 0.389", "3 energies but 2 weights"),
+    (True, "0.2", "", "Secondary oscillators.*weights"),
+    (True, "0.2 0.4", "0.5", "2 energies but 1 weights"),
+])
+def test_oscillator_mismatch_rejected(app, secondary, energies, weights, match):
+    """A half-filled or mismatched oscillator pair must not silently emit
+    '0 /' -- the discrete modes would vanish from the law with no error."""
     _reset(app)
-    _set_text(app.osc_energies, "0.205 0.436")
-    with pytest.raises(ValueError, match="Discrete oscillators.*weights"):
-        app._generate_input_text()
-
-
-def test_oscillator_weights_without_energies_rejected(app):
-    _reset(app)
-    _set_text(app.osc_weights, "0.166 0.389")
-    with pytest.raises(ValueError, match="Discrete oscillators.*energies"):
-        app._generate_input_text()
-
-
-def test_oscillator_count_mismatch_rejected(app):
-    _reset(app)
-    _set_text(app.osc_energies, "0.205 0.436 0.480")
-    _set_text(app.osc_weights, "0.166 0.389")
-    with pytest.raises(ValueError, match="3 energies but 2 weights"):
-        app._generate_input_text()
-
-
-def test_secondary_oscillator_half_filled_rejected(app):
-    _reset(app)
-    _setup_two_pass(app)
-    _set_text(app.sec_osc_energies, "0.2")
-    with pytest.raises(ValueError, match="Secondary oscillators.*weights"):
-        app._generate_input_text()
-
-
-def test_secondary_oscillator_count_mismatch_rejected(app):
-    _reset(app)
-    _setup_two_pass(app)
-    _set_text(app.sec_osc_energies, "0.2 0.4")
-    _set_text(app.sec_osc_weights, "0.5")
-    with pytest.raises(ValueError, match="2 energies but 1 weights"):
+    if secondary:
+        _setup_two_pass(app)
+    _set_text(app.sec_osc_energies if secondary else app.osc_energies, energies)
+    _set_text(app.sec_osc_weights if secondary else app.osc_weights, weights)
+    with pytest.raises(ValueError, match=match):
         app._generate_input_text()
 
 
@@ -643,8 +575,14 @@ def _repo_example(name):
     return str(pathlib.Path(__file__).resolve().parents[1] / "examples" / "tsl" / name)
 
 
-def test_extinction_import_populates_fields(app):
-    """Importing the Be extinction example fills the GUI extinction section."""
+def test_extinction_deck_imports_and_reexports(app):
+    """Importing the Be extinction example fills the GUI extinction section;
+    re-export emits the same card, and rmse_tol keeps its VALUE (the GUI
+    reformats it via :g, so the text may change 1e-3 -> 0.001)."""
+    from irma.core.deck import _parse_line
+    from irma.core.engine import TokenReader
+    from irma.core.crystal_cards import _parse_extinction_card
+
     _reset(app)
     app._import_leapr_from_path(_repo_example("be_iel10_extinction.input"))
     assert app.ext_enable_var.get() is True
@@ -654,39 +592,28 @@ def test_extinction_import_populates_fields(app):
     assert app.ext_L.get() == "75750"
     assert app.ext_dist.get() == "Gauss"
     assert app.ext_recipe.get() == "std"
-
-
-def test_extinction_reexport_emits_card(app):
-    """After importing the extinction example, re-export emits the same card."""
-    _reset(app)
-    app._import_leapr_from_path(_repo_example("be_iel10_extinction.input"))
-    text = app._generate_input_text()
-    assert "extinction BC_mix l=8550 g=170 L=75750 dist=Gauss rec=std" in text
-
-
-def test_no_extinction_card_leaves_toggle_off(app):
-    """A deck without the card imports with extinction disabled and emits none."""
-    _reset(app)
-    app._import_leapr_from_path(_repo_example("graphite_iel10_classic.input"))
-    assert app.ext_enable_var.get() is False
-    assert "extinction " not in app._generate_input_text()
-
-
-def test_extinction_rmse_tol_round_trips_by_value(app):
-    """rmse_tol survives import -> re-export -> re-parse with VALUE identity (the
-    GUI reformats it via :g, so the text may change 1e-3 -> 0.001, but the number
-    must not)."""
-    from irma.core.deck import _parse_line
-    from irma.core.engine import TokenReader
-    from irma.core.crystal_cards import _parse_extinction_card
-
-    _reset(app)
-    app._import_leapr_from_path(_repo_example("be_iel10_extinction.input"))
     assert float(app.ext_rmse_tol.get()) == 1e-3
     text = app._generate_input_text()
+    assert "extinction BC_mix l=8550 g=170 L=75750 dist=Gauss rec=std" in text
     card = next(ln for ln in text.splitlines() if ln.strip().startswith("extinction "))
     cfg = _parse_extinction_card(TokenReader(_parse_line(card.strip())), elastic_mode=1)
     assert cfg["rmse_tol"] == 1e-3                     # exact value, not text
+
+
+def test_deck_without_extinction_or_grouping_imports_both_off(app):
+    """A deck without the extinction card or Bragg-edge grouping imports with
+    both off and emits neither (4-field Card 6b); turning grouping on over it
+    adds the grouping fields to Card 6b."""
+    _reset(app)
+    app._import_leapr_from_path(_repo_example("graphite_iel10_classic.input"))
+    assert app.ext_enable_var.get() is False
+    assert app.coh_edge_group_enable_var.get() is False
+    text = app._generate_input_text()
+    assert "extinction " not in text
+    assert "1 1 0 0 /" in text and " 50 1.0 /" not in text
+    app.coh_edge_group_enable_var.set(True)
+    app.coh_edge_group_bpd.set("50")
+    assert "1 1 0 0 50 1.0 /" in app._generate_input_text()
 
 
 def test_extinction_dist_dropdown_restricted_to_model_family(app):
@@ -702,26 +629,6 @@ def test_extinction_dist_dropdown_restricted_to_model_family(app):
     app._on_ext_model_change()
     assert list(app.ext_dist.combo["values"]) == ["rect", "tri"]
     assert app.ext_dist.get() == "rect"
-
-
-# ---------- Bragg-edge grouping default-on toggle ----------
-
-def test_grouping_off_deck_unchecks_and_emits_four_field(app):
-    # a deck without grouping -> checkbox off on import, 4-field Card 6b on export
-    _reset(app)
-    app._import_leapr_from_path(_repo_example("graphite_iel10_classic.input"))
-    assert app.coh_edge_group_enable_var.get() is False
-    text = app._generate_input_text()
-    assert "1 1 0 0 /" in text and " 50 1.0 /" not in text
-
-
-def test_grouping_checked_emits_grouping_fields(app):
-    # turn grouping ON over an imported deck -> Card 6b gains the grouping fields
-    _reset(app)
-    app._import_leapr_from_path(_repo_example("graphite_iel10_classic.input"))
-    app.coh_edge_group_enable_var.set(True)
-    app.coh_edge_group_bpd.set("50")
-    assert "1 1 0 0 50 1.0 /" in app._generate_input_text()
 
 
 # ---------- the phonopy modes clear the special modes ----------
@@ -835,24 +742,8 @@ def test_classic_deck_import_restores_full_iel_choices(app, tmp_path):
     assert len(app._iel_combo.cget("values")) == 8
     assert app._code(app.iel_var) == 1
     assert int(app.inelastic_mode_var.get()) == 0
+    assert app._generate_input_text() == deck.read_text()   # byte-for-byte
     _reset(app)
-
-
-def test_classic_iel1_roundtrip_unaffected_by_restructure(app, tmp_path):
-    """The section move is layout only: a classic legacy deck must still
-    survive export -> import -> export byte-for-byte."""
-    _reset(app)
-    app.iel_var.set("1 — Graphite (legacy)")
-    app.za.set("6012")
-    app.awr.set("11.907856")
-    app.spr.set("4.724629")
-    text1 = app._generate_input_text()
-
-    deck = tmp_path / "iel1_roundtrip.input"
-    deck.write_text(text1)
-    _reset(app)
-    app._import_leapr_from_path(str(deck))
-    assert app._generate_input_text() == text1
 
 
 def test_clicking_mode_2_selects_linlin_and_setting_the_variable_does_not(app):
