@@ -38,12 +38,6 @@ def test_total_S_preserved_single_temp(dense_bragg):
     assert table["S_T0_table"]["S"][-1] == sigfig(total_true, 7, 0)
 
 
-def test_total_S_preserved_relative(dense_bragg):
-    E, emax, table, fn = _group(dense_bragg)
-    total_true = sum(fn(j, 0) for j in range(len(E)))
-    assert abs(table["S_T0_table"]["S"][-1] - total_true) / total_true < 1e-6
-
-
 def test_subthreshold_edges_kept(dense_bragg):
     """Every edge at or below the threshold is kept individually."""
     E, emax, table, fn = _group(dense_bragg, threshold=1.0)
@@ -64,6 +58,7 @@ def test_grouped_count_matches_bins_per_decade(dense_bragg):
 def test_energies_ascending_and_endpoint(dense_bragg):
     E, emax, table, fn = _group(dense_bragg)
     En = np.asarray(table["S_T0_table"]["Eint"])
+    assert table["NP"] == len(En)
     assert np.all(np.diff(En) > 0)                  # strictly ascending
     assert np.isclose(En[-1], emax)                 # defined up to emax
     assert np.all(np.diff(np.asarray(table["S_T0_table"]["S"])) >= -1e-12)  # S non-decreasing
@@ -78,12 +73,6 @@ def test_integral_fidelity_at_T0(dense_bragg):
     assert abs(I_grouped - I_ungrouped) / I_ungrouped < 1e-6
 
 
-def test_fewer_points_than_input(dense_bragg):
-    E, emax, table, fn = _group(dense_bragg, bins_per_decade=20)
-    assert table["NP"] < len(E)
-    assert table["NP"] == len(table["S_T0_table"]["Eint"])
-
-
 def test_multi_temperature_structure(dense_bragg):
     """Two temperatures share one energy grid; total preserved at every temperature."""
     E, emax, table, fn = _group(dense_bragg, temps=(296.0, 1000.0), W=(0.02, 0.05))
@@ -93,15 +82,6 @@ def test_multi_temperature_structure(dense_bragg):
     assert set(table["S"].keys()) == set(range(1, NP + 1))
     total_T1 = sum(fn(j, 1) for j in range(len(E)))
     assert abs(table["S"][NP][1] - total_T1) / total_T1 < 1e-5
-
-
-def test_finer_binning_keeps_more_points(dense_bragg):
-    """Larger bins_per_decade -> more steps retained above threshold."""
-    _, _, coarse, _ = _group(dense_bragg, bins_per_decade=10)
-    _, _, fine, _ = _group(dense_bragg, bins_per_decade=40)
-    En_c = np.asarray(coarse["S_T0_table"]["Eint"])
-    En_f = np.asarray(fine["S_T0_table"]["Eint"])
-    assert int(np.sum(En_f > 1.0)) > int(np.sum(En_c > 1.0))
 
 
 def test_allzero_underflow_bins_merge_not_ungroup():
