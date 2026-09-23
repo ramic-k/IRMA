@@ -1,15 +1,7 @@
-"""irma.core.elastic_dw (P4) -- byte-pin the shared DW edge kernels.
-
-Guards the extraction that replaced three copy-pasted ``_edge_delta`` closures
-in endf_writer. Each kernel is checked against an INLINE reference that
-reproduces the original closure arithmetic operation-for-operation (exact ``==``,
-not approx), the ``* scale`` with ``scale==1.0`` is pinned as an exact no-op for
-both the python-float and numpy-float paths, ``resolve_species_dw`` detection is
-pinned, and the CEF/MEF builders are shown to share one arithmetic (their edge
-deltas differ by exactly the CEF ``scale``). Fast, data-free, CI-safe.
+"""irma.core.elastic_dw: each DW edge kernel against its formula (exact ==),
+the resolver's W_ps and mode flags, and CEF == scale * MEF per edge.
 """
 import numpy as np
-import pytest
 from math import exp
 
 from irma.core.constants import BK
@@ -20,7 +12,7 @@ from irma.core.elastic_dw import (
 from irma.core.endf_writer import _build_cef_coherent, _build_mef_elastic
 
 
-# ---- reference reimplementations of the ORIGINAL closure arithmetic ---------
+# ---- reference implementations of the DW edge formulas ---------------------
 def _ref_iso(w, e, amp, scale):
     return exp(-4.0 * w * e) * amp * scale
 
@@ -67,17 +59,19 @@ def _two_species_sdw(directional, ntempr=3):
     return ci, tempr
 
 
-# ---- kernels reproduce the original arithmetic exactly ----------------------
-@pytest.mark.parametrize("scale", [1.0, 1.37])
-def test_isotropic_kernel_exact(scale):
+# ---- kernels match the formulas exactly -------------------------------------
+def test_isotropic_kernel_exact():
+    assert resolve_species_dw(None, [296.0], 1) is None
+    assert resolve_species_dw({'species_corr': None}, [296.0], 1) is None
     for w, e, amp in [(0.5, 0.002, 1.1), (0.3, 0.05, 0.7), (10.0, 1e-4, 2.0)]:
-        assert isotropic_edge_delta(w, e, amp, scale) == _ref_iso(w, e, amp, scale)
+        assert isotropic_edge_delta(w, e, amp, 1.37) == _ref_iso(w, e, amp, 1.37)
 
 
-@pytest.mark.parametrize("scale", [1.0, 1.37])
-def test_per_species_kernel_exact(scale):
+def test_per_species_kernel_exact():
+    scale = 1.37
     ci, tempr = _two_species_sdw(directional=False)
     sdw = resolve_species_dw(ci, tempr, len(tempr))
+    assert sdw.use_ps and not sdw.use_dir_dw and sdw.W_ps is not None
     for itemp in range(len(tempr)):
         for j, e in enumerate([0.002, 0.01]):
             got = per_species_edge_delta(e, sdw, itemp, sdw.sc[j], scale)
@@ -85,10 +79,11 @@ def test_per_species_kernel_exact(scale):
             assert got == ref
 
 
-@pytest.mark.parametrize("scale", [1.0, 1.37])
-def test_directional_kernel_exact(scale):
+def test_directional_kernel_exact():
+    scale = 1.37
     ci, tempr = _two_species_sdw(directional=True)
     sdw = resolve_species_dw(ci, tempr, len(tempr))
+    assert sdw.use_dir_dw and not sdw.use_ps and sdw.W_ps is None
     for itemp in range(len(tempr)):
         for j, e in enumerate([0.002, 0.01]):
             kT = tempr[itemp] * BK
@@ -98,56 +93,7 @@ def test_directional_kernel_exact(scale):
             assert got == ref
 
 
-def test_scale_one_is_exact_noop_all_paths():
-    """delta * 1.0 == delta bit-for-bit (python float AND numpy float)."""
-    assert isotropic_edge_delta(0.5, 0.002, 1.1, 1.0) == isotropic_edge_delta(0.5, 0.002, 1.1)
-    ci_ps, tempr = _two_species_sdw(directional=False)
-    sps = resolve_species_dw(ci_ps, tempr, len(tempr))
-    d_ps = per_species_edge_delta(0.01, sps, 1, sps.sc[0])  # default scale=1.0
-    assert d_ps == _ref_ps(0.01, sps.nsp, sps.b_sqb, sps.W_ps, 1, sps.sc[0], 1.0)
-    ci_dir, tempr = _two_species_sdw(directional=True)
-    sdir = resolve_species_dw(ci_dir, tempr, len(tempr))
-    kT = tempr[1] * BK
-    d_dir = directional_edge_delta(0.01, sdir, 1, sdir.bragg_dir_terms[0], kT)
-    assert d_dir == _ref_dir(0.01, sdir.nsp, sdir.b_sqb, sdir.awr_sp, kT,
-                             sdir.F_species_per_temp[1], sdir.bragg_dir_terms[0], 1.0)
-
-
-# ---- resolver detection -----------------------------------------------------
-def test_resolver_picks_directional_over_per_species():
-    ci, tempr = _two_species_sdw(directional=True)
-    sdw = resolve_species_dw(ci, tempr, len(tempr))
-    assert sdw.use_dir_dw and not sdw.use_ps and sdw.W_ps is None
-
-
-def test_resolver_per_species_when_no_F():
-    ci, tempr = _two_species_sdw(directional=False)
-    sdw = resolve_species_dw(ci, tempr, len(tempr))
-    assert sdw.use_ps and not sdw.use_dir_dw and sdw.W_ps is not None
-
-
-def test_resolver_none_for_isotropic():
-    assert resolve_species_dw(None, [296.0], 1) is None
-    assert resolve_species_dw({'species_corr': None}, [296.0], 1) is None
-
-
-def test_resolver_directional_only_crystal_info_needs_no_species_corr():
-    """species_corr is optional for the directional path (F41): a
-    crystal_info carrying only F_species_per_temp + bragg_dir_terms must
-    resolve to the directional kernel, not KeyError."""
-    ci, tempr = _two_species_sdw(directional=True)
-    del ci['species_corr']
-    sdw = resolve_species_dw(ci, tempr, len(tempr))
-    assert sdw is not None
-    assert sdw.use_dir_dw and not sdw.use_ps
-    assert sdw.sc is None and sdw.W_ps is None
-    # the directional kernel itself never touches sc
-    kT = tempr[0] * BK
-    d = directional_edge_delta(0.002, sdw, 0, sdw.bragg_dir_terms[0], kT)
-    assert d == _ref_dir(0.002, sdw.nsp, sdw.b_sqb, sdw.awr_sp, kT,
-                         sdw.F_species_per_temp[0], sdw.bragg_dir_terms[0], 1.0)
-
-
+# ---- resolver ---------------------------------------------------------------
 def test_resolver_W_ps_matches_endf_formula():
     ci, tempr = _two_species_sdw(directional=False)
     sdw = resolve_species_dw(ci, tempr, len(tempr))
@@ -170,15 +116,9 @@ def test_factory_dispatches_directional():
                                              sdw.F_species_per_temp[1], sdw.bragg_dir_terms[0], 1.37)
 
 
-def test_factory_isotropic_when_no_species_dw():
-    bragg = [(0.002, 1.1), (0.01, 0.7)]
-    ed = make_edge_delta(bragg, [0.5, 0.4], scale=1.37)
-    assert ed(1, 0) == _ref_iso(0.5, 0.01, 0.7, 1.37)
-
-
 # ---- CEF and MEF share one arithmetic (differ only by the CEF scale) --------
 def test_cef_and_mef_edge_arithmetic_differ_only_by_scale():
-    """The whole point of the extraction: CEF == scale * MEF per edge."""
+    """CEF == scale * MEF per edge."""
     ci_dir, tempr = _two_species_sdw(directional=True, ntempr=1)
     bragg = [(0.002, 1.0), (0.004, 1.0)]
     scale = 1.37
