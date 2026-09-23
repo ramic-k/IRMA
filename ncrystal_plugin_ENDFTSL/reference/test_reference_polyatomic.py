@@ -72,25 +72,14 @@ def cfgs(tmp_path_factory):
             f"{out / 'poly.ncmat'};temp=296.0K")
 
 
-def test_polyatomic_total_is_per_atom_not_per_formula(cfgs):
-    single_cfg, poly_cfg = cfgs
-    sc1 = NC.createScatter(single_cfg)
-    sc2 = NC.createScatter(poly_cfg)
-    for E in (0.001, 0.005, 0.025, 0.1, 0.5, 1.0, 5.0):
-        x1 = sc1.crossSectionIsotropic(E)
-        x2 = sc2.crossSectionIsotropic(E)
-        # per-atom: the two half-weighted pseudo-species sum back to single graphite.
-        # a per-formula bug would give x2 ~ 2*x1 (the test would fail loudly).
-        assert x2 == pytest.approx(x1, rel=1e-4), f"E={E} eV: poly {x2} vs single {x1}"
-
-
 def test_polyatomic_per_channel_is_per_atom(cfgs):
-    # the same per-atom identity must hold channel-by-channel (coherent + inelastic +
-    # incoherent each fraction-weighted), not just by a cancelling total.
+    # per-atom: the two half-weighted pseudo-species sum back to single graphite,
+    # in the total and in each channel (a per-formula bug would give poly ~ 2x).
     single_cfg, poly_cfg = cfgs
-    for comp in ("coh_elas", "inelas", "incoh_elas"):
-        sc1 = NC.createScatter(single_cfg + f";comp={comp}")
-        sc2 = NC.createScatter(poly_cfg + f";comp={comp}")
+    for comp in ("total", "coh_elas", "inelas", "incoh_elas"):
+        suffix = "" if comp == "total" else f";comp={comp}"
+        sc1 = NC.createScatter(single_cfg + suffix)
+        sc2 = NC.createScatter(poly_cfg + suffix)
         for E in (0.005, 0.025, 0.2, 1.0):
             x1 = sc1.crossSectionIsotropic(E)
             x2 = sc2.crossSectionIsotropic(E)
