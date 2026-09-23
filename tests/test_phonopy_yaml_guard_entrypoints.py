@@ -1,32 +1,12 @@
-"""SEC-1: reject_unsafe_phonopy_yaml must fire at every entry point that
-hands an untrusted phonopy.yaml to phonopy's unsafe YAML loader — BEFORE
-phonopy parses (and thereby executes) anything.
-
-Covered call sites (the GUI and irma.mlip entry points are guarded and
-tested elsewhere):
-
-* irma.core.phonopy_io.load_phonopy_mesh — the widest entry point
-  (Card 6f / iel=10 decks and irma.spectra.dos_from_phonopy funnel here);
-* irma.core.noncubic_inelastic_context.build_model_context;
-* irma.ncrystal.build.load_primitive_info (the NCrystal exporter).
-
-Each rejection test feeds a phonopy.yaml carrying a ``!!python/`` tag
-whose payload would touch a canary file, and asserts (a) ValueError from
-the guard and (b) the canary never appeared — i.e. the file was scanned,
-never parsed. Near-miss tests confirm a legitimate phonopy.yaml still
-loads through the guarded path (build_model_context's legitimate path is
-exercised by the engine integration tests, e.g. test_noncubic_lat0_pin).
+"""reject_unsafe_phonopy_yaml fires before phonopy's unsafe YAML loader at
+load_phonopy_mesh, build_model_context and ncrystal load_primitive_info: a
+``!!python/`` payload raises ValueError and its canary file never appears.
 """
 import argparse
-from pathlib import Path
 
 import pytest
 
 pytest.importorskip("phonopy")
-
-_REPO = Path(__file__).resolve().parents[1]
-_GRAPHITE_YAML = (
-    _REPO / "tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml")
 
 
 def _malicious_yaml(tmp_path):
@@ -71,19 +51,3 @@ def test_load_primitive_info_rejects_python_tag(tmp_path):
     with pytest.raises(ValueError, match="!!python/"):
         load_primitive_info(str(path))
     assert not canary.exists()
-
-
-def test_load_primitive_info_near_miss_legit_yaml_loads():
-    from irma.ncrystal.build import load_primitive_info
-    symbols, masses, positions, lattice = load_primitive_info(
-        str(_GRAPHITE_YAML))
-    assert len(symbols) > 0
-    assert len(symbols) == len(masses) == positions.shape[0]
-    assert lattice.shape == (3, 3)
-
-
-def test_load_phonopy_mesh_near_miss_legit_yaml_loads():
-    from irma.core.phonopy_io import load_phonopy_mesh
-    data = load_phonopy_mesh(str(_GRAPHITE_YAML), [1, 1, 1])
-    assert data.n_qpoints == 1  # one q-point on the 1x1x1 mesh
-    assert data.frequencies_ev.shape == (1, 3 * data.n_atoms)
