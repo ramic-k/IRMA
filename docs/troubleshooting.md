@@ -334,18 +334,15 @@ Large grids make large tapes. ENDF tapes carry ~6-significant-figure
 values, and a big grid makes a big file: a 2000×5001 grid is on the order
 of 270 MB. Size the grid to the evaluation you need.
 
-### The ENDF writer backend (`IRMA_ENDF_WRITER`)
+### The ENDF writer backend
 
 Serializing the tape is a large share of classic-path wall time. IRMA
-writes with `endf-parserpy`'s **compiled backend** (`EndfParserCpp`) by
-default; it is byte-identical to the pure-Python writer and several times
-faster (e.g. the 10-temperature graphite validation input file drops from ~12 s to
-~4 s end to end). If your `endf-parserpy` install has no compiled module
-(source-only build), IRMA prints a warning and falls back to the
-pure-Python writer: identical output, slower. Override with the
-`IRMA_ENDF_WRITER` environment variable: `py` forces the pure-Python
-writer, `cpp` requires the compiled one (hard error if missing), unset or
-`auto` is the default behavior.
+writes with `endf-parserpy`'s **compiled backend** (`EndfParserCpp`); it is
+byte-identical to the pure-Python writer and several times faster (the
+10-temperature graphite validation input file drops from ~12 s to ~4 s end
+to end). If your `endf-parserpy` install has no compiled module
+(source-only build), IRMA uses the pure-Python writer: identical output,
+slower.
 
 ## Where outputs land
 

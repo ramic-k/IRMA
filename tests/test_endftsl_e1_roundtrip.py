@@ -41,11 +41,11 @@ def _write_eq25_tape(path, npr):
     }
     write_endf_output(
         str(path), 1, 1001.0, _H['awr'], 5.5, npr, 10,
-        0, 0, 0.0, 0.0, 0.0, 0, 2, 2, 1,
+        0, 0.0, 0.0, 0.0, 0, 2, 2, 1,
         np.array([0.1, 1.0]), np.array([0.0, 1.0]), ssm, None,
         np.array(_TEMPR), 2, np.array(_DWPIX), np.array(_DWPIX),
         np.array([320.0, 520.0]), np.array([320.0, 520.0]),
-        [], 0, 0, 0, 1.0e-6, 0,
+        [], 0, 0, 0, 1.0e-6,
         comments=None, crystal_info=crystal_info)
 
 

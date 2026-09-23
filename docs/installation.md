@@ -51,7 +51,7 @@ pip install .
 
 ### The ENDF writer backend
 
-IRMA writes the output tape through `endf-parserpy`, which ships two interchangeable serializers. By default IRMA uses the **compiled backend** (`EndfParserCpp`): it produces byte-identical tapes and is several times faster than the pure-Python writer; serialization dominates the wall time of classic runs. The compiled backend is included in the official `endf-parserpy` binary wheels, so a normal `pip install` has it. On a source-only `endf-parserpy` build where the compiled module is unavailable, IRMA falls back to the pure-Python writer with a console warning; the output is identical, just slower. Set the environment variable `IRMA_ENDF_WRITER=py` to force the pure-Python writer (this also silences the fallback warning), or `IRMA_ENDF_WRITER=cpp` to make a missing compiled backend a hard error.
+IRMA writes the output tape through `endf-parserpy`, which ships two interchangeable serializers. By default IRMA uses the **compiled backend** (`EndfParserCpp`): it produces byte-identical tapes and is several times faster than the pure-Python writer; serialization dominates the wall time of classic runs. The compiled backend is included in the official `endf-parserpy` binary wheels, so a normal `pip install` has it. On a source-only `endf-parserpy` build where the compiled module is unavailable, IRMA uses the pure-Python writer; the output is identical, just slower.
 
 ### Adding the phonopy extra
 

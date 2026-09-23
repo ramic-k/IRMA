@@ -534,11 +534,11 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
 
     # Write ENDF output
     print("\n  Writing ENDF output...")
-    write_endf_output(output_file, mat, za, awr, spr, npr, iel, ncold, nss,
+    write_endf_output(output_file, mat, za, awr, spr, npr, iel, nss,
                       b7, aws, sps, mss, nalpha, nbeta, lat,
                       alpha, beta, ssm, ssp, tempr_arr, ntempr,
                       dwpix, dwp1, tempf, tempf1,
-                      bragg, nedge, isym, ilog, smin, iprint,
+                      bragg, nedge, isym, ilog, smin,
                       iint=iint, comments=comments, crystal_info=crystal_info)
 
     print("  IRMA complete.")

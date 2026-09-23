@@ -95,8 +95,8 @@ def test_write_endf_output_iel10_requires_crystal_info():
     with pytest.raises(ValueError, match="iel=10.*requires crystal_info"):
         write_endf_output(
             "/tmp/should_not_be_written.endf", 1, 6012.0, 11.9, 5.5, 1, 10,
-            0, 0, 0.0, 0.0, 0.0, 0, 1, 1, 1,
+            0, 0.0, 0.0, 0.0, 0, 1, 1, 1,
             np.array([0.0]), np.array([0.0]), z, None, np.array([296.0]), 1,
             np.array([0.0]), np.array([0.0]), np.array([296.0]),
-            np.array([296.0]), [], 0, 0, 0, 1.0e-6, 0,
+            np.array([296.0]), [], 0, 0, 0, 1.0e-6,
             comments=None, crystal_info=None)

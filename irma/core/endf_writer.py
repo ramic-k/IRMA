@@ -16,6 +16,7 @@ Printed summaries and error messages use SEF.
 
 import sys
 import warnings
+from collections import Counter
 
 import numpy as np
 from math import exp, log, sqrt
@@ -25,8 +26,6 @@ from irma.core.deck import DeckError
 from irma.core.kernels import sigfig
 from irma.core.elastic_dw import resolve_species_dw, make_edge_delta
 
-
-_CPP_FALLBACK_WARNED = False   # the auto-fallback warns once per process
 
 # math.exp raises OverflowError ("math range error") for any argument
 # strictly above ln(DBL_MAX) = 709.782712893384. The isym=1 asymmetric-law
@@ -40,142 +39,37 @@ _LN_FLOAT_MAX = log(sys.float_info.max)
 _LN_MAX_STORED_ZERO = -1075.0 * log(2.0)
 
 
-def _select_writer_backend():
-    """Instantiate the endf-parserpy backend that serializes the tape.
-
-    The default is the compiled ``EndfParserCpp`` backend: it is
-    byte-identical to the pure-Python writer on the full expected evidence
-    set (native NJOY expected decks, the NJOY minitape byte pins, the
-    noncubic fast-CI/lat0 tapes and the Bragg-grouping path) and several
-    times faster, which dominates classic-path wall time.
-
-    The ``IRMA_ENDF_WRITER`` environment variable overrides the choice:
-
-    * unset/empty/``auto`` — use ``EndfParserCpp``; if the compiled module
-      cannot be loaded (source-only endf-parserpy builds), fall back to
-      the pure-Python ``EndfParserPy`` with a loud warning.
-    * ``py``  — force the legacy pure-Python ``EndfParserPy`` writer.
-    * ``cpp`` — require the compiled backend; a missing compiled module is
-      a hard error instead of a fallback.
-
-    Any other value raises ``ValueError`` (no silent misconfiguration).
-    """
-    import os
-    from endf_parserpy import EndfParserPy
-
-    choice = os.environ.get("IRMA_ENDF_WRITER", "auto").strip().lower()
-    if choice == "":
-        choice = "auto"
-    if choice not in ("auto", "cpp", "py"):
-        raise ValueError(
-            f"IRMA_ENDF_WRITER={choice!r} is not a valid ENDF writer "
-            f"backend: use 'cpp' (compiled, default), 'py' (pure Python), "
-            f"or unset/'auto' (compiled with pure-Python fallback).")
-    if choice == "py":
-        return EndfParserPy()
+def _writer():
+    """The compiled endf-parserpy writer, or the pure-Python one (same bytes)."""
     try:
         from endf_parserpy import EndfParserCpp
         return EndfParserCpp()
     except ImportError:
-        if choice == "cpp":
-            raise
-        global _CPP_FALLBACK_WARNED
-        if not _CPP_FALLBACK_WARNED:
-            _CPP_FALLBACK_WARNED = True
-            print("WARNING: compiled ENDF writer backend (EndfParserCpp) is "
-                  "unavailable in this endf-parserpy install; falling back to "
-                  "the pure-Python writer (identical output, slower). Set "
-                  "IRMA_ENDF_WRITER=py to silence this warning.", flush=True)
+        from endf_parserpy import EndfParserPy
         return EndfParserPy()
 
 
-def _patch_mf1_directory_counts(lines):
-    """Set every MF1/MT451 directory NCx to the tape's ACTUAL record count.
+def _patch_mf1_directory_counts(lines, nwd, sections):
+    """Set each MF1/MT451 directory NCx to the section's written record count.
 
-    The closed-form NJOY NCx estimates carried over from leapr.f90 cannot
-    track this writer's exact line wrapping — in particular for the iel=10
-    incoherent/mixed-elastic and grouped coherent-elastic branches — so the
-    records actually emitted are counted instead — exact by construction for
-    every section and every future format change.
-    Patching values in place never changes a section's line count, so a
-    single pass over the written tape suffices.
+    The directory entries follow the tape header line, the 4 MT451 header
+    records and the NWD text records. SEND/FEND/MEND/TEND lines (MF or MT 0)
+    are not counted.
     """
-    # Count data records per (MF, MT); SEND/FEND/MEND/TEND have MT=0 or
-    # MF=0 and are excluded automatically.
-    counts = {}
-    for line in lines:
-        if len(line) < 75:
-            continue
-        try:
-            mf = int(line[70:72])
-            mt = int(line[72:75])
-        except ValueError:
-            continue
-        if mf == 0 or mt == 0:
-            continue
-        counts[(mf, mt)] = counts.get((mf, mt), 0) + 1
-
-    # Locate the directory region structurally instead of by column shape
-    # alone. MF1/MT451 is: 4 header CONT records, then NWD text records, then
-    # the NXC directory entries. NWD lives in the 4th header record's N1 field
-    # ([44:55]). Confining the patch to records past 4 + NWD makes it
-    # impossible for a free-text DESCRIPTION/HSUB line to be mistaken for a
-    # directory entry just because its columns happen to parse as integers.
-    sec_idx = -1          # record index within the current MT451 section
-    dir_start = None      # first record index that is a directory entry
-    patched = []
-    for line in lines:
-        is_mt451 = (len(line) >= 75 and line[70:72] == ' 1'
-                    and line[72:75] == '451')
-        if is_mt451:
-            sec_idx += 1
-            if sec_idx == 3:  # 4th header record (TEMP/.../NWD/NXC)
-                try:
-                    nwd = int(line[44:55])
-                    dir_start = 4 + nwd
-                except ValueError:
-                    dir_start = None
-        else:
-            # Any non-MT451 line ends the section (SEND/FEND, MF7 records, …).
-            sec_idx = -1
-            dir_start = None
-
-        is_dir_entry = False
-        if (is_mt451 and dir_start is not None and sec_idx >= dir_start
-                and line[:22].strip() == ''):
-            try:
-                mfx = int(line[22:33])
-                mtx = int(line[33:44])
-                int(line[44:55])
-                int(line[55:66])
-                is_dir_entry = (mfx, mtx) in counts
-            except ValueError:
-                pass
-        if is_dir_entry:
-            line = (line[:44] + str(counts[(mfx, mtx)]).rjust(11)
-                    + line[55:])
-        patched.append(line)
-    return patched
+    counts = Counter(ln[70:75] for ln in lines
+                     if ln[70:72] != ' 0' and ln[72:75] != '  0')
+    first = 1 + 4 + nwd
+    for k, (mf, mt) in enumerate(sections):
+        ln = lines[first + k]
+        lines[first + k] = ln[:44] + str(counts[f"{mf:2d}{mt:3d}"]).rjust(11) + ln[55:]
+    return lines
 
 
-def _warn_mf1_comment_loss(card_no, lost_text):
-    """Warn that an MF1/MT451 header comment card carries text in columns that
-    map to no ENDF field, so it is silently dropped from the tape. Comment cards
-    1-5 fill the ENDF-102 structured header; free text belongs in card 6 onward.
-    """
-    warnings.warn(
-        f"MF1/MT451 comment card {card_no} has text in reserved/pad columns "
-        f"that will not appear on the tape ({lost_text.strip()!r}). Comment "
-        "cards 1-5 fill the structured header (ZSYMAM/ALAB/EDATE/AUTH; "
-        "REF/DDATE/RDATE/ENDATE; HSUB1-3); put free-form text in card 6 onward.",
-        stacklevel=2)
-
-
-def write_endf_output(filename, mat, za, awr, spr, npr, iel, ncold, nss,
+def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
                       b7, aws, sps, mss, nalpha, nbeta, lat,
                       alpha, beta, ssm, ssp, tempr, ntempr,
                       dwpix, dwp1, tempf, tempf1,
-                      bragg, nedge, isym, ilog, smin, iprint,
+                      bragg, nedge, isym, ilog, smin,
                       iint=0, comments=None, crystal_info=None):
     """Write ENDF-6 output file using endf-parserpy."""
     # iint selects the MF7/MT4 S(alpha,beta) interpolation law for BOTH the
@@ -205,7 +99,7 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, ncold, nss,
     # isym: 0 = symmetric S, 1 = S for +/- beta (coldh),
     #        2 = ss for -beta, 3 = ss for +/- beta
 
-    parser = _select_writer_backend()
+    parser = _writer()
 
     # ---- MF1/MT451 ----
     mf1 = {}
@@ -231,128 +125,35 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, ncold, nss,
     mf1['TEMP'] = 0.0
     mf1['LDRV'] = 0
 
-    # Text fields (must be padded to exact ENDF field widths)
-    mf1['ZSYMAM'] = ' ' * 11
-    mf1['ALAB'] = ' ' * 11
-    mf1['EDATE'] = ' ' * 10
-    mf1['AUTH'] = ' ' * 33
-    mf1['REF'] = ' ' * 21
-    mf1['DDATE'] = ' ' * 10
-    mf1['RDATE'] = ' ' * 10
-    mf1['ENDATE'] = ' ' * 8
-    mf1['HSUB'] = {1: ' ' * 66, 2: ' ' * 66, 3: ' ' * 66}
-    mf1['NWD'] = 0
-    mf1['DESCRIPTION'] = {}
-
-    # Populate text fields from comment cards
-    # ENDF MF1/MT451 text records: NWD total records, structured as:
-    #   Record 1: ZSYMAM(11) + ALAB(11) + EDATE(10) + AUTH(33) = 65 chars
-    #   Record 2: REF(21) + DDATE(10) + RDATE(10) + ENDATE(8) = 49 chars
-    #   Records 3-5: HSUB[1-3], 66 chars each
-    #   Records 6+: DESCRIPTION[1..NWD-5], 66 chars each
-    if comments is None:
-        comments = []
-    clean_comments = []
-    for c in comments:
-        # rstrip only: the deck tokenizer already removed the quotes, and the
-        # inner leading blank is column 1 of the 11-char ZSYMAM field (NJOY
-        # convention). A full strip() would shift every header field one
-        # column left.
+    # Text records: card 1 is ZSYMAM(11) ALAB(11) EDATE(10) AUTH(33), card 2
+    # REF(21) DDATE(10) RDATE(10) ENDATE(8), cards 3-5 HSUB, cards 6+ the
+    # description. rstrip only: column 1 of ZSYMAM stays blank (NJOY).
+    text = []
+    for c in comments or []:
         c = c.rstrip()
-        if (c.startswith("'") and c.endswith("'")) or \
-           (c.startswith('"') and c.endswith('"')):
+        if c[:1] in ("'", '"') and c.endswith(c[:1]):
             c = c[1:-1]
-        clean_comments.append(c)
+        text.append(c.ljust(66)[:66])
+    text += [' ' * 66] * (5 - len(text))
+    r1, r2 = text[0], text[1]
+    if (r2[43:55] + r2[63:66]).strip():
+        warnings.warn(
+            "MF1/MT451 comment card 2 has text in columns that map to no ENDF "
+            f"field and is dropped ({(r2[43:55] + r2[63:66]).strip()!r}); put "
+            "free text in card 6 onward.", stacklevel=2)
+    mf1.update(ZSYMAM=r1[:11], ALAB=r1[11:22], EDATE=r1[22:32], AUTH=r1[33:66],
+               REF=r2[1:22], DDATE=r2[22:32], RDATE=r2[33:43], ENDATE=r2[55:63],
+               HSUB={1: text[2], 2: text[3], 3: text[4]}, NWD=len(text),
+               DESCRIPTION={i + 1: t for i, t in enumerate(text[5:])})
 
-    # Card 1 → ZSYMAM + ALAB + EDATE + AUTH
-    if len(clean_comments) > 0:
-        line0 = clean_comments[0].ljust(66)[:66]
-        mf1['ZSYMAM'] = line0[:11]
-        mf1['ALAB'] = line0[11:22]
-        mf1['EDATE'] = line0[22:32]
-        mf1['AUTH'] = line0[33:66]
-        # (Card 1's only unmapped column is the single [32] EDATE/AUTH boundary;
-        # a 1-char clip on continuous text isn't worth a warning -- see card 2.)
-    # Card 2 → REF + DDATE + RDATE + ENDATE
-    # endf_parserpy layout: {1}blank + REF{21} + DDATE{10} + {1}blank + RDATE{10} + {12}pad + ENDATE{8} + {3}pad
-    # Positions: [0]=blank, [1:22]=REF, [22:32]=DDATE, [32]=blank, [33:43]=RDATE, [43:55]=pad, [55:63]=ENDATE
-    if len(clean_comments) > 1:
-        line1 = clean_comments[1].ljust(66)[:66]
-        mf1['REF'] = line1[1:22]
-        mf1['DDATE'] = line1[22:32]
-        mf1['RDATE'] = line1[33:43]
-        mf1['ENDATE'] = line1[55:63]
-        # Warn only on the genuine multi-char pads -- the [43:55] block (12 cols)
-        # and the [63:66] tail -- where a real chunk of comment text silently
-        # vanishes. The 1-char field-boundary gaps ([0], [32]) are not worth it.
-        lost1 = line1[43:55] + line1[63:66]
-        if lost1.strip():
-            _warn_mf1_comment_loss(2, lost1)
-    # Cards 3-5 → HSUB[1-3]
-    for i in range(3):
-        idx = i + 2
-        if idx < len(clean_comments):
-            mf1['HSUB'][i + 1] = clean_comments[idx].ljust(66)[:66]
-    # Cards 6+ → DESCRIPTION[1..]
-    desc_start = 5
-    desc_lines = clean_comments[desc_start:] if len(clean_comments) > desc_start else []
-    # NWD = total text records actually written: the 5 structured header
-    # records (ZSYMAM/ALAB/EDATE/AUTH, REF/DDATE/RDATE/ENDATE, HSUB 1-3)
-    # are ALWAYS emitted — blank-padded when the deck has fewer than 5
-    # comment cards — plus one record per description line.
-    mf1['NWD'] = 5 + len(desc_lines)
-    mf1['DESCRIPTION'] = {i + 1: desc_lines[i].ljust(66)[:66]
-                          for i in range(len(desc_lines))}
-
-    # Directory - entries for MF1/MT451 + MF7/MT2 (if present) + MF7/MT4.
-    # The NCx values below are NJOY-formula ESTIMATES (leapr.f90 3126-3150)
-    # used only to size the records; _patch_mf1_directory_counts replaces
-    # every NCx with the actual emitted record count after the tape is
-    # written.
-    nxc_sections = 1  # MF7/MT4 always present
-    if iel != 0:
-        nxc_sections += 1  # MF7/MT2
-    nxc = nxc_sections + 1  # +1 for MF1/MT451 itself
-    mf1['NXC'] = nxc
-    mf1['MFx'] = {}
-    mf1['MTx'] = {}
-    mf1['NCx'] = {}
-    mf1['MOD'] = {}
-
-    # Compute NCx for MF1/MT451: 4 header CONTs + NWD text + NXC directory
-    nc_mt451 = 4 + mf1['NWD'] + nxc
-
-    # Compute NCx for MF7/MT4 (NJOY formula: leapr.f90 lines 3147-3149)
-    per_beta = 2 + (2 * nalpha + 4) // 6
-    if ntempr > 1:
-        per_beta += (ntempr - 1) * (1 + (nalpha + 5) // 6)
-    nc_mt4 = 5 + nbeta * per_beta
-
-    # Compute NCx for MF7/MT2 if present (leapr.f90 lines 3135-3138)
-    nc_mt2 = 0
-    if iel < 0:
-        nc_mt2 = 3 + (2 * ntempr + 4) // 6
-    elif iel > 0:
-        nc_mt2 = 3 + (2 * nedge + 4) // 6
-        if ntempr > 1:
-            nc_mt2 += (ntempr - 1) * (1 + (nedge + 5) // 6)
-
-    idx = 1
-    mf1['MFx'][idx] = 1
-    mf1['MTx'][idx] = 451
-    mf1['NCx'][idx] = nc_mt451
-    mf1['MOD'][idx] = 0
-    idx += 1
-    if iel != 0:
-        mf1['MFx'][idx] = 7
-        mf1['MTx'][idx] = 2
-        mf1['NCx'][idx] = nc_mt2
-        mf1['MOD'][idx] = 0
-        idx += 1
-    mf1['MFx'][idx] = 7
-    mf1['MTx'][idx] = 4
-    mf1['NCx'][idx] = nc_mt4
-    mf1['MOD'][idx] = 0
+    # Directory: MF1/MT451, MF7/MT2 if present, MF7/MT4. The NCx record
+    # counts are filled in after the tape is written.
+    sections = [(1, 451)] + ([(7, 2)] if iel != 0 else []) + [(7, 4)]
+    mf1['NXC'] = len(sections)
+    mf1['MFx'] = {k + 1: mf for k, (mf, _) in enumerate(sections)}
+    mf1['MTx'] = {k + 1: mt for k, (_, mt) in enumerate(sections)}
+    mf1['NCx'] = {k + 1: 0 for k in range(len(sections))}
+    mf1['MOD'] = {k + 1: 0 for k in range(len(sections))}
 
     # ---- MF7/MT4 (inelastic) ----
     mf7mt4 = {}
@@ -562,35 +363,16 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, ncold, nss,
 
     parser.writefile(filename, endf_dict, overwrite=True)
 
-    # Post-process: fix SEND/FEND/MEND/TEND record formatting
-    # endf_parserpy writes "0.000000+0 0.000000+0 ..." but NJOY writes blank fields
+    # endf-parserpy writes zeros in the data fields of SEND/FEND/MEND/TEND
+    # records, NJOY leaves them blank.
     with open(filename, 'r') as f:
-        lines = f.readlines()
-    fixed = []
-    for line in lines:
-        if len(line) >= 75:
-            # Check for FEND/MEND/TEND (MT=0) and SEND records. SEND carries
-            # MT=0 with line# 99999 in cols 76-80, so it is already covered
-            # by the mt_field==0 test below; no separate 99999 branch needed.
-            try:
-                mt_field = int(line[72:75])
-            except (ValueError, IndexError):
-                mt_field = None
-            is_special = False
-            if mt_field is not None and mt_field == 0:
-                is_special = True  # SEND/FEND/MEND/TEND
-            if is_special:
-                # Blank out the data fields (first 66 chars), keep MAT/MF/MT/line#
-                line = ' ' * 66 + line[66:]
-        fixed.append(line)
-    fixed = _patch_mf1_directory_counts(fixed)
-    # newline='\n' keeps tapes byte-identical across platforms (no CRLF on
-    # Windows); the golden comparisons and NJOY parity depend on LF-only.
+        lines = [' ' * 66 + ln[66:] if ln[72:75] == '  0' else ln for ln in f]
+    lines = _patch_mf1_directory_counts(lines, mf1['NWD'], sections)
+    # newline='\n' keeps the tapes LF-only on every platform.
     with open(filename, 'w', newline='\n') as f:
-        f.writelines(fixed)
-        # Ensure file ends with a newline (Fortran NJOY always does). Check the
-        # list actually written (`fixed`), not the pre-patch `lines`.
-        if fixed and not fixed[-1].endswith('\n'):
+        f.writelines(lines)
+        # endf-parserpy does not end the file with a newline; NJOY does.
+        if lines and not lines[-1].endswith('\n'):
             f.write('\n')
     print(f"ENDF output written to {filename}", flush=True)
 
