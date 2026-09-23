@@ -1212,8 +1212,7 @@ def run_noncubic_sab_inprocess(
     ``precomputed_thermal_mats``: the (n_atoms, 3, 3) U_ij array [Angstrom^2]
     for THIS temperature from the engine's
     ``compute_thermal_displacement_matrices`` (same full mesh, same mode
-    floor); when given, the compute phase reuses it instead of re-running
-    phonopy's ThermalDisplacementMatrices.
+    floor); when given, the compute phase reuses it instead of recomputing it.
     """
     args = argparse.Namespace(
         phonopy_yaml=str(phonopy_yaml),

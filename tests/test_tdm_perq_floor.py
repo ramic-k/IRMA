@@ -4,7 +4,7 @@ The thermal-displacement tensor U_ij feeds the Debye-Waller factor. phonopy's
 ``ThermalDisplacementMatrices`` accepts only a single GLOBAL freq_min, so on a
 Gamma-containing mesh it applies the Gamma-tier floor (0.1 meV) everywhere and
 drops off-Gamma modes in (1 ueV, 0.1 meV] that the one-phonon sum keeps. The
-per-q sum (``thermal_displacement_matrices_perq``) applies the SAME two-tier
+per-q sum (``compute_thermal_displacement_matrices``) applies the SAME two-tier
 ``mode_floor_mask`` as the DOS-tensor / one-phonon paths, keeping the TDM
 consistent with the one-phonon mode set.
 
@@ -17,13 +17,11 @@ import os
 import numpy as np
 import pytest
 
-from irma.core.constants import GAMMA_ACOUSTIC_FLOOR_MEV, MODE_ENERGY_FLOOR_MEV
+from irma.core.constants import GAMMA_ACOUSTIC_FLOOR_MEV, MODE_ENERGY_FLOOR_MEV, THZ_TO_EV
 from irma.core.phonopy_io import (
     PhonopyMeshData,
     compute_thermal_displacement_matrices,
     mode_floor_mask,
-    thermal_displacement_matrices_perq,
-    tdm_freq_min_thz,
 )
 
 _BE = "tests/mode2_euphonic_n1_validation/beryllium/phonopy.yaml"
@@ -48,26 +46,15 @@ def test_perq_reproduces_phonopy_on_gamma_free_mesh():
     assert not _has_gamma(md.qpoints)
     from phonopy.phonon.thermal_displacement import ThermalDisplacementMatrices
     tdm = ThermalDisplacementMatrices(
-        md.phonopy_mesh_object, freq_min=tdm_freq_min_thz(md.qpoints))
+        md.phonopy_mesh_object, freq_min=MODE_ENERGY_FLOOR_MEV * 1e-3 / THZ_TO_EV)
     tdm.temperatures = [296.0]
     tdm.run()
     u_phonopy = np.asarray(tdm.thermal_displacement_matrices[0], dtype=float)
-    u_perq = thermal_displacement_matrices_perq(md, 296.0)
+    u_perq = compute_thermal_displacement_matrices(md, 296.0)
     # ~1e-10 in practice; 1e-8 leaves headroom for BLAS/summation-order noise.
     assert np.allclose(u_phonopy, u_perq, atol=1e-8, rtol=0.0)
 
 
-def test_dispatch_is_perq_everywhere():
-    """compute_thermal_displacement_matrices IS the per-q sum on every mesh
-    (the phonopy-class dispatch on Gamma-free meshes was retired 2026-07:
-    ~60x slower on dense meshes for ~1e-7 A^2 agreement)."""
-    even = _load([4, 4, 4])
-    assert np.allclose(compute_thermal_displacement_matrices(even, 296.0),
-                       thermal_displacement_matrices_perq(even, 296.0), atol=1e-8)
-    odd = _load([3, 3, 3])
-    assert _has_gamma(odd.qpoints)
-    assert np.array_equal(compute_thermal_displacement_matrices(odd, 296.0),
-                          thermal_displacement_matrices_perq(odd, 296.0))
 
 
 def test_perq_keeps_off_gamma_soft_mode_a_global_floor_drops():
@@ -94,7 +81,7 @@ def test_perq_keeps_off_gamma_soft_mode_a_global_floor_drops():
     assert mask[soft]                                # per-q KEEPS the off-Gamma soft mode
     assert MODE_ENERGY_FLOOR_MEV < freqs.reshape(-1)[soft] * 1.0e3 <= GAMMA_ACOUSTIC_FLOOR_MEV
 
-    u = thermal_displacement_matrices_perq(md, 296.0)
+    u = compute_thermal_displacement_matrices(md, 296.0)
     # coth(E/2kT)/E ~ 2kT/E^2 -> the 0.05 meV x-mode dwarfs the 20 meV y/z modes
     assert u[0, 0, 0] > 10.0 * u[0, 1, 1]
     assert u[0, 0, 0] > 10.0 * u[0, 2, 2]

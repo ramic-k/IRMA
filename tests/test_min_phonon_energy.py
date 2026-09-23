@@ -7,7 +7,8 @@ from irma.core.phonopy_io import (
     PhonopyMeshData,
     compute_dos_tensor,
     mode_floor_mask,
-    thermal_displacement_matrices_perq,
+    compute_thermal_displacement_matrices,
+    validate_min_phonon_energy_mev,
 )
 
 
@@ -27,7 +28,7 @@ def test_positive_cutoff_is_strict_and_invalid_values_fail():
         False, False, False, True]
     for bad in (-1.0, np.nan, np.inf):
         with pytest.raises(ValueError, match="finite and nonnegative"):
-            mode_floor_mask(energies, qpoints, 4, bad)
+            validate_min_phonon_energy_mev(bad)
 
 
 def _synthetic_mesh(cutoff):
@@ -57,7 +58,7 @@ def test_dos_and_debye_waller_use_the_same_cutoff(capsys):
     assert np.allclose(dos[0, 1], 0.0)
     assert np.max(dos[0, 2, 2]) > 0.0
 
-    u = thermal_displacement_matrices_perq(mesh, 296.0)
+    u = compute_thermal_displacement_matrices(mesh, 296.0)
     assert u[0, 0, 0] == 0.0
     assert u[0, 1, 1] == 0.0
     assert u[0, 2, 2] > 0.0
