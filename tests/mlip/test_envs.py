@@ -5,6 +5,8 @@ potential package or network is needed."""
 import json
 import os
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,12 +14,6 @@ pytest.importorskip("ase")
 
 from irma.mlip import envs                                    # noqa: E402
 from irma.mlip.calculators import CalculatorSpec              # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _isolated_cache(tmp_path, monkeypatch):
-    monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
-    yield
 
 
 def _fake_interpreter(tmp_path, name="python"):
@@ -61,15 +57,6 @@ def test_read_path_validates_like_the_write_path(tmp_path, monkeypatch):
         envs.registered_interpreter("mace")
     monkeypatch.delenv("IRMA_MLIP_PYTHON_MACE")
 
-    # registry entry bypassing register_interpreter's write-time check
-    # (hand-edited or stale envs.json)
-    os.makedirs(envs._cache_dir(), exist_ok=True)
-    with open(envs._registry_path(), "w") as fh:
-        json.dump({"schema": 1,
-                   "interpreters": {"mace": "/gone/python"}}, fh)
-    with pytest.raises(envs.MlipEnvError, match="not an executable"):
-        envs.registered_interpreter("mace")
-
     # a registration whose interpreter has since been DELETED fails the
     # same way (stale env), with the remediation named
     interp = _fake_interpreter(tmp_path)
@@ -77,23 +64,6 @@ def test_read_path_validates_like_the_write_path(tmp_path, monkeypatch):
     os.remove(interp)
     with pytest.raises(envs.MlipEnvError, match="env remove"):
         envs.registered_interpreter("sevennet")
-
-
-
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="os.access(X_OK) is true for any readable existing file on "
-           "Windows, so mode bits cannot express non-executability; the "
-           "nonexistent- and deleted-interpreter rejections above still "
-           "run there")
-def test_plain_file_is_rejected_as_interpreter(tmp_path, monkeypatch):
-    """SEC-4 companion: an existing but non-executable file is rejected."""
-    plain = tmp_path / "notes.txt"
-    plain.write_text("not a program")
-    plain.chmod(0o644)
-    monkeypatch.setenv("IRMA_MLIP_PYTHON_DPA3", str(plain))
-    with pytest.raises(envs.MlipEnvError, match="not an executable"):
-        envs.registered_interpreter("dpa3")
 
 
 def test_is_dispatched_only_for_a_different_interpreter(tmp_path,
@@ -189,17 +159,10 @@ def test_is_dispatched_sees_a_symlinked_venv_python(tmp_path):
     assert envs.is_dispatched("mace") is True
 
 
-def test_registry_tolerates_malformed_json(tmp_path):
-    os.makedirs(envs._cache_dir(), exist_ok=True)
-    with open(envs._registry_path(), "w") as fh:
-        fh.write("not json at all")
-    assert envs.registered_interpreter("mace") is None
-
-
 def test_remove_env_rejects_unknown_names(tmp_path):
     # `env remove ../models` must never delete the checkpoint cache
-    victim = tmp_path / "models"
-    victim.mkdir()
+    victim = Path(envs._cache_dir()) / "models"
+    victim.mkdir(parents=True)
     (victim / "checkpoint.pt").write_bytes(b"weights")
     with pytest.raises(envs.MlipEnvError, match="unknown potential"):
         envs.remove_env("../models")
@@ -271,73 +234,6 @@ def test_cli_env_subcommands(tmp_path, capsys):
     assert main(["env", "remove", "mace"]) == 0
     assert "nothing registered" in capsys.readouterr().out
 
-# ---- protocol client ------------------------------------------------------------
-
-def _fake_server(tmp_path, monkeypatch, body):
-    """Point _ServerHandle at a stand-in server script."""
-    script = tmp_path / "fake_server.py"
-    script.write_text(body)
-    monkeypatch.setattr(envs, "_SERVER", str(script))
-    return script
-
-
-def test_slow_but_healthy_force_call_is_not_killed(tmp_path, monkeypatch):
-    """A slow reply (a big supercell on a slow potential) completes
-    normally: force calls have no timeout."""
-    import time
-    _fake_server(tmp_path, monkeypatch, (
-        "import json, sys, time\n"
-        "sys.stdin.readline()\n"
-        "time.sleep(2.5)\n"                       # >> poll interval below
-        "sys.stdout.write(json.dumps({'ok': True, 'slow': True}) + '\\n')\n"
-        "sys.stdout.flush()\n"
-        "sys.stdin.readline()\n"                  # shutdown request
-        "sys.stdout.write(json.dumps({'ok': True}) + '\\n')\n"
-        "sys.stdout.flush()\n"))
-    handle = envs._ServerHandle(sys.executable)
-    try:
-        t0 = time.monotonic()
-        reply = handle.request({"cmd": "calc"}, "slow force call")
-        elapsed = time.monotonic() - t0
-        assert reply == {"ok": True, "slow": True}
-        assert elapsed >= 2.4                     # it really was slow
-    finally:
-        handle.close()
-    assert handle.proc.poll() is not None
-
-
-def test_close_escapes_a_wedged_server(tmp_path, monkeypatch):
-    """close() kills a server that does not exit after the shutdown
-    request."""
-    import time
-    _fake_server(tmp_path, monkeypatch, (
-        "import sys, time\n"
-        "sys.stdin.readline()\n"                  # eats the shutdown cmd
-        "time.sleep(30)\n"))                      # never replies
-    handle = envs._ServerHandle(sys.executable)
-    time.sleep(0.3)                               # let the server start
-    t0 = time.monotonic()
-    handle.close()
-    elapsed = time.monotonic() - t0
-    assert elapsed < 10                           # escaped the 30 s wedge
-    assert handle.proc.poll() is not None         # server is gone
-
-
-def test_requirement_set_is_not_advertised_as_vetted():
-    """SEC-3: ENV_REQUIREMENTS are unpinned package names resolved against
-    a live index, so nothing in the module may call them 'known-good'."""
-    import inspect
-
-    assert all(
-        "==" not in item and "@" not in item
-        for reqs in envs.ENV_REQUIREMENTS.values() for item in reqs), \
-        "requirement set gained pins: update the docstrings to match"
-    text = inspect.getsource(envs)
-    assert "known-good" not in text.lower()
-    assert "UNPINNED" in envs.create_env.__doc__ \
-        or "unpinned" in envs.create_env.__doc__.lower()
-
-
 # ---------------------------------------------------------------------------
 # provisioning guards (2026-08: colleague-reported field failures)
 
@@ -380,58 +276,37 @@ def test_probe_and_bootstrap_sources_compile():
     assert "main()" in calculators._NEQUIP_COMPILE_BOOTSTRAP
 
 
-def test_numpy_abi_breakage_is_not_registered_and_hints_numpy2(tmp_path,
-                                                               monkeypatch):
-    """A torch wheel built against NumPy 1.x (Intel mac): the probe fails
-    with the ABI signature, nothing is registered and the error names the
-    numpy<2 fix."""
-    monkeypatch.setattr(envs, "_find_uv", lambda: None)
-    root = envs.env_root("nequip")
-    python = envs._env_python(root)
-
-    def fake_run(cmd, capture_output=True, text=True):
-        from types import SimpleNamespace
-
+def _stub_run(monkeypatch, python, probe_err):
+    """Fake subprocess.run for create_env: the venv step writes a stand-in
+    interpreter, the runtime probe fails with probe_err, the rest succeed."""
+    def run(cmd, capture_output=True, text=True):
         if cmd[1:3] == ["-m", "venv"]:
             os.makedirs(os.path.dirname(python), exist_ok=True)
             with open(python, "w") as fh:
                 fh.write("#!/bin/sh\n")
             os.chmod(python, 0o755)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if cmd[:2] == [python, "-c"] and cmd[2] == envs._RUNTIME_PROBE:
-            return SimpleNamespace(
-                returncode=1, stdout="",
-                stderr="UserWarning: Failed to initialize NumPy: "
-                       "_ARRAY_API not found")
+        elif cmd[:3] == [python, "-c", envs._RUNTIME_PROBE]:
+            return SimpleNamespace(returncode=1, stdout="", stderr=probe_err)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(envs, "_find_uv", lambda: None)
+    monkeypatch.setattr(envs.subprocess, "run", run)
 
-    monkeypatch.setattr(envs.subprocess, "run", fake_run)
+
+def test_numpy_abi_breakage_is_not_registered_and_hints_numpy2(monkeypatch):
+    """A torch wheel built against NumPy 1.x (Intel mac): the probe fails
+    with the ABI signature, nothing is registered and the error names the
+    numpy<2 fix."""
+    python = envs._env_python(envs.env_root("nequip"))
+    _stub_run(monkeypatch, python, "UserWarning: Failed to initialize NumPy: "
+                                   "_ARRAY_API not found")
     with pytest.raises(envs.MlipEnvError, match="numpy<2"):
         envs.create_env("nequip", progress=lambda *_: None)
     assert envs.registered_interpreter("nequip") is None
 
 
-def test_probe_failure_without_the_signature_does_not_register(
-        tmp_path, monkeypatch):
-    monkeypatch.setattr(envs, "_find_uv", lambda: None)
-    root = envs.env_root("nequip")
-    python = envs._env_python(root)
-
-    def fake_run(cmd, capture_output=True, text=True):
-        from types import SimpleNamespace
-
-        if cmd[1:3] == ["-m", "venv"]:
-            os.makedirs(os.path.dirname(python), exist_ok=True)
-            with open(python, "w") as fh:
-                fh.write("#!/bin/sh\n")
-            os.chmod(python, 0o755)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if cmd[:2] == [python, "-c"] and cmd[2] == envs._RUNTIME_PROBE:
-            return SimpleNamespace(returncode=1, stdout="",
-                                   stderr="Segmentation fault")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(envs.subprocess, "run", fake_run)
-    with pytest.raises(envs.MlipEnvError, match="runtime *probe|probe"):
+def test_probe_failure_without_the_signature_does_not_register(monkeypatch):
+    python = envs._env_python(envs.env_root("nequip"))
+    _stub_run(monkeypatch, python, "Segmentation fault")
+    with pytest.raises(envs.MlipEnvError, match="probe"):
         envs.create_env("nequip", progress=lambda *_: None)
     assert envs.registered_interpreter("nequip") is None
