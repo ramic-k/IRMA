@@ -184,7 +184,7 @@ can write them by hand in YAML, TOML, or JSON.
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `phonopy_yaml` | str | — | phonopy calculation; required for modes 1/2 and mode-0 `dos_source: phonopy` |
-| `force_constants` / `force_sets` / `born` | str | discovered | explicit FC / FORCE_SETS / BORN (NAC) files |
+| `force_constants` / `force_sets` / `born` | str | discovered | explicit FC / FORCE_SETS / BORN (NAC) files; force constants embedded in the phonopy.yaml win over an explicit FC / FORCE_SETS file (phonopy's rule; a warning says the file is not used) |
 | `mesh` | `[nx,ny,nz]` | `[40,40,40]` | phonon q-mesh |
 | `temperature_K` | float | 296 | sample temperature |
 | `scatterers` | list | — | per-species scattering data (see below) |
