@@ -58,7 +58,12 @@ def parse_angles(s):
             raise argparse.ArgumentTypeError(
                 f"--angles range must be start:stop:step (got {s!r})")
         start, stop, step = parts
-        return [float(a) for a in np.arange(start, stop + 0.5 * step, step)]
+        # every point from start to stop inclusive, none past stop
+        n = int(np.floor((stop - start) / step + 1e-9)) + 1
+        if n < 1:
+            raise argparse.ArgumentTypeError(
+                f"--angles range {s!r}: the step's sign contradicts start:stop")
+        return [float(a) for a in start + step * np.arange(n)]
     try:
         return [float(x) for x in s.split(",") if x.strip()]
     except ValueError:
