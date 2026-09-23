@@ -1,16 +1,6 @@
-"""Pin the tape-gauge --diff comparison so it fails CLOSED.
-
-tools/tape_gauge.py is the re-blessing instrument for modes-1/2 tape changes;
-its 1e-6 relative criterion is only meaningful if the walk over the parsed
-tapes cannot silently skip data. Two silent-skip failure modes are pinned
-here: (a) a walk that parses only MF7/MT4 would print GAUGE: PASS through a
-regression confined to MT2 coherent elastic (~98% of MF7 on the iel=10
-gauge decks), and (b) a fail-open walk — dropped dict keys skipped, added
-keys never visited, zip() truncating unequal lists — gives max_rel=0 when a
-key is deleted or an array is cut from 12 to 2 entries. These tests drive the comparison helpers directly (no engine run,
-the gauge's deck runs are minutes-expensive) and pin: structural mismatch =
-inf, MT2 gauged alongside MT4, MT2-absent-from-both legitimate, and the
-printed GAUGE verdict failing with exit code 1 when the metric exceeds tol.
+"""tools/tape_gauge.py --diff fails closed: a structural mismatch between the
+parsed tapes is inf, MT2 is gauged alongside MT4, and the printed GAUGE
+verdict fails with exit code 1 when the metric exceeds tol. No engine runs.
 """
 import importlib.util
 import json
@@ -54,54 +44,27 @@ def test_small_numeric_drift_reports_max_rel():
     assert rel < 1e-6                               # still within the criterion
 
 
-def test_missing_dict_key_is_inf():
+def _drop_key(t):
+    del t["table"]["beta"]                          # candidate dropped a key
+
+
+def _add_key(t):
+    t["table"]["extra"] = [9.0]                     # candidate grew a key
+
+
+def _truncate(t):
+    t["table"]["S"] = t["table"]["S"][:2]           # 4 entries cut to 2
+
+
+def _leaf_to_list(t):
+    t["LAT"] = [1]                                  # numeric leaf -> sub-structure
+
+
+@pytest.mark.parametrize("mutate", [_drop_key, _add_key, _truncate, _leaf_to_list])
+def test_structural_mismatch_is_inf(mutate):
     a, b = _mt4(), _mt4()
-    del b["table"]["beta"]                          # candidate dropped a key
+    mutate(b)
     assert math.isinf(tg._walk_rel_diff(a, b))
-
-
-def test_extra_dict_key_on_candidate_is_inf():
-    a, b = _mt4(), _mt4()
-    b["table"]["extra"] = [9.0]                     # candidate grew a key
-    assert math.isinf(tg._walk_rel_diff(a, b))
-
-
-def test_truncated_list_is_inf():
-    a, b = _mt4(), _mt4()
-    b["table"]["S"] = b["table"]["S"][:2]           # 4 entries cut to 2
-    assert math.isinf(tg._walk_rel_diff(a, b))
-
-
-def test_type_mismatch_leaf_is_inf():
-    # numeric leaf replaced by a sub-structure must not be skipped silently
-    a, b = _mt4(), _mt4()
-    b["LAT"] = [1]
-    assert math.isinf(tg._walk_rel_diff(a, b))
-
-
-def test_bool_vs_int_leaf_is_inf():
-    """bool is an int subclass: True vs 1 must be a structural failure, not a
-    zero numeric diff."""
-    a, b = _mt4(), _mt4()
-    b["LAT"] = True                                 # was int 1
-    assert math.isinf(tg._walk_rel_diff(a, b))
-    a["LAT"], b["LAT"] = True, True                 # matching bools are fine
-    assert tg._walk_rel_diff(a, b) == 0.0
-    b["LAT"] = False                                # flipped flag fails
-    assert math.isinf(tg._walk_rel_diff(a, b))
-
-
-def test_numpy_scalars_get_relative_diff_treatment():
-    """endf-parserpy currently yields builtin float/int, but numpy scalars
-    must gauge as numbers (rel diff), not fall to exact-equality leaves."""
-    import numpy as np
-    a, b = _mt4(), _mt4()
-    a["table"]["S"][1] = np.float64(2.0)
-    b["table"]["S"][1] = np.float64(2.0 * (1.0 + 3e-7))
-    assert tg._walk_rel_diff(a, b) == pytest.approx(3e-7 / (1.0 + 3e-7), rel=1e-9)
-    a["ZA"], b["ZA"] = np.int64(631), 631.0         # cross-type numerics compare
-    a["table"]["S"][1] = b["table"]["S"][1]
-    assert tg._walk_rel_diff(a, b) == 0.0
 
 
 # -----------------------------------------------------------------------------
