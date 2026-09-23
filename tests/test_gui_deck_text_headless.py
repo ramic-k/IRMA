@@ -199,6 +199,15 @@ def test_parse_atoms_underspecified_line_names_the_line():
         _parse_atoms("6 12 11.9 0.66 0.0 2 0 0 0\n")
 
 
+@pytest.mark.parametrize("line, match", [
+    ("6 12 11.9 0.66 0.0 1 0 0 0 0.5 0.5 0.5\n", "declares npos=1"),  # extra site
+    ("6.9 12 11.9 0.66 0.0 1 0 0 0\n", "Z must be an integer"),
+])
+def test_parse_atoms_refuses_silent_coercion(line, match):
+    with pytest.raises(ValueError, match=match):
+        _parse_atoms(line)
+
+
 def test_parse_atoms_too_few_fields_named():
     with pytest.raises(ValueError, match="must contain at least 6 fields"):
         _parse_atoms("6 12 11.9\n")

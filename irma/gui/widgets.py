@@ -281,7 +281,7 @@ class RunPanel(ttk.Frame):
             self._status("Cancelled")
         else:
             self._status("Error")
-            messagebox.showerror(error_title or self.error_title, msg[:500])
+            messagebox.showerror(error_title or self.error_title, msg)
         self._drop_tmpdir()
 
     def _cancel(self):
