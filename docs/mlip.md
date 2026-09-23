@@ -221,11 +221,11 @@ does not establish that it is safe.
    content-hashed when the model is a local file or compiled artifact;
    package versions; license note if any; all arguments).
 
-`irma mlip validate <bundle>` re-checks a bundle (manifest schema and
-required fields, safe file names and symlink containment, file hashes,
-embedded force constants, agreement between the manifest and the YAML
-on the non-analytical-term correction (NAC), and a real phonopy reload)
-and prints a summary. Run it first on any bundle you received rather
+`irma mlip validate <bundle>` re-checks a bundle (manifest schema, safe
+file names, file hashes, a scan for unsafe YAML tags, embedded force
+constants, and a real phonopy reload whose non-analytical-term
+correction (NAC) state must agree with the manifest) and prints a
+summary. Run it first on any bundle you received rather
 than built.
 
 A bundle is code-adjacent input: treat a
