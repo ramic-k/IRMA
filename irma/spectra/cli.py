@@ -228,7 +228,7 @@ def _add_common(p):
                         "MAPS, MARI, MERLIN, HYSPEC (Fermi) or CNCS, LET (disk)")
     p.add_argument("--chopper-package",
                    help="chopper package / resolution mode (e.g. ARCS-700-1.5-AST, "
-                        "High-Resolution, Standard)")
+                        "High-Resolution; CNCS and LET: High-Flux)")
     p.add_argument("--chopper-frequency", type=float,
                    help="chopper / resolution-disk frequency (Hz)")
     p.add_argument("--q-cuts", type=parse_coeffs,

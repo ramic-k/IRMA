@@ -26,8 +26,8 @@ def test_available_instruments_and_packages():
     seq = cr.available_packages("SEQUOIA")
     assert "High-Resolution" in seq and "High-Flux" in seq
     # disk machines expose a single resolution mode each
-    assert cr.available_packages("CNCS") == ["Standard"]
-    assert cr.available_packages("LET") == ["High-Resolution"]
+    assert cr.available_packages("CNCS") == ["High-Flux"]
+    assert cr.available_packages("LET") == ["High-Flux"]
 
 
 def test_every_instrument_has_a_default_frequency_in_range():
@@ -91,10 +91,10 @@ def test_forbidden_energy_transfer_is_nan():
     ("MERLIN", "S", 80.0, 400.0, 0.0, 4.489467),
     ("HYSPEC", "OnlyOne", 35.0, 180.0, 0.0, 2.534201),
     # disk: CNCS / LET (incl. a high-energy-transfer point each)
-    ("CNCS", "Standard", 25.0, 300.0, 0.0, 2.129937),
-    ("CNCS", "Standard", 25.0, 300.0, 18.0, 0.539803),
-    ("LET", "High-Resolution", 8.0, 240.0, 0.0, 0.233083),
-    ("LET", "High-Resolution", 8.0, 240.0, 6.0, 0.085734),
+    ("CNCS", "High-Flux", 25.0, 300.0, 0.0, 2.129937),
+    ("CNCS", "High-Flux", 25.0, 300.0, 18.0, 0.539803),
+    ("LET", "High-Flux", 8.0, 240.0, 0.0, 0.233083),
+    ("LET", "High-Flux", 8.0, 240.0, 6.0, 0.085734),
 ])
 def test_resolution_regression_values(instrument, package, Ei, freq, Etrans, expect):
     got = _fwhm(Etrans, Ei, freq, instrument, package)[0]
@@ -133,7 +133,7 @@ def test_direct_resolution_accepts_disk_frequency_list():
     """A caller may hand the raw PyChop [resolution, frame] frequency list
     straight through; only the resolution-disk (first) element drives the burst,
     so the list and its first element give identical resolution."""
-    g = cr.instrument_geometry("CNCS", "Standard")
+    g = cr.instrument_geometry("CNCS", "High-Flux")
     Et = np.linspace(0.0, 0.9 * 12.0, 8)
     as_list = cr.direct_resolution_fwhm(Et, Ei=12.0, frequency=[300, 60], geom=g)
     as_scalar = cr.direct_resolution_fwhm(Et, Ei=12.0, frequency=300.0, geom=g)
