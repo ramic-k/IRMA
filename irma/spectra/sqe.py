@@ -1,8 +1,8 @@
 """Standalone neutron-scattering forward model: powder S(Q,E) -> instrument spectrum.
 
 This module is deliberately INDEPENDENT of the IRMA ENDF package. It consumes a
-powder-averaged dynamic structure factor S(Q,E) (from an IRMA S(alpha,beta)
-cache, an OCLIMAX map, or any user-supplied (q, E, S) arrays) and produces the
+powder-averaged dynamic structure factor S(Q,E) (from the IRMA engine, an
+OCLIMAX map, or any user-supplied (q, E, S) arrays) and produces the
 1-D spectrum a spectrometer measures, by:
 
   1. building the signed-energy S(Q,E): the computed downscatter side plus the
@@ -39,9 +39,6 @@ import dataclasses
 import numpy as np
 # scipy is imported lazily inside sqe_interpolator so `import irma.spectra`
 # works on a bare install (scipy ships in the `spectra` extra).
-
-# numpy>=2.0 renamed trapz -> trapezoid
-_trapz = getattr(np, "trapezoid", None) or np.trapz
 
 # Physical constants (neutron) -------------------------------------------------
 # Physical constants are sourced from irma.core.constants (CODATA 2018) so the
@@ -84,76 +81,16 @@ class PowderSQE:
         return KB * self.T_K
 
 
-def _law_to_sqe(law_beta_alpha, beta, T_K, sigma_b, law_kind):
-    """Convert a stored S(alpha,beta) law to the physical downscatter S(Q,E).
-
-    law_beta_alpha : (nbeta, nq) the stored law, beta along axis 0 (>=0)
-    law_kind       : 'symmetric'        -> law = S_sym(alpha,beta);
-                                           S_asym_down = exp(+beta/2) * S_sym
-                     'asym_downscatter' -> law is already S_asym_down(alpha,beta)
-    Returns S(Q,E) with shape (nq, nE) in barn/sr/meV, where
+def _law_to_sqe(law_beta_alpha, T_K, sigma_b):
+    """Asymmetric downscatter law S_asym_down(alpha, beta), shape (nbeta, nq),
+    -> the physical downscatter S(Q,E) (nq, nE) in barn/sr/meV:
         S(Q,E) = sigma_b/(4*pi*kT) * S_asym_down
     (the inverse of the IRMA noncubic_engine convention
      S_asym_down = (4*pi*kT/sigma_b) * S(Q,E)).
-
-    NOTE on the sign: with beta = E_loss/kT >= 0 (the downscatter MAGNITUDE used
-    throughout this module), detailed balance makes the energy-LOSS (Stokes)
-    asymmetric law the LARGER one, S_asym_down = exp(+beta/2)*S_sym. The standard
-    textbook "exp(-beta/2)" appears only with the ENDF sign beta=(E'-E)/kT, which
-    is negative for downscatter. Verified from data: in an OCLIMAX map
-    ssm_internal/mt4_symmetric = exp(+beta/2) exactly.
     """
     kT = KB * T_K
     pref = sigma_b / (4.0 * np.pi * kT)
-    if law_kind == "symmetric":
-        asym = np.exp(beta[:, None] / 2.0) * law_beta_alpha
-    elif law_kind == "asym_downscatter":
-        asym = law_beta_alpha
-    else:
-        raise ValueError(f"unknown law_kind {law_kind!r}")
-    return np.ascontiguousarray((pref * asym).T)  # (nq, nbeta)
-
-
-def from_irma_cache(path, sigma_b, T_K=None, label=None, awr=None):
-    """Load an IRMA S(alpha,beta) cache (.npz).
-
-    Two cache layouts are supported:
-      * precomputed grids: keys ``q`` (1/A) and ``e_mev`` (meV);
-      * alpha/beta grids: keys ``a_phys`` (alpha) and ``b_phys`` (beta), from
-        which q,E are reconstructed via  alpha = Q^2 C_E/(awr kT),  beta = E/kT
-        (requires ``awr``, the atomic weight ratio of the principal scatterer).
-    IRMA's cached ``sbar`` is the SYMMETRIC law (verified against an OCLIMAX
-    map: IRMA sbar ~= OCLIMAX mt4_symmetric, not ssm_internal).
-    """
-    d = np.load(path)
-    if T_K is None:
-        if "t0" not in d.files:
-            # Guessing a room-temperature default here would silently corrupt
-            # detailed balance (exp(-E/kT)) and the SAB prefactor for any
-            # cache baked at another temperature -- by orders of magnitude on
-            # the gain side for a cryogenic cache. Require the caller to say.
-            raise ValueError(
-                f"cache {path} carries no 't0' temperature key; pass T_K "
-                f"explicitly (the cache's bake temperature in Kelvin)")
-        T_K = float(d["t0"])
-    sbar = np.asarray(d["sbar"], float)  # (nE, nq) = [beta, alpha], symmetric
-    kT = KB * T_K
-    if "q" in d.files and "e_mev" in d.files:
-        q = np.asarray(d["q"], float)
-        E = np.asarray(d["e_mev"], float)
-    elif "a_phys" in d.files and "b_phys" in d.files:
-        if awr is None:
-            raise ValueError("alpha/beta cache needs awr (atomic weight ratio)")
-        alpha = np.asarray(d["a_phys"], float)
-        beta_grid = np.asarray(d["b_phys"], float)
-        q = np.sqrt(alpha * awr * kT / C_E)
-        E = beta_grid * kT
-    else:
-        raise ValueError(f"cache {path} lacks (q,e_mev) or (a_phys,b_phys)")
-    beta = E / kT                       # kT == KB * T_K, bound above
-    S = _law_to_sqe(sbar, beta, T_K, sigma_b, law_kind="symmetric")
-    return PowderSQE(q=q, E=E, S=S, T_K=T_K, sigma_b=sigma_b,
-                     label=label or "IRMA")
+    return np.ascontiguousarray((pref * law_beta_alpha).T)  # (nq, nbeta)
 
 
 def from_oclimax(path, sigma_b, T_K, label=None):
@@ -162,14 +99,18 @@ def from_oclimax(path, sigma_b, T_K, label=None):
 
     OCLIMAX's ``ssm_internal_beta_alpha`` is ALREADY the asymmetric downscatter
     law (= mt4_symmetric * exp(+beta/2), verified from the file), so no further
-    symmetrization factor is applied.
+    symmetrization factor is applied. With beta = E_loss/kT >= 0 (the downscatter
+    magnitude used throughout this module), detailed balance makes the
+    energy-loss law the larger one, S_asym_down = exp(+beta/2) * S_sym; the
+    textbook exp(-beta/2) uses the ENDF sign beta = (E'-E)/kT, which is
+    negative for downscatter.
     """
     d = np.load(path)
     q = np.asarray(d["q_centers_ang_inv"], float)
     beta = np.asarray(d["beta_downscatter_abs"], float)
     asy = np.asarray(d["ssm_internal_beta_alpha"], float)  # (nbeta, nq), asym down
     E = beta * (KB * T_K)
-    S = _law_to_sqe(asy, beta, T_K, sigma_b, law_kind="asym_downscatter")
+    S = _law_to_sqe(asy, T_K, sigma_b)
     return PowderSQE(q=q, E=E, S=S, T_K=T_K, sigma_b=sigma_b,
                      label=label or "OCLIMAX")
 
@@ -181,27 +122,12 @@ def from_noncubic_arrays(q, E, S, T_K, sigma_b, label=None,
     The engine's ``sqe_*_barn_per_meV`` arrays ARE the physical double-
     differential ``d2sigma/dOmega/dE'`` (= ``PowderSQE.S``) already, on the
     engine's ``(q_ang_inv, e_mev)`` grid -- so this bridge applies NO SAB
-    inversion and NO ``exp(+beta/2)``. (Those are only needed for the symmetric
-    law ``sbar`` or the ``4*pi*kT/sigma_b``-scaled ``sab_*`` arrays; reading the
-    ``sqe_*`` family avoids both.) This is the canonical engine -> spectra
-    bridge used by ``compute_spectrum``.
-
-    S is accepted in either (nq, nE) or (nE, nq) orientation and transposed to
-    the PowderSQE convention (nq, nE).
+    inversion and NO ``exp(+beta/2)``. (The ``4*pi*kT/sigma_b``-scaled
+    ``sab_*`` arrays would need them; reading the ``sqe_*`` family avoids that.) This is the canonical engine -> spectra
+    bridge used by ``compute_spectrum``. S has shape (nq, nE).
     """
-    q = np.asarray(q, float)
-    E = np.asarray(E, float)
-    S = np.asarray(S, float)
-    nq, nE = q.size, E.size
-    if S.shape == (nq, nE):
-        pass
-    elif S.shape == (nE, nq):
-        S = np.ascontiguousarray(S.T)
-    else:
-        raise ValueError(
-            f"from_noncubic_arrays: S shape {S.shape} matches neither "
-            f"(nq, nE)=({nq}, {nE}) nor its transpose")
-    return PowderSQE(q=q, E=E, S=S, T_K=T_K, sigma_b=sigma_b,
+    return PowderSQE(q=np.asarray(q, float), E=np.asarray(E, float),
+                     S=np.asarray(S, float), T_K=T_K, sigma_b=sigma_b,
                      label=label or "IRMA noncubic",
                      E_gain=(None if E_gain is None else np.asarray(E_gain, float)),
                      S_gain=(None if S_gain is None else np.asarray(S_gain, float)))
@@ -299,11 +225,6 @@ def Q_direct(Etr, Ei, two_theta_deg):
     return np.sqrt(np.clip(Q2, 0.0, None))
 
 
-def Q_fit(Etr, a, b, c):
-    """Fitted power-law trajectory Q = a*|Etr|^b + c (downscatter fit)."""
-    return a * np.abs(np.asarray(Etr, float)) ** b + c
-
-
 # Optional kf/ki kinematic factor. The measured double-differential is
 # d2sigma/dOmega/dE' = (kf/ki)(sigma/4pi) S(Q,omega); our stored S(Q,E) is the
 # (sigma/4pi) S(Q,omega) part WITHOUT kf/ki. OCLIMAX reports S(Q,omega) along the
@@ -371,18 +292,11 @@ def sigma_of_E(E, coeffs):
 
 
 def _resolve_width(E_out, width):
-    """Resolve a resolution width argument to a per-E array aligned to E_out.
-
-    ``width`` may be (a) a callable ``E -> sigma`` (the auto chopper model), (b)
-    a precomputed ndarray already aligned to ``E_out``, or (c) polynomial coeffs
-    fed to :func:`sigma_of_E` (the legacy poly path, unchanged).
-    """
+    """Resolution width at each ``E_out``: ``width`` is a callable ``E -> sigma``
+    (the chopper model) or the polynomial coefficients of :func:`sigma_of_E`."""
     E_out = np.asarray(E_out, float)
     if callable(width):
         return np.asarray(width(E_out), float)
-    arr = np.asarray(width, float)
-    if arr.ndim == 1 and arr.shape == E_out.shape:
-        return arr
     return sigma_of_E(E_out, width)
 
 
@@ -390,23 +304,19 @@ RESOLUTION_SHAPES = ("gaussian", "lorentzian")
 
 
 def _normalize_shape(shape):
-    """Canonicalize a resolution-shape name to 'gaussian'/'lorentzian'."""
-    s = str(shape).strip().lower()
-    if s in ("gauss", "gaussian", "normal"):
-        return "gaussian"
-    if s in ("lorentz", "lorentzian", "cauchy"):
-        return "lorentzian"
-    raise ValueError(
-        f"unknown resolution shape {shape!r}; expected one of {RESOLUTION_SHAPES}")
+    """Check a resolution-shape name against RESOLUTION_SHAPES."""
+    if shape not in RESOLUTION_SHAPES:
+        raise ValueError(
+            f"unknown resolution shape {shape!r}; expected one of {RESOLUTION_SHAPES}")
+    return shape
 
 
 def resolution_convolve(E_out, I_in, width, shape="gaussian"):
     """Convolve I_in with an energy-dependent resolution kernel.
 
     The kernel width at output energy E is w(E) (meV). ``width`` may be a
-    polynomial coeff sequence (legacy path, w = poly(E) via :func:`sigma_of_E`),
-    a precomputed per-E ndarray aligned to ``E_out``, or a callable ``E -> w``
-    (e.g. the direct-geometry
+    polynomial coeff sequence (w = poly(E) via :func:`sigma_of_E`) or a
+    callable ``E -> w`` (e.g. the direct-geometry
     :func:`irma.spectra.chopper_resolution.chopper_sigma_of_E` model). For
     ``shape='gaussian'`` the width is the Gaussian sigma; for
     ``shape='lorentzian'`` it is the Lorentzian HWHM.
@@ -452,22 +362,14 @@ def resolution_kernel(E_out, width, shape="gaussian"):
         R = np.exp(-0.5 * (dE / wj) ** 2) / (np.sqrt(2 * np.pi) * wj)
     else:  # lorentzian: L(x;w) = (1/pi) * w / (x^2 + w^2), w = HWHM
         R = (wj / np.pi) / (dE ** 2 + wj ** 2)
-    norm = _trapz(R, E_out, axis=0)                 # weight each INPUT bin deposits
+    norm = np.trapezoid(R, E_out, axis=0)                 # weight each INPUT bin deposits
     return R / np.where(norm > 0.0, norm, 1.0)[None, :]
 
 
 def apply_resolution_kernel(R, E_out, I_in):
     """Apply a precomputed :func:`resolution_kernel` to one spectrum."""
-    return _trapz(R * np.asarray(I_in, float)[None, :],
+    return np.trapezoid(R * np.asarray(I_in, float)[None, :],
                   np.asarray(E_out, float), axis=1)
-
-
-def gaussian_resolution(E_out, I_in, sigma_coeffs):
-    """Convolve an energy-dependent Gaussian resolution (back-compat wrapper).
-
-    Thin wrapper around :func:`resolution_convolve` with ``shape='gaussian'``.
-    """
-    return resolution_convolve(E_out, I_in, sigma_coeffs, shape="gaussian")
 
 
 def elastic_line(E_out, area, width, shape="gaussian"):
@@ -477,7 +379,7 @@ def elastic_line(E_out, area, width, shape="gaussian"):
     (E'=E) in a separate MT; the visible peak appears only after the instrument
     resolution is applied. We reproduce that: delta(E)*area -> a normalized line
     shape at 0 with the same width source used for the inelastic kernel
-    (poly coeffs, an array, or a callable -- see :func:`resolution_convolve`).
+    (poly coeffs or a callable -- see :func:`resolution_convolve`).
     """
     shape = _normalize_shape(shape)
     w0 = max(float(_resolve_width(np.array([0.0]), width)[0]), 1e-6)
@@ -499,7 +401,7 @@ def elastic_line(E_out, area, width, shape="gaussian"):
     # (>= 2 points: a single-point grid has zero trapezoid weight, so the
     # analytic amplitude is the only meaningful value there)
     if E_out.size >= 2 and E_out[0] <= 0.0 <= E_out[-1]:
-        norm = _trapz(line, E_out)
+        norm = np.trapezoid(line, E_out)
         if norm > 0.0:
             line = line / norm
     return area * line

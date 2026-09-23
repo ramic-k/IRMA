@@ -2,7 +2,7 @@
 
 Pure-physics checks, no engine/phonopy. Pins the per-species incoherent-approx
 phonon expansion + the validated asym_downscatter SAB convention: a single
-species reproduces a direct contin()+_law_to_sqe(asym) build; multi-species is an
+species reproduces a direct contin()+_law_to_sqe build; multi-species is an
 exact cross-section/multiplicity-weighted sum; one-phonon follows the DOS.
 """
 import numpy as np
@@ -29,7 +29,7 @@ E = np.linspace(0.0, 150.0, 200)
 
 
 def test_single_species_matches_direct_kernel_build():
-    """One species == a hand-rolled contin() + _law_to_sqe(asym_downscatter)."""
+    """One species == a hand-rolled contin() + _law_to_sqe."""
     omega, rho = _dos()
     awr, sig = 0.9991673, 80.27
     out = compute_mode0_sqe(species=[{"symbol": "H", "omega_ev": omega, "rho": rho,
@@ -42,7 +42,7 @@ def test_single_species_matches_direct_kernel_build():
     ssm = np.zeros((E.size, Q.size))
     contin(ssm, alpha, beta, Q.size, E.size, 0, 1.0, BK * T_K, rho.copy(),
            omega.size, float(omega[1] - omega[0]), 1.0, 100)
-    ref = si._law_to_sqe(ssm, beta, T_K, sig, "asym_downscatter")
+    ref = si._law_to_sqe(ssm, T_K, sig)
     assert np.allclose(out["sqe_barn_per_meV"], ref, rtol=1e-12)
     assert out["sigma_b_total"] == pytest.approx(sig)
     assert out["per_species"][0]["dw_lambda"] > 0

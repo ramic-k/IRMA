@@ -3,7 +3,7 @@
 Pins the engine -> spectra contract: (1) ``_pick_sqe_key`` must stay in lockstep
 with ``standalone_sab._pick_sab_key`` (same mode/order branch, ``sqe_`` prefix +
 ``_barn_per_meV`` suffix), and (2) ``from_noncubic_arrays`` wraps the physical
-``sqe_*`` map with NO SAB inversion / NO ``exp(+beta/2)`` and auto-orients.
+``sqe_*`` map with NO SAB inversion / NO ``exp(+beta/2)``.
 """
 import numpy as np
 import pytest
@@ -22,7 +22,7 @@ def test_pick_sqe_key_tracks_pick_sab_key(mode, order):
     assert sqe == expected
 
 
-def test_from_noncubic_arrays_no_inversion_and_orientation():
+def test_from_noncubic_arrays_no_inversion():
     q = np.linspace(0.5, 10.0, 5)
     E = np.linspace(0.0, 200.0, 7)
     S = np.arange(35.0).reshape(5, 7)          # (nq, nE)
@@ -30,13 +30,3 @@ def test_from_noncubic_arrays_no_inversion_and_orientation():
     # values pass through UNCHANGED (no 4*pi*kT/sigma_b, no exp(+beta/2))
     assert np.array_equal(p.S, S)
     assert p.S.shape == (q.size, E.size)
-    # transposed input is auto-oriented to (nq, nE)
-    p2 = from_noncubic_arrays(q, E, S.T, T_K=296.0, sigma_b=5.551)
-    assert np.array_equal(p2.S, S)
-
-
-def test_from_noncubic_arrays_bad_shape_raises():
-    q = np.linspace(0.5, 10.0, 5)
-    E = np.linspace(0.0, 200.0, 7)
-    with pytest.raises(ValueError):
-        from_noncubic_arrays(q, E, np.zeros((4, 4)), T_K=296.0, sigma_b=5.551)

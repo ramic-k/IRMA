@@ -2,7 +2,7 @@
 
 Pure-physics checks encoding the verified conventions/derivations: elastic
 Bragg-peak normalization, incoherent Debye-Waller form, detailed balance,
-indirect/direct kinematics, S(alpha,beta) loader conventions, the bank-integrated
+indirect/direct kinematics, the bank-integrated
 elastic cross-check, and parser robustness on published tapes.
 
 CI COVERAGE: most of these need NO external data -- they run on every checkout.
@@ -33,7 +33,6 @@ from irma.spectra import instruments as ins
 DATA_ROOT = os.environ.get("IRMA_SPECTRA_TEST_DATA", "")
 GRA = f"{DATA_ROOT}/graphite"
 ENDF = f"{GRA}/graphite_iyad_mode2_autogrid_std.endf"
-CACHE2 = f"{GRA}/sab_cache_graphite_iyad_mode2_autogrid_std.npz"
 SIGMA_B_C = 5.551
 T = 296.0
 
@@ -137,17 +136,6 @@ def test_detailed_balance_gain_side():
     assert np.allclose(ratio[good], np.exp(-Es[iE] / kT), rtol=1e-6)
 
 
-# ---- loader conventions -----------------------------------------------------
-def test_symmetric_vs_asym_loader_equivalence():
-    beta = np.linspace(0.1, 8.0, 40)
-    q = np.linspace(0.5, 10.0, 20)
-    Lsym = np.exp(-0.3 * beta)[:, None] * (1.0 / (1 + q**2))[None, :]
-    S_from_sym = si._law_to_sqe(Lsym, beta, T, SIGMA_B_C, "symmetric")
-    S_from_asym = si._law_to_sqe(np.exp(beta[:, None] / 2) * Lsym, beta, T,
-                                 SIGMA_B_C, "asym_downscatter")
-    assert np.allclose(S_from_sym, S_from_asym, rtol=1e-12)
-
-
 # ---- elastic: parse + self-test --------------------------------------------
 @requires_ext
 def test_elastic_parse_graphite():
@@ -178,16 +166,6 @@ def test_elastic_peaks_generalize_to_beryllium():
     for E in (30.0, 200.0):
         lhs, rhs = el.selftest(m, E_meV=E)
         assert lhs == pytest.approx(rhs, rel=1e-6)
-
-
-def test_alpha_beta_cache_loads_with_awr():
-    BE = f"{DATA_ROOT}/Be/sab_cache_be_mode2_autogrid_std.npz"
-    if not os.path.exists(BE):
-        pytest.skip("Be cache not present")
-    p = si.from_irma_cache(BE, 7.63, T, "Be", awr=8.93478)
-    assert p.q.min() > 0 and p.E.min() >= 0 and p.S.shape == (p.q.size, p.E.size)
-    with pytest.raises(ValueError):
-        si.from_irma_cache(BE, 7.63, T, "Be")
 
 
 def test_edge_to_shell_mapping(graphite_endf):
@@ -237,30 +215,6 @@ def test_simulate_runs_all_geometries(graphite_endf):
     through all three instrument geometries. Runs on CI."""
     p = _synthetic_powder_qe(nq=48, nE=120)
     m = el.from_endf_mf7mt2(graphite_endf, T_K=T)
-    E = np.linspace(-30, 300, 331)
-    for instr in (ins.VISION(),
-                  ins.indirect(3.5, [92.0], bank_halfwidth_deg=10.0),
-                  ins.direct(250.0, [30, 90])):
-        r = ins.simulate(p, instr, E, elastic_model=m)
-        assert r["I_total"].shape == E.shape
-        assert np.all(np.isfinite(r["I_total"]))
-        assert r["I_inelastic"].max() > 0
-
-
-@requires_ext
-def test_real_graphite_mode2_cache_projects_all_geometries():
-    """Opt-in: project the REAL graphite mode-2 SAB cache through signed_sqe + all
-    three instrument geometries. This is the external coverage the synthetic CI
-    test above stands in for -- it exercises the actual cached law through the
-    detailed-balance reconstruction and the instrument projection, not just the
-    ENDF elastic parser."""
-    if not os.path.exists(CACHE2):
-        pytest.skip("graphite mode-2 SAB cache not present")
-    p = si.from_irma_cache(CACHE2, SIGMA_B_C, T, "m2")
-    q, Es, Ss = si.signed_sqe(p, include_gain=True)
-    assert Ss.shape[0] == q.size and np.all(np.isfinite(Ss))
-    assert Es.min() < 0.0 < Es.max()                 # gain side reconstructed
-    m = el.from_endf_mf7mt2(ENDF, T_K=T)
     E = np.linspace(-30, 300, 331)
     for instr in (ins.VISION(),
                   ins.indirect(3.5, [92.0], bank_halfwidth_deg=10.0),
