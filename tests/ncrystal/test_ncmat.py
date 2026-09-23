@@ -9,6 +9,7 @@ import pytest
 from irma.ncrystal.ncmat import (
     lattice_to_cell_params,
     assemble_material_ncmat,
+    debye_msd,
     debye_temperature_from_msd,
 )
 
@@ -30,10 +31,14 @@ def test_lattice_to_cell_params_hexagonal():
     assert gamma == pytest.approx(120.0)
 
 
-def test_debye_temperature_reasonable():
-    # graphite C, MSD ~0.005 A^2 at 296 K -> ~hundreds-to-1000s K
-    theta = debye_temperature_from_msd(0.005, 12.011, 296.0)
-    assert 100.0 < theta < 5000.0
+def test_debye_temperature_round_trips_through_the_debye_msd():
+    for msd, mass, temp in ((0.005, 12.011, 296.0), (0.02, 1.008, 20.0),
+                            (0.0008, 207.2, 5.0)):
+        theta = debye_temperature_from_msd(msd, mass, temp)
+        assert debye_msd(theta, mass, temp) == pytest.approx(msd, rel=1e-10)
+    # NCrystal's debyeTempFromIsotropicMSD(0.005 A^2, 296 K, 12.011 amu)
+    assert debye_temperature_from_msd(0.005, 12.011, 296.0) == pytest.approx(
+        951.2698, rel=1e-6)
 
 
 def test_assemble_two_species():
