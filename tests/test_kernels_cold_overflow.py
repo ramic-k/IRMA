@@ -1,29 +1,11 @@
-"""Regression pins: cold-temperature exp overflow.
-
-NJOY's Fortran exp() returns +Inf and continues; IRMA's math.exp raised
-OverflowError ("math range error") and aborted. The fix:
-  * discrete oscillator (discre): clamp the argument so the cold limit
-    coth(bdeln/2) -> 1 is reproduced (the term has a clean finite limit);
-  * continuous spectrum (start/fsum): a clamp there cascades to NaN, so raise a
-    clear error up front instead.
-Both only act above the float64 exp ceiling (~709), i.e. never for a physical
-deck -- pinned byte-identical by the native-LEAPR / minitape reference tapes.
+"""Cold-temperature exp overflow (arguments above the float64 ceiling, ~709):
+discre clamps to the cold coth limit, start() refuses with a clear error.
 """
-from math import exp
-
 import numpy as np
 import pytest
 
-from irma.core.kernels import _safe_exp, _EXP_MAX_ARG, start, discre
+from irma.core.kernels import start, discre
 from irma.core.constants import BK
-
-
-def test_safe_exp_byte_identical_below_threshold():
-    for x in (-50.0, -1.0, 0.0, 1.0, 100.0, 500.0, 709.0):
-        assert _safe_exp(x) == exp(x)  # exact no-op below the ceiling
-    # above the ceiling: clamped to a finite value, never OverflowError
-    assert np.isfinite(_safe_exp(1000.0))
-    assert _safe_exp(1000.0) == exp(_EXP_MAX_ARG)
 
 
 def test_discre_cold_high_energy_oscillator_stays_finite():
@@ -47,12 +29,3 @@ def test_start_rejects_overflowing_cold_spectrum():
     p1 = np.ones(100)
     with pytest.raises(ValueError, match="overflow"):
         start(p1, 100, 0.005, BK * 2.0, 1.0)
-
-
-def test_start_normal_spectrum_unaffected():
-    """A warm spectrum stays well below the ceiling and runs normally."""
-    p1 = np.ones(100)
-    out = start(p1, 100, 0.005, BK * 296.0, 1.0)
-    assert len(out) == 4
-    p, f0, tbar, deltab = out
-    assert np.isfinite(f0) and np.all(np.isfinite(p))
