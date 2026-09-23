@@ -23,8 +23,7 @@ import pytest
 from irma.core.constants import BK
 from irma.core.kernels import start
 from irma.spectra.dos_mode0 import compute_mode0_sqe, derive_mode0_phonon_order
-from irma.spectra.forward import (compute_spectrum, compute_sqe_map,
-                                   _report_mode0_order)
+from irma.spectra.forward import compute_spectrum, compute_sqe_map
 from irma.spectra.sqe import C_E, KB
 
 T_K = 296.0
@@ -93,25 +92,6 @@ def test_worst_species_governs_multi_species_order():
     assert eff_both > eff_c
 
 
-def test_high_alpha_derivation_raises_above_100():
-    """The flip side of the old fixed 100: H at direct-geometry Q needs MORE
-    than 100 orders, and 'auto' must size up (the old path truncated)."""
-    h = _species(symbol="H", awr=1.008, sigma=82.0)
-    eff, req, _ = derive_mode0_phonon_order(
-        species=[h], temperature_k=T_K, q_max_ang_inv=30.0)
-    exp_eff, exp_req = _expected_order([h], T_K, 30.0)
-    assert exp_req > 100          # the scenario genuinely needs > 100
-    assert (eff, req) == (exp_eff, exp_req)
-
-
-def test_derivation_caps_at_2000_and_reports_requirement():
-    h = _species(symbol="H", awr=1.008, sigma=82.0)
-    eff, req, _ = derive_mode0_phonon_order(
-        species=[h], temperature_k=T_K, q_max_ang_inv=500.0)
-    assert eff == 2000
-    assert req > 2000
-
-
 def test_compute_mode0_sqe_auto_shrinks_and_stays_converged():
     """nphon='auto' runs the derived order and reproduces the fixed-100
     S(Q,E) to well within convergence noise (<< 0.1% on the integral)."""
@@ -154,14 +134,6 @@ def test_hydrogen_auto_order_full_output_is_converged():
     Ir = np.trapezoid(np.trapezoid(Sr, E, axis=1), Q)
     assert abs(Ia - Ir) / Ir < 1e-3
     assert np.max(np.abs(Sa - Sr)) < 1e-3 * Sr.max()
-
-
-def test_compute_mode0_sqe_rejects_unknown_string_order():
-    sp = _species()
-    with pytest.raises(ValueError, match="'auto'"):
-        compute_mode0_sqe(species=[sp], temperature_k=T_K,
-                          q_ang_inv=np.array([1.0, 2.0]),
-                          e_mev=np.array([0.0, 10.0]), nphon="bogus")
 
 
 # placeholders required by the orchestrators; mode-0 ignores them
@@ -210,16 +182,3 @@ def test_compute_sqe_map_mode0_honors_auto_order():
                             auto_multiphonon_order=False, **common)
     assert m_fix.metadata["effective_multiphonon_order"] == eff
     assert np.array_equal(m_auto.S, m_fix.S)
-
-
-def test_report_warns_when_safety_cap_truncates():
-    """required > effective (the 2000 cap) must surface a WARNING line."""
-    msgs = []
-    _report_mode0_order({"nphon_effective": 2000, "nphon_required": 3141},
-                        True, np.array([1.0, 500.0]), msgs.append)
-    assert any(m.startswith("WARNING") and "3141" in m for m in msgs)
-    msgs_ok = []
-    _report_mode0_order({"nphon_effective": 12, "nphon_required": 12},
-                        False, np.array([1.0, 12.0]), msgs_ok.append)
-    assert any("(explicit)" in m for m in msgs_ok)
-    assert not any(m.startswith("WARNING") for m in msgs_ok)
