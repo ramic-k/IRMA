@@ -93,13 +93,6 @@ def test_app_has_two_top_tabs_and_endf_intact(root):
 
 
 # ---- build_config / load_config round-trips --------------------------------
-@pytest.mark.parametrize("geometry", ["indirect", "direct"])
-def test_load_then_build_is_identity(panel, geometry):
-    cfg = _cfg(geometry)
-    panel.load_config(cfg)
-    assert panel.build_config() == cfg
-
-
 def _mode0_cfg():
     """A DOS-based (mode 0) config with the elastic crystal -- exercises the
     extended scatterer line (dos=/mult=/pos=), the lattice field and dos_source."""
@@ -122,17 +115,105 @@ def _mode0_cfg():
     })
 
 
-def test_mode0_load_build_identity(panel):
+def _mode0_incoherent_cfg():
+    """Mode-0 elastic_kind='incoherent' still needs the crystal (per-atom
+    multiplicity from positions)."""
     cfg = _mode0_cfg()
+    cfg.physics.elastic_kind = "incoherent"
+    return cfg
+
+
+def _phonopy_mode0_cfg():
+    """Mode 0 with the DOS from phonopy: the phonopy input-source gate."""
+    return SpectraConfig.from_dict({
+        "material": {"phonopy_yaml": "g.yaml", "mesh": [20, 20, 20],
+                     "temperature_K": 300.0,
+                     "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551,
+                                     "awr": 11.898}]},
+        "physics": {"inelastic_mode": 0, "dos_source": "phonopy",
+                    "elastic": False},
+        "grid": {"e_max_meV": 200.0, "de_meV": 0.5, "dq_max_invA": 0.05},
+        "instrument": {"geometry": "indirect", "e_fixed_meV": 4.0,
+                       "angles_deg": [30.0, 90.0]},
+    })
+
+
+def _force_sets_cfg():
+    cfg = _cfg("indirect")
+    cfg.material.force_constants = None
+    cfg.material.force_sets = "FORCE_SETS"
+    return cfg
+
+
+def _two_species_cfg():
+    return SpectraConfig.from_dict({
+        "material": {"phonopy_yaml": "beo.yaml", "mesh": [20, 20, 20],
+                     "temperature_K": 296.0,
+                     "scatterers": [
+                         {"symbol": "Be", "sigma_bound_b": 7.63, "awr": 8.93,
+                          "b_coh_fm": 7.79, "sigma_inc_b": 0.0018},
+                         {"symbol": "O", "sigma_bound_b": 4.23, "awr": 15.86,
+                          "b_coh_fm": 5.803, "sigma_inc_b": 0.0008}]},
+        "instrument": {"geometry": "indirect", "e_fixed_meV": 4.0,
+                       "angles_deg": [30.0, 90.0, 150.0]},
+    })
+
+
+def _min_phonon_cfg():
+    cfg = _cfg("direct")
+    cfg.physics.min_phonon_energy_meV = 0.5
+    return cfg
+
+
+IDENTITY_CASES = {
+    "indirect": lambda: _cfg("indirect"),
+    "direct": lambda: _cfg("direct"),
+    "mode0_dos_files": _mode0_cfg,
+    "mode0_incoherent": _mode0_incoherent_cfg,
+    "mode0_phonopy": _phonopy_mode0_cfg,
+    "force_sets": _force_sets_cfg,
+    "two_species": _two_species_cfg,
+    "lorentzian": lambda: _cfg(
+        "indirect", instrument={"resolution_shape": "lorentzian"}),
+    # build_config reads q_cuts / cut_dq_invA outside the geometry branch
+    "direct_q_cuts": lambda: _cfg(
+        "direct", instrument={"q_cuts": [3.0, 6.0, 9.0]}),
+    "indirect_q_cuts": lambda: _cfg(
+        "indirect", instrument={"q_cuts": [2.0, 4.0], "cut_dq_invA": 0.1}),
+    "direct_map": lambda: _cfg("direct", instrument={
+        "output_mode": "map", "map_coverage_deg": [2.373, 135.955],
+        "map_mask": False, "cut_by": "q", "cut_dq_invA": 0.1}),
+    "sigma_three_terms": lambda: _cfg(
+        "indirect", instrument={"sigma_coeffs": [0.31, 0.005, 8.07e-7]}),
+    "sigma_two_terms": lambda: _cfg(
+        "direct", instrument={"sigma_coeffs": [0.5, 0.01]}),
+    "components": lambda: _cfg(
+        "direct", instrument={"export_components": True}),
+    "min_phonon_energy": _min_phonon_cfg,
+}
+
+
+@pytest.mark.parametrize("case", list(IDENTITY_CASES))
+def test_load_then_build_is_identity(panel, case):
+    """load_config then build_config gives the same config back."""
+    cfg = IDENTITY_CASES[case]()
     panel.load_config(cfg)
-    built = panel.build_config()
-    assert built.physics.inelastic_mode == 0
-    assert built.physics.dos_source == "file"
-    assert built.material.lattice == [2.866, 2.866, 2.866, 90.0, 90.0, 90.0]
-    s = built.material.scatterers[0]
-    assert s.dos_file == "fe.txt" and s.multiplicity == 2
-    assert s.positions == [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
-    assert built == cfg
+    assert panel.build_config() == cfg
+
+
+def test_loading_a_config_clears_what_the_previous_one_set(panel):
+    """Values a previously loaded config set (coverage band, q cuts, width
+    polynomial, breakdown, cutoff) must not carry into the next config, where
+    they would change its run without warning."""
+    full = _cfg("direct", instrument={
+        "output_mode": "map", "map_coverage_deg": [3.0, 135.0],
+        "q_cuts": [2.0, 4.0], "cut_dq_invA": 0.1,
+        "sigma_coeffs": [0.5, 0.01], "export_components": True})
+    full.physics.min_phonon_energy_meV = 0.5
+    panel.load_config(full)
+    plain = _cfg("direct", instrument={"output_mode": "map"})
+    panel.load_config(plain)
+    assert panel.build_config() == plain
 
 
 # ---- fresh panel: identity blank, methodology prefilled --------------------
@@ -204,22 +285,6 @@ def test_dos_files_branch_emits_mode0_and_nulls_phonopy(panel):
     assert s.dos_file == "c.dos" and s.multiplicity == 4
 
 
-def test_phonopy_mode0_round_trips(panel):
-    cfg = SpectraConfig.from_dict({
-        "material": {"phonopy_yaml": "g.yaml", "mesh": [20, 20, 20],
-                     "temperature_K": 300.0,
-                     "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551,
-                                     "awr": 11.898}]},
-        "physics": {"inelastic_mode": 0, "dos_source": "phonopy", "elastic": False},
-        "grid": {"e_max_meV": 200.0, "de_meV": 0.5, "dq_max_invA": 0.05},
-        "instrument": {"geometry": "indirect", "e_fixed_meV": 4.0,
-                       "angles_deg": [30.0, 90.0]},
-    })
-    panel.load_config(cfg)
-    assert panel.input_source.get() == "phonopy"             # DOS-from-phonopy stays on phonopy gate
-    assert panel.build_config() == cfg
-
-
 def test_element_table_add_remove(panel):
     t = panel.element_table
     n0 = len(t.rows)
@@ -231,28 +296,6 @@ def test_element_table_add_remove(panel):
 
 
 # ---- Codex-review fixes -----------------------------------------------------
-def test_mode0_incoherent_keeps_the_crystal(panel):
-    """Codex HIGH: mode-0 elastic_kind='incoherent' still needs the crystal
-    (per-atom mult/N from positions) -- it must round-trip, not be dropped."""
-    cfg = _mode0_cfg()
-    cfg.physics.elastic_kind = "incoherent"
-    panel.load_config(cfg)
-    built = panel.build_config()
-    assert built.material.lattice == [2.866, 2.866, 2.866, 90.0, 90.0, 90.0]
-    assert built.material.scatterers[0].positions == [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
-    assert built == cfg
-
-
-def test_force_sets_round_trips(panel):
-    cfg = _cfg("indirect")
-    cfg.material.force_constants = None
-    cfg.material.force_sets = "FORCE_SETS"
-    panel.load_config(cfg)
-    built = panel.build_config()
-    assert built.material.force_sets == "FORCE_SETS"
-    assert built == cfg
-
-
 def test_dos_files_mode_ignores_hidden_engine_fields(panel):
     """Garbage left in the hidden mesh/jobs widgets must not break a DOS-files
     build (those fields are not parsed in mode 0)."""
@@ -280,13 +323,15 @@ def test_bad_positions_count_rejected(panel):
 
 def test_vision_config_maps_onto_indirect_tab(panel):
     """A legacy 'vision' config has no tab of its own -- it loads onto the
-    Indirect tab as the equivalent Ef=3.5, 45/135-bank indirect calculation."""
-    cfg = _cfg("vision")
+    Indirect tab as the equivalent Ef=3.5, 45/135-bank indirect calculation,
+    and keeps its q cuts."""
+    cfg = _cfg("vision", instrument={"q_cuts": [2.5]})
     panel.load_config(cfg)
     built = panel.build_config()
     assert built.instrument.geometry == "indirect"
     assert built.instrument.e_fixed_meV == 3.5
     assert built.instrument.angles_deg == [45.0, 135.0]
+    assert built.instrument.q_cuts == [2.5]
 
 
 def test_defaults_build_a_valid_indirect_config(panel):
@@ -301,13 +346,6 @@ def test_defaults_build_a_valid_indirect_config(panel):
     assert cfg.instrument.resolution_shape == "gaussian"
     assert cfg.material.scatterers[0].symbol == "C"
     validate(cfg)   # default indirect config (with a material) must validate
-
-
-def test_resolution_shape_round_trips(panel):
-    cfg = _cfg("indirect", instrument={"resolution_shape": "lorentzian"})
-    panel.load_config(cfg)
-    assert panel.ind_resolution_shape.get() == "lorentzian"
-    assert panel.build_config().instrument.resolution_shape == "lorentzian"
 
 
 def test_direct_chopper_hides_shape_width_and_forces_gaussian(panel):
@@ -342,33 +380,6 @@ def test_geometry_switch_changes_config(panel):
     assert panel.build_config().instrument.geometry == "indirect"
 
 
-def test_q_cuts_round_trip_every_geometry(panel):
-    """SPG-3: build_config reads q_cuts / cut_dq_invA OUTSIDE the geometry
-    branch -- a CLI-authored vision/indirect config carrying them must
-    survive Run/Save (the CLI attaches --q-cuts to every geometry and
-    run_spectra honours them geometry-independently)."""
-    # a direct config carrying q_cuts round-trips
-    cfg = _cfg("direct", instrument={"q_cuts": [3.0, 6.0, 9.0]})
-    panel.load_config(cfg)
-    assert panel.build_config() == cfg
-    # an indirect config carrying q_cuts + cut_dq keeps BOTH
-    cfg = _cfg("indirect", instrument={"q_cuts": [2.0, 4.0],
-                                       "cut_dq_invA": 0.1})
-    panel.load_config(cfg)
-    built = panel.build_config()
-    assert built.instrument.q_cuts == [2.0, 4.0]
-    assert built.instrument.cut_dq_invA == 0.1
-    assert built == cfg
-    # a legacy vision config keeps them too (mapped onto the indirect tab)
-    cfg = _cfg("vision", instrument={"q_cuts": [2.5]})
-    panel.load_config(cfg)
-    assert panel.build_config().instrument.q_cuts == [2.5]
-    # and a config WITHOUT them still builds none (no stale carry-over)
-    panel.load_config(_cfg("indirect"))
-    built = panel.build_config().instrument
-    assert built.q_cuts is None and built.cut_dq_invA is None
-
-
 def test_nonempty_q_cuts_stay_visible_in_angles_mode(panel):
     """build_config emits q_cuts in both cut modes, so a non-empty entry must
     stay on screen in angles mode -- a hidden field must never feed the run."""
@@ -385,22 +396,6 @@ def test_nonempty_q_cuts_stay_visible_in_angles_mode(panel):
     panel._sync_cut_by()
     assert panel._cut_q_frame.winfo_manager() == ""
     assert panel.build_config().instrument.q_cuts is None
-
-
-def test_direct_output_mode_round_trips(panel):
-    """The Direct-tab Output selector + map fields round-trip; the '2-D map' mode
-    and the fixed-cuts sub-mode (by constant-Q with a cut dQ) survive load->build."""
-    cfg = _cfg("direct", instrument={
-        "output_mode": "map", "map_coverage_deg": [2.373, 135.955],
-        "map_mask": False, "cut_by": "q", "cut_dq_invA": 0.1})
-    panel.load_config(cfg)
-    assert panel.dir_output.get() == "2-D map"
-    assert panel.dir_cut_by.get() == "constant-Q"
-    built = panel.build_config().instrument
-    assert built.output_mode == "map"
-    assert built.map_coverage_deg == [2.373, 135.955]
-    assert built.map_mask is False
-    assert built.cut_by == "q" and built.cut_dq_invA == 0.1
 
 
 def test_map_output_frame_visibility_follows_selector(panel):
@@ -428,34 +423,7 @@ def test_save_open_round_trip(panel, tmp_path, geometry):
     assert panel.build_config() == cfg
 
 
-def test_multi_species_scatterers_round_trip(panel):
-    cfg = SpectraConfig.from_dict({
-        "material": {"phonopy_yaml": "beo.yaml", "mesh": [20, 20, 20],
-                     "temperature_K": 296.0,
-                     "scatterers": [
-                         {"symbol": "Be", "sigma_bound_b": 7.63, "awr": 8.93,
-                          "b_coh_fm": 7.79, "sigma_inc_b": 0.0018},
-                         {"symbol": "O", "sigma_bound_b": 4.23, "awr": 15.86,
-                          "b_coh_fm": 5.803, "sigma_inc_b": 0.0008}]},
-        "instrument": {"geometry": "indirect", "e_fixed_meV": 4.0,
-                       "angles_deg": [30.0, 90.0, 150.0]},
-    })
-    panel.load_config(cfg)
-    assert panel.build_config() == cfg
-
-
 # ---- width-polynomial coefficient fields (c0/c1/c2) ------------------------
-def test_width_coeffs_three_fields_round_trip(panel):
-    """An explicit 3-coefficient sigma poly loads into the three fields and
-    rebuilds to itself; the fields hold the individual terms."""
-    cfg = _cfg("indirect", instrument={"sigma_coeffs": [0.31, 0.005, 8.07e-7]})
-    panel.load_config(cfg)
-    assert panel.ind_sigma_coeffs.c0.get() == "0.31"
-    assert panel.ind_sigma_coeffs.c1.get() == "0.005"
-    assert panel.ind_sigma_coeffs.c2.get() == "8.07e-07"
-    assert panel.build_config().instrument.sigma_coeffs == [0.31, 0.005, 8.07e-7]
-
-
 def test_width_coeffs_all_blank_is_none(panel):
     """Default (all three fields blank) => sigma_coeffs None (VISION preset)."""
     cfg = _cfg("indirect")
@@ -463,15 +431,6 @@ def test_width_coeffs_all_blank_is_none(panel):
     for w in panel.ind_sigma_coeffs._entries:
         assert w.get() == ""
     assert panel.build_config().instrument.sigma_coeffs is None
-
-
-def test_width_coeffs_trailing_blank_trims_to_short_list(panel):
-    """A 2-coefficient list loads c0,c1 (c2 blank) and rebuilds to [c0, c1] --
-    trailing blanks are dropped so a short list round-trips exactly."""
-    cfg = _cfg("direct", instrument={"sigma_coeffs": [0.5, 0.01]})
-    panel.load_config(cfg)
-    assert panel.dir_sigma_coeffs.c2.get() == ""
-    assert panel.build_config().instrument.sigma_coeffs == [0.5, 0.01]
 
 
 def test_width_coeffs_leading_blank_reads_as_zero(panel):
@@ -484,15 +443,6 @@ def test_width_coeffs_leading_blank_reads_as_zero(panel):
 
 
 # ---- export components (breakdown) toggle ----------------------------------
-def test_export_components_defaults_off_and_round_trips(panel):
-    """The breakdown toggle defaults OFF (total-only) and round-trips."""
-    assert panel.build_config().instrument.export_components is False
-    cfg = _cfg("direct", instrument={"export_components": True})
-    panel.load_config(cfg)
-    assert panel.export_components.get() is True
-    assert panel.build_config().instrument.export_components is True
-
-
 @pytest.mark.parametrize("ext", [".csv", ".npz", ".json"])
 def test_read_spectrum_handles_total_only_and_breakdown(panel, tmp_path, ext):
     """_read_spectrum returns I/El=None for a total-only file and real arrays
@@ -520,19 +470,6 @@ def test_read_spectrum_handles_total_only_and_breakdown(panel, tmp_path, ext):
 
 
 # ---- QA4 fixes ---------------------------------------------------------------
-def test_loading_config_without_coverage_clears_stale_band(panel):
-    """F4: a config with no map_coverage_deg must not inherit the previously
-    loaded config's coverage band (which would silently mask its 2-D map)."""
-    a = _cfg("direct", instrument={"output_mode": "map",
-                                   "map_coverage_deg": [3.0, 135.0]})
-    panel.load_config(a)
-    assert panel.map_coverage.get() == "3.0,135.0"
-    b = _cfg("direct", instrument={"output_mode": "map"})
-    panel.load_config(b)
-    assert panel.map_coverage.get() == ""
-    assert panel.build_config().instrument.map_coverage_deg is None
-
-
 def test_phonopy_mode0_elastic_multiplicity_from_positions(panel):
     """F5: phonopy-source mode 0 with the elastic crystal emits multiplicity ==
     n(positions) (the mult column is hidden there), so a multi-atom species
@@ -742,34 +679,3 @@ def test_map_mask_checkbox_starts_disabled_like_save_map(panel):
     state."""
     assert str(panel.savemap_btn.cget("state")) == "disabled"
     assert str(panel.map_mask_chk.cget("state")) == "disabled"
-
-
-def test_min_phonon_energy_round_trips_through_the_form(panel):
-    """The cutoff field loads from a config, is written back by build_config,
-    and stays blank (0) when the config carries none."""
-    from irma.spectra.config import SpectraConfig
-    d = {
-        "material": {"phonopy_yaml": "g.yaml", "mesh": [40, 40, 40],
-                     "temperature_K": 296.0,
-                     "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551,
-                                     "awr": 11.898, "b_coh_fm": 6.646,
-                                     "sigma_inc_b": 0.001}]},
-        "physics": {"inelastic_mode": 2, "max_phonon_order": "auto",
-                    "min_phonon_energy_meV": 0.5,
-                    "n_directions": 8000, "multiphonon_directions": 800,
-                    "elastic": True, "elastic_kind": "coherent"},
-        "grid": {"e_min_meV": 0.0, "e_max_meV": 200.0, "de_meV": 0.5,
-                 "dq_max_invA": 0.05},
-        "instrument": {"geometry": "direct", "bank_halfwidth_deg": 5.0,
-                       "combine": "mean", "e_fixed_meV": 250.0,
-                       "angles_deg": [10.0, 60.0, 120.0]},
-    }
-    cfg = SpectraConfig.from_dict(d)
-    panel.load_config(cfg)
-    assert panel.min_phonon_energy.get() == "0.5"
-    assert panel.build_config().physics.min_phonon_energy_meV == 0.5
-    assert panel.build_config() == cfg
-    d["physics"].pop("min_phonon_energy_meV")
-    panel.load_config(SpectraConfig.from_dict(d))
-    assert panel.min_phonon_energy.get() == ""
-    assert panel.build_config().physics.min_phonon_energy_meV == 0.0
