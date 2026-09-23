@@ -75,6 +75,30 @@ def debye_temperature_from_msd(msd_a2: float, mass_amu: float,
     return float(math.sqrt(lo * hi))
 
 
+def check_ncrystal_lattice(lattice_ang) -> None:
+    """Refuse a cell whose reciprocal lattice NCrystal 4.4.6 gets wrong.
+
+    NCrystal's general lattice branch (NCLatticeUtils.cc:75-78) stores
+    ``c (cos alpha - cos beta cos gamma) / sin gamma`` in a matrix element that
+    should be zero, so every Bragg plane it builds is misplaced whenever that
+    term is nonzero. Cells with alpha = beta = 90 or alpha = gamma = 90 degrees
+    (orthorhombic, tetragonal, hexagonal, monoclinic) are unaffected. Remove this
+    check once NCrystal is fixed.
+    """
+    a, b, c, alpha, beta, gamma = lattice_to_cell_params(lattice_ang)
+    ca, cb, cg = (math.cos(math.radians(x)) for x in (alpha, beta, gamma))
+    if abs(ca - cb * cg) > 1e-9:
+        raise ValueError(
+            f"the phonopy primitive cell (a, b, c = {a:.6g}, {b:.6g}, {c:.6g} A; "
+            f"alpha, beta, gamma = {alpha:.6g}, {beta:.6g}, {gamma:.6g} deg) has "
+            f"cos(alpha) - cos(beta) cos(gamma) = {ca - cb * cg:.3g}, and NCrystal "
+            "4.4.6 builds a wrong reciprocal lattice for such cells (a bug in its "
+            "general lattice branch, NCLatticeUtils.cc:75-78). Build the phonon "
+            "model on a cell with alpha = beta = 90 or alpha = gamma = 90 degrees, "
+            "for example the conventional cell instead of an FCC or BCC primitive "
+            "cell.")
+
+
 def _fmt(value: float) -> str:
     """Format a float for NCMAT output (12 significant digits)."""
     return f"{float(value):.12g}"
@@ -103,6 +127,7 @@ def assemble_material_ncmat(
     pack's and does not interpolate.
     """
     positions = np.asarray(scaled_positions, float).reshape(len(symbols), 3)
+    check_ncrystal_lattice(lattice_ang)
     a, b, c, alpha, beta, gamma = lattice_to_cell_params(lattice_ang)
 
     lines = ["NCMAT v5"]

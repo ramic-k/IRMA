@@ -24,7 +24,7 @@ from irma.core.grids import (
     grid_reference_temperature_K)
 from .config import NCrystalExportConfig
 from .convert import pack_from_irma_sab
-from .ncmat import assemble_material_ncmat
+from .ncmat import assemble_material_ncmat, check_ncrystal_lattice
 from .pack import IRMAPack, write_pack
 from .provenance import collect_provenance
 
@@ -170,7 +170,8 @@ def resolve_principal_groups(cfg: NCrystalExportConfig):
     symbols)``. Every structure species needs a ``material.scatterers`` row and
     every row a structure species."""
     mat = cfg.material
-    symbols, masses, _positions, _lattice = load_primitive_info(mat.phonopy_yaml)
+    symbols, masses, _positions, lattice = load_primitive_info(mat.phonopy_yaml)
+    check_ncrystal_lattice(lattice)       # before the bake, not after it
     site_groups = site_groups_by_species(symbols)
     by_symbol = {s.symbol: s for s in mat.scatterers}
     extra = sorted(set(by_symbol) - set(symbols))
