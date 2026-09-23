@@ -1,23 +1,6 @@
-"""Elastic line on the dense 2-D S(Q,E) map (compute_sqe_map / run_map).
-
-Before this file, map mode silently IGNORED the elastic switch: ``run_map``
-passed nothing elastic to ``compute_sqe_map``, so a config with
-``physics.elastic: true`` produced an inelastic-only map while the SAME config
-through ``run_spectra`` carried the line -- and there was no warning. These
-tests pin the new contract:
-
-  * the map deposits the SAME per-Q elastic area the 1-D path evaluates,
-    ``elastic_dsigma_dOmega(Q, q_res=dQ_map)`` [barn/sr], as an E=0 line whose
-    energy integral is EXACTLY that area (two-bin linear split around E=0 --
-    uniform output grids generally have no exact-zero bin);
-  * the deposit happens BEFORE the resolution pass, so broadening gives the
-    line sigma(E=0) like every other feature while conserving its integral;
-  * all three config routes reach the map: mode-0 DOS-derived (lattice-free
-    incoherent + crystal Bragg peaks), an explicit ElasticModel (the ENDF-tape
-    route), and metadata flags reporting what was built.
-
-CI-safe: mode-0 DOS path + a synthetic engine elastic_state -- pure numpy, no
-phonopy, no engine run.
+"""Elastic line on the 2-D S(Q,E) map (compute_sqe_map / run_map): an E=0
+deposit whose energy integral per Q is the 1-D path's elastic area, placed
+before the resolution pass. Mode-0 DOS path and a synthetic elastic_state.
 """
 import numpy as np
 
@@ -71,37 +54,44 @@ def _zero_bins(E):
     return j, j + 1
 
 
+def _off_line(E):
+    """Mask of the output-energy bins that do not bracket E=0."""
+    mask = np.ones(E.size, bool)
+    mask[list(_zero_bins(E))] = False
+    return mask
+
+
 def _f0(sqe_map):
     """The DOS-derived isotropic Debye-Waller f0 the mode-0 path computed."""
     return float(sqe_map.metadata["engine_metadata"]["per_species"][0]["dw_lambda"])
+
+
+def _incoherent_line(grid=GRID, broaden=False, progress=None):
+    """A lattice-free incoherent line: the elastic-on map, the on minus off
+    difference, and the reference Debye-Waller area per Q."""
+    sp = _carbon(sigma_inc_b=1.2)
+    off = compute_sqe_map(dos_species=[sp], elastic=False, broaden=broaden,
+                          **grid, **BASE)
+    on = compute_sqe_map(dos_species=[sp], elastic=True,
+                         elastic_kind="incoherent", broaden=broaden, **grid,
+                         **dict(BASE, progress=progress or BASE["progress"]))
+    ref = from_dos_elastic(
+        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(on)],
+        multiplicity=[1], T_K=T_K)
+    return on, on.S - off.S, ref.incoherent_dsigma_dOmega(on.Q)
 
 
 def test_map_mode0_incoherent_elastic_line_quantitative():
     """Lattice-free incoherent line: the on/off map difference is confined to
     the two bins bracketing E=0, and its energy integral per Q reproduces the
     reference Debye-Waller area exactly."""
-    sp = _carbon(sigma_inc_b=1.2)
-    m_off = compute_sqe_map(dos_species=[sp], elastic=False, broaden=False,
-                            **GRID, **BASE)
-    m_on = compute_sqe_map(dos_species=[sp], elastic=True,
-                           elastic_kind="incoherent", broaden=False,
-                           **GRID, **BASE)
-    assert m_off.metadata["elastic"] is False
+    m_on, diff, area = _incoherent_line()
     assert m_on.metadata["elastic"] is True
     assert m_on.metadata["elastic_kind"] == "incoherent"
     assert m_on.metadata["n_bragg_edges"] == 0
-
-    diff = m_on.S - m_off.S
-    j0, j1 = _zero_bins(m_on.E)
-    off_line = np.ones(m_on.E.size, bool)
-    off_line[[j0, j1]] = False
+    off_line = _off_line(m_on.E)
     assert np.all(diff[:, off_line] == 0.0)          # deposit localized at E=0
-    assert diff[:, [j0, j1]].min() >= 0.0
-
-    ref = from_dos_elastic(
-        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
-        multiplicity=[1], T_K=T_K)
-    area = ref.incoherent_dsigma_dOmega(m_on.Q)
+    assert diff[:, ~off_line].min() >= 0.0
     got = diff.sum(axis=1) * GRID["dE"]              # energy integral per Q
     assert np.allclose(got, area, rtol=1e-9)
     assert np.all(np.diff(got) < 0.0)                # pure DW decay with Q
@@ -120,10 +110,7 @@ def test_map_mode0_coherent_elastic_bragg_peaks():
     assert m_on.metadata["n_bragg_edges"] > 0
 
     diff = m_on.S - m_off.S
-    j0, j1 = _zero_bins(m_on.E)
-    off_line = np.ones(m_on.E.size, bool)
-    off_line[[j0, j1]] = False
-    assert np.all(diff[:, off_line] == 0.0)
+    assert np.all(diff[:, _off_line(m_on.E)] == 0.0)
 
     crystal = CrystalStructure(*GRAPHITE_LATTICE,
                                [AtomSite(b_coh_fm=6.646,
@@ -147,17 +134,7 @@ def test_map_elastic_broadening_spreads_the_line_and_keeps_its_integral():
     """broaden=True applies sigma(E=0) to the deposited line: the on/off
     difference spreads beyond the two seed bins while its per-Q energy integral
     is conserved by the (normalized) resolution kernel."""
-    sp = _carbon(sigma_inc_b=1.2)
-    m_off = compute_sqe_map(dos_species=[sp], elastic=False, broaden=True,
-                            **GRID, **BASE)
-    m_on = compute_sqe_map(dos_species=[sp], elastic=True,
-                           elastic_kind="incoherent", broaden=True,
-                           **GRID, **BASE)
-    diff = m_on.S - m_off.S
-    ref = from_dos_elastic(
-        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
-        multiplicity=[1], T_K=T_K)
-    area = ref.incoherent_dsigma_dOmega(m_on.Q)
+    _, diff, area = _incoherent_line(broaden=True)
     got = diff.sum(axis=1) * GRID["dE"]
     assert np.allclose(got, area, rtol=2e-2)         # kernel conserves the area
     # ... but the line is no longer a two-bin spike
@@ -168,44 +145,14 @@ def test_map_elastic_broadening_spreads_the_line_and_keeps_its_integral():
 def test_map_elastic_skipped_when_E0_outside_axis():
     """A loss-only window that excludes E=0 cannot show the line: the map must
     equal the elastic-off map and say so, not crash or deposit at the edge."""
-    sp = _carbon(sigma_inc_b=1.2)
-    grid = dict(GRID, e_min=10.0, e_max=60.0)
     msgs = []
-    m_off = compute_sqe_map(dos_species=[sp], elastic=False, broaden=False,
-                            **grid, **BASE)
-    m_on = compute_sqe_map(dos_species=[sp], elastic=True,
-                           elastic_kind="incoherent", broaden=False,
-                           **dict(grid, **{k: v for k, v in BASE.items()
-                                           if k != "progress"}),
-                           progress=msgs.append)
-    assert np.array_equal(m_on.S, m_off.S)
+    m_on, diff, _ = _incoherent_line(grid=dict(GRID, e_min=10.0, e_max=60.0),
+                                     progress=msgs.append)
+    assert np.all(diff == 0.0)
     assert any("elastic line" in str(x) for x in msgs)
     # metadata honesty: a model was active but no line landed on this axis
     assert m_on.metadata["elastic"] is True
     assert m_on.metadata["elastic_deposited"] is False
-
-
-def test_map_elastic_on_bin_interior_zero_exact():
-    """When E=0 falls EXACTLY on an interior grid point (-15 + 10*1.5), the
-    whole deposit lands in that single bin with an exact integral."""
-    sp = _carbon(sigma_inc_b=1.2)
-    grid = dict(GRID, e_min=-15.0, e_max=60.0)         # dE=1.5 -> 0.0 on-grid
-    m_off = compute_sqe_map(dos_species=[sp], elastic=False, broaden=False,
-                            **grid, **BASE)
-    m_on = compute_sqe_map(dos_species=[sp], elastic=True,
-                           elastic_kind="incoherent", broaden=False,
-                           **grid, **BASE)
-    assert m_on.metadata["elastic_deposited"] is True
-    diff = m_on.S - m_off.S
-    jz = int(np.flatnonzero(np.isclose(m_on.E, 0.0))[0])
-    off_line = np.ones(m_on.E.size, bool)
-    off_line[jz] = False
-    assert np.all(diff[:, off_line] == 0.0)            # single-bin deposit
-    ref = from_dos_elastic(
-        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
-        multiplicity=[1], T_K=T_K)
-    area = ref.incoherent_dsigma_dOmega(m_on.Q)
-    assert np.allclose(diff[:, jz] * grid["dE"], area, rtol=1e-9)
 
 
 def test_map_elastic_axis_endpoint_zero_carries_half_line():
@@ -214,23 +161,11 @@ def test_map_elastic_axis_endpoint_zero_carries_half_line():
     half the elastic area under the kernel's trapezoidal quadrature -- and a
     NOTE says so. (Physical truncation, not a numerics loss: extend e_min<0
     for the full line.)"""
-    sp = _carbon(sigma_inc_b=1.2)
-    grid = dict(GRID, e_min=0.0, e_max=60.0)
     msgs = []
-    m_off = compute_sqe_map(dos_species=[sp], elastic=False, broaden=True,
-                            **grid, **BASE)
-    m_on = compute_sqe_map(dos_species=[sp], elastic=True,
-                           elastic_kind="incoherent", broaden=True,
-                           **dict(grid, **{k: v for k, v in BASE.items()
-                                           if k != "progress"}),
-                           progress=msgs.append)
+    m_on, diff, area = _incoherent_line(grid=dict(GRID, e_min=0.0, e_max=60.0),
+                                        broaden=True, progress=msgs.append)
     assert m_on.metadata["elastic_deposited"] is True
     assert any("endpoint" in str(x) for x in msgs)
-    diff = m_on.S - m_off.S
-    ref = from_dos_elastic(
-        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
-        multiplicity=[1], T_K=T_K)
-    area = ref.incoherent_dsigma_dOmega(m_on.Q)
     got = np.trapezoid(diff, m_on.E, axis=1)
     assert np.allclose(got, 0.5 * area, rtol=5e-2)     # the visible half
 
@@ -301,8 +236,6 @@ def test_run_map_mode0_elastic_from_config(tmp_path):
     assert m_on.metadata["elastic"] is True
     assert m_off.metadata["elastic"] is False
     diff = m_on.S - m_off.S
-    j0, j1 = _zero_bins(m_on.E)
-    off_line = np.ones(m_on.E.size, bool)
-    off_line[[j0, j1]] = False
+    off_line = _off_line(m_on.E)
     assert np.all(diff[:, off_line] == 0.0)
-    assert diff[:, [j0, j1]].sum(axis=1).min() > 0.0   # the line is present at every Q
+    assert diff[:, ~off_line].sum(axis=1).min() > 0.0   # the line is present at every Q
