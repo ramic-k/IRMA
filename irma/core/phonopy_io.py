@@ -58,8 +58,8 @@ def openmp_unpinned_serial_setup():
         yield
 
 
-def _open_phonopy_yaml(phonopy_yaml_path, **kwargs):
-    """Open a (possibly compressed) phonopy.yaml as text."""
+def _open_phonopy_yaml(phonopy_yaml_path, mode="rt"):
+    """Open a (possibly compressed) phonopy.yaml, as text by default."""
     import bz2
     import gzip
     import lzma
@@ -69,7 +69,7 @@ def _open_phonopy_yaml(phonopy_yaml_path, **kwargs):
     ext = os.path.splitext(path)[1].lower()
     opener = {".gz": gzip.open, ".xz": lzma.open, ".lzma": lzma.open,
               ".bz2": bz2.open}.get(ext, open)
-    return opener(path, "rt", **kwargs)
+    return opener(path, mode)
 
 
 def _phonopy_yaml_has_top_level_key(phonopy_yaml_path, keys) -> bool:
@@ -84,19 +84,27 @@ def _phonopy_yaml_has_top_level_key(phonopy_yaml_path, keys) -> bool:
 
 
 def reject_unsafe_phonopy_yaml(phonopy_yaml_path) -> None:
-    """Reject a phonopy.yaml with python YAML tags before phonopy parses it.
+    """Reject a phonopy.yaml that could execute code in phonopy's loader.
 
-    phonopy uses PyYAML's unsafe loader, so '!!python/' tags (or a %TAG
-    directive aliasing them) execute code; call this before any phonopy.load.
+    phonopy parses with PyYAML's unsafe loader, where a python tag executes
+    code. phonopy writes UTF-8 with no tags and no directives, so this
+    refuses any '!!' or '!<' tag (every global tag starts with one, whatever
+    %-escapes follow), any %TAG directive, and a UTF-16 byte-order mark,
+    which would hide the text from this scan. Call it before any phonopy.load.
     """
     path = str(phonopy_yaml_path)
-    with _open_phonopy_yaml(path, errors="replace") as f:
+    with _open_phonopy_yaml(path, "rb") as f:
         for lineno, line in enumerate(f, 1):
-            if ("!!python/" in line or "tag:yaml.org,2002:python" in line
-                    or line.startswith("%TAG")):
+            if lineno == 1 and line.startswith((b"\xff\xfe", b"\xfe\xff")):
                 raise ValueError(
-                    f"{path}:{lineno}: refusing to parse: unsafe YAML tag "
-                    f"(!!python/ or %TAG) that phonopy's loader would execute")
+                    f"{path}: refusing to parse: a UTF-16 file (phonopy "
+                    f"writes UTF-8)")
+            if (b"!!" in line or b"!<" in line
+                    or line.lstrip(b"\xef\xbb\xbf").startswith(b"%TAG")):
+                raise ValueError(
+                    f"{path}:{lineno}: refusing to parse: a YAML tag or %TAG "
+                    f"directive, which phonopy's loader can execute (phonopy "
+                    f"writes neither)")
 
 
 def phonopy_yaml_embeds_nac(phonopy_yaml_path) -> bool:

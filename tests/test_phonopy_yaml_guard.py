@@ -37,7 +37,7 @@ def test_python_tag_is_rejected_without_execution(tmp_path):
     path = tmp_path / "phonopy.yaml"
     path.write_text(
         LEGIT + f'extra: !!python/object/apply:os.system ["touch {canary}"]\n')
-    with pytest.raises(ValueError, match="!!python/"):
+    with pytest.raises(ValueError, match="refusing to parse"):
         reject_unsafe_phonopy_yaml(str(path))
     assert not canary.exists()          # scanned, never parsed/executed
 
@@ -63,11 +63,27 @@ def test_tag_directive_alias_is_rejected(tmp_path):
         reject_unsafe_phonopy_yaml(str(path))
 
 
+@pytest.mark.parametrize("text, encoding", [
+    ("x: !!%70ython/object/apply:os.getcwd []\n", "utf-8"),
+    ("x: !<tag:yaml.org%2C2002:python/object/apply:os.getcwd> []\n", "utf-8"),
+    ("\ufeff%TAG !x! tag:yaml.org,2002:\n---\nx: !x!python/object/apply:os.getcwd []\n",
+     "utf-8"),
+    ("x: !!python/object/apply:os.getcwd []\n", "utf-16"),
+])
+def test_escaped_bom_and_utf16_spellings_are_rejected(tmp_path, text, encoding):
+    # libyaml decodes %-escapes in tag URIs, skips a UTF-8 BOM and reads a
+    # UTF-16 file from its BOM, so each of these reaches the python tag
+    path = tmp_path / "phonopy.yaml"
+    path.write_bytes(text.encode(encoding))
+    with pytest.raises(ValueError, match="refusing to parse"):
+        reject_unsafe_phonopy_yaml(str(path))
+
+
 def test_compressed_files_are_scanned_too(tmp_path):
     bad = tmp_path / "phonopy.yaml.gz"
     with gzip.open(bad, "wt") as fh:
         fh.write("x: !!python/object/apply:os.getcwd []\n")
-    with pytest.raises(ValueError, match="!!python/"):
+    with pytest.raises(ValueError, match="refusing to parse"):
         reject_unsafe_phonopy_yaml(str(bad))
 
     good = tmp_path / "ok.yaml.gz"

@@ -236,8 +236,9 @@ attacker-built bundle is perfectly self-consistent, so the hashes are
 worthless as evidence of origin or good faith. The concrete hazard is
 `phonopy.yaml`: phonopy parses it with PyYAML's **unsafe** loader,
 which executes `!!python/` tags at parse time. IRMA therefore scans
-every phonopy.yaml and refuses files carrying such tags *before*
-phonopy's parser sees them, at every entry point that parses one:
+every phonopy.yaml and refuses a file carrying any YAML tag or `%TAG`
+directive, or written as UTF-16 (phonopy writes none of these),
+*before* phonopy's parser sees it, at every entry point that parses one:
 `irma mlip validate` and bundle loading, the ENDF engine, the
 NCrystal exporter, and the GUI file picker. That scan is fail-closed
 for the known code-execution vector, **not** a sandbox: it does not
