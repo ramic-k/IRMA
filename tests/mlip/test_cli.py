@@ -175,7 +175,9 @@ def test_bad_numeric_options_fail_before_any_compute(al_poscar, tmp_path,
                                                      capsys):
     for extra in (["--mesh", "4 4"], ["--mesh", "0 4 4"],
                   ["--threads", "0"], ["--jobs", "0"],
-                  ["--supercell", "2 2"]):
+                  ["--supercell", "2 2"], ["--delta", "0"], ["--fmax", "-1"],
+                  ["--nmax", "-1"], ["--snap-symmetry", "-0.01"],
+                  ["--dos-smearing", "nan"]):
         rc = main(["build", al_poscar, "-o", str(tmp_path / "x"),
                    "--potential", "emt", "--allow-dev-backend"] + extra)
         assert rc == 2, extra

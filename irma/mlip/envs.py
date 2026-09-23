@@ -350,7 +350,7 @@ def remote_calculator(spec, interpreter: str):
             Calculator.calculate(self, atoms)
             a = self.atoms
             rep = self._handle.request(
-                {"cmd": "calc",
+                {"cmd": "calc", "stress": "stress" in properties,
                  "numbers": a.get_atomic_numbers().tolist(),
                  "positions": a.get_positions().tolist(),
                  "cell": a.get_cell().tolist(),
