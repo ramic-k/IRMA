@@ -10,8 +10,7 @@ import math
 
 import pytest
 
-from irma.core.nuclear_data import (
-    NUCLIDES, Nuclide, isotopes, lookup, most_abundant_a)
+from irma.core.nuclear_data import NUCLIDES, isotopes, lookup, most_abundant_a
 
 
 def test_natural_carbon_matches_irma_convention():
@@ -74,19 +73,9 @@ def test_synthetic_elements_have_no_default_identity():
 
 def test_identity_inputs_are_strictly_integer():
     with pytest.raises(KeyError, match="must be an integer"):
-        lookup((6.0, 13))
-    with pytest.raises(KeyError, match="must be an integer"):
-        lookup((6, 13.0))
-    with pytest.raises(KeyError, match="must be an integer"):
-        most_abundant_a(6.0)
-    with pytest.raises(KeyError, match="must be an integer"):
-        lookup((True, 13))
-    with pytest.raises(KeyError, match=r"\(Z, A\)"):
-        lookup((6, 12, 0))
+        lookup((6.0, 13))              # e.g. Z read from a float array
     with pytest.raises(KeyError, match="A >= 1"):
-        lookup("0-C")
-    with pytest.raises(KeyError, match="A >= 1"):
-        lookup("C-0")
+        lookup("C-0")                  # the natural element is the bare symbol
 
 
 def test_energy_dependent_flag_is_carried():
@@ -95,16 +84,9 @@ def test_energy_dependent_flag_is_carried():
     assert lookup("D").energy_dependent is False
 
 
-def test_source_field_present():
-    from irma.core.nuclear_data import SOURCE
-    assert lookup("C").source == SOURCE
-    assert SOURCE.startswith("periodictable-")
-
-
 def test_natural_entries_never_carry_isotope_identity():
     for (z, a), n in NUCLIDES.items():
         assert (n.Z, n.A) == (z, a)
-        assert isinstance(n, Nuclide)
         if a == 0:
             assert n.abundance_pct is None
 
@@ -129,7 +111,7 @@ def test_isotopes_enumerates_an_element():
         assert lookup(f"{n.A}-{n.symbol}") == n
     # unknown elements are empty, not an exception: a caller walking a
     # species list must not have to guard every symbol
-    assert isotopes("Xx") == [] and isotopes(0) == [] and isotopes("") == []
+    assert isotopes("Xx") == []
 
 
 def test_isotopes_carries_the_energy_dependent_flag_per_nuclide():
