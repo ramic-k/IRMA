@@ -20,13 +20,12 @@ cancellable subprocess path the Neutron-Scattering panel uses), driving the
 import dataclasses
 import os
 import sys
-import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    form_section, init_form_styles, scrolled_columns,
+    RunPanel, form_section, init_form_styles, scrolled_columns,
     parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.grid_form import SabGridForm, GRID_EXPORT_KEYS
@@ -198,8 +197,10 @@ IDENTITY_HINT_SCATTERERS = (
     "constants autofill from the built-in table.")
 
 
-class NCrystalPanel(ttk.Frame):
+class NCrystalPanel(RunPanel):
     """IRMA -> NCrystal data export panel."""
+
+    error_title = "Export Error"
 
     # exposed for the test suite (mirrors the module map)
     _INELASTIC_BY_INT = _INELASTIC_BY_INT
@@ -536,60 +537,14 @@ class NCrystalPanel(ttk.Frame):
         # Serialize the validated config to a temp YAML and export via the CLI
         # (python -m irma.ncrystal), which calls write_packs and streams its
         # progress to stdout -- captured by the runner and routed to the log.
-        self._cfg_tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False)
-        self._cfg_tmp.close()
-        self._write_config_yaml(self._last_built_dict, self._cfg_tmp.name)
+        cfg_path = self._temp_path("config.yaml")
+        self._write_config_yaml(self._last_built_dict, cfg_path)
+        self._start(
+            [sys.executable, "-u", "-m", "irma.ncrystal", cfg_path, "-o", outdir],
+            "IRMA -> NCrystal data export",
+            f"NCrystal data written to {outdir}.", "NCrystal export config error",
+            header=f"material_id={cfg.material_id}  outdir={outdir}\n\n",
+            running="Exporting NCrystal data...", done="Export complete")
 
-        self.log.clear()
-        self.log.append("=== IRMA -> NCrystal data export ===\n")
-        self.log.append(f"material_id={cfg.material_id}  outdir={outdir}\n\n")
-        self._status("Exporting NCrystal data...")
-        self.export_btn.config(state=tk.DISABLED)
-        self.cancel_btn.config(state=tk.NORMAL)
-        self.runner.run_command(
-            [sys.executable, "-u", "-m", "irma.ncrystal",
-             self._cfg_tmp.name, "-o", outdir],
-            success_msg=f"NCrystal data written to {outdir}.",
-            on_log=self._log_ts, on_done=self._done_ts,
-            error_label="NCrystal export config error")
-
-    def _cancel(self):
-        """Cancel the running export."""
-        if not self.runner.is_running:
-            return
-        self._status("Cancelling...")
-        self.cancel_btn.config(state=tk.DISABLED)
-        self.log.append("\n=== Cancelling (terminating workers) ===\n")
-        self.runner.cancel()
-
-    def _log_ts(self, text):
-        """Append a log line from the worker thread (marshalled via after())."""
-        self.after(0, self.log.append, text)
-
-    def cleanup_temp_files(self):
-        """Idempotently remove the panel-owned temp config (review GUI-2)."""
-        tmp = getattr(self, "_cfg_tmp", None)
-        if tmp is not None:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
-            self._cfg_tmp = None
-
-    def _done_ts(self, ok, msg):
-        """Handle export completion from the worker thread (marshalled via after())."""
-        def _update():
-            """Apply the completion UI changes on the Tk thread."""
-            self.export_btn.config(state=tk.NORMAL)
-            self.cancel_btn.config(state=tk.DISABLED)
-            self.log.append(f"\n{msg}\n")
-            if ok:
-                self._status("Export complete")
-            elif msg.startswith("Calculation cancelled"):
-                self._status("Cancelled")
-            else:
-                self._status("Error")
-                messagebox.showerror("Export Error", msg[:500])
-            self.cleanup_temp_files()
-        self.after(0, _update)
+    def _action_buttons(self):
+        return (self.export_btn,)

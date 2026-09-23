@@ -27,28 +27,35 @@ def test_endf_form_cleanup_idempotent(tmp_path):
     EndfFormMixin.cleanup_temp_files(fake)          # second call: no-op
 
 
+def _run_dir(tmp_path):
+    d = tmp_path / "run"
+    d.mkdir()
+    (d / "config.yaml").write_text("x")
+    return d
+
+
 def test_ncrystal_panel_cleanup_idempotent(tmp_path):
-    tmp, path = _tmpfile(tmp_path, "cfg.yaml")
-    fake = types.SimpleNamespace(_cfg_tmp=tmp)
-    NCrystalPanel.cleanup_temp_files(fake)
-    assert not path.exists() and fake._cfg_tmp is None
-    NCrystalPanel.cleanup_temp_files(fake)
+    d = _run_dir(tmp_path)
+    panel = object.__new__(NCrystalPanel)       # no Tk: only plain attributes
+    panel._tmpdir = str(d)
+    panel.cleanup_temp_files()
+    assert not d.exists() and panel._tmpdir is None
+    panel.cleanup_temp_files()
 
 
 def test_ns_panel_cleanup_covers_cfg_and_maps(tmp_path):
-    tmp, cfg_path = _tmpfile(tmp_path, "cfg.yaml")
+    d = _run_dir(tmp_path)
     mp = tmp_path / "map.npz"
     mp.write_bytes(b"x")
     pending = tmp_path / "pending.npz"
     pending.write_bytes(b"x")
-    fake = types.SimpleNamespace(
-        _cfg_tmp=tmp, _map_path=str(mp), _pending_map=str(pending),
-        _cleanup_cfg_tmp=lambda: NSPanel._cleanup_cfg_tmp(fake),
-        _discard_map_file=NSPanel._discard_map_file)
-    NSPanel.cleanup_temp_files(fake)
-    assert not cfg_path.exists() and not mp.exists() and not pending.exists()
-    assert fake._cfg_tmp is None and fake._map_path is None
-    NSPanel.cleanup_temp_files(fake)                # idempotent
+    panel = object.__new__(NSPanel)
+    panel._tmpdir, panel._map_path, panel._pending_map = (
+        str(d), str(mp), str(pending))
+    panel.cleanup_temp_files()
+    assert not d.exists() and not mp.exists() and not pending.exists()
+    assert panel._tmpdir is None and panel._map_path is None
+    panel.cleanup_temp_files()                  # idempotent
 
 
 def test_app_close_calls_every_cleanup_synchronously(tmp_path):

@@ -1,8 +1,10 @@
 """Reusable custom tkinter widgets for IRMA GUI."""
 
 import os
+import shutil
+import tempfile
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 
 def parse_float(label, text):
@@ -225,6 +227,91 @@ def scrolled_columns(parent):
     side = ttk.Frame(top)
     side.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     return form, side, canvas
+
+
+class RunPanel(ttk.Frame):
+    """Run, cancel and completion handling shared by the NS, NCrystal and
+    MLIP panels. A subclass provides ``runner``, ``log``, ``cancel_btn``,
+    ``_status`` and ``_action_buttons()``."""
+
+    error_title = "Error"
+    _tmpdir = None
+
+    def _action_buttons(self):
+        """The buttons that start a run; disabled while one is active."""
+        return ()
+
+    def _set_busy(self, busy):
+        """Enable or disable the action buttons and Cancel as one unit."""
+        for btn in self._action_buttons():
+            btn.config(state=tk.DISABLED if busy else tk.NORMAL)
+        self.cancel_btn.config(state=tk.NORMAL if busy else tk.DISABLED)
+
+    def _temp_path(self, name):
+        """A path in a fresh panel-owned temp directory, removed when the
+        run ends."""
+        self._drop_tmpdir()
+        self._tmpdir = tempfile.mkdtemp(prefix="irma_gui_")
+        return os.path.join(self._tmpdir, name)
+
+    def _drop_tmpdir(self):
+        if self._tmpdir:
+            shutil.rmtree(self._tmpdir, ignore_errors=True)
+            self._tmpdir = None
+
+    def cleanup_temp_files(self):
+        """Remove the panel-owned temp files (idempotent; app close calls it)."""
+        self._drop_tmpdir()
+
+    def _start(self, argv, banner, success_msg, error_label, header=None,
+               running=None, done="Done", error_title=None,
+               output_path=None, on_ok=None):
+        """Run ``argv`` through the shared runner. ``header`` follows the
+        banner in the log (default: the command line); ``running`` and
+        ``done`` are the status texts; ``on_ok`` runs after a success."""
+        if self.runner.is_running:
+            messagebox.showwarning("Running",
+                                   "A calculation is already in progress.")
+            return
+        self.log.clear()
+        self.log.append(f"=== {banner} ===\n")
+        self.log.append("$ " + " ".join(argv[3:]) + "\n\n"
+                        if header is None else header)
+        self._status(running or banner + "...")
+        self._set_busy(True)
+        self.runner.run_command(
+            argv, success_msg=success_msg, on_log=self._log_ts,
+            on_done=lambda ok, msg: self.after(
+                0, self._finish, ok, msg, done, error_title, on_ok),
+            output_path=output_path, error_label=error_label)
+
+    def _finish(self, ok, msg, done, error_title, on_ok):
+        """Completion, on the Tk thread."""
+        self._set_busy(False)
+        self.log.append(f"\n{msg}\n")
+        if ok:
+            self._status(done)
+            if on_ok is not None:
+                on_ok()
+        elif msg.startswith("Calculation cancelled"):
+            self._status("Cancelled")
+        else:
+            self._status("Error")
+            messagebox.showerror(error_title or self.error_title, msg[:500])
+        self._drop_tmpdir()
+
+    def _cancel(self):
+        """Cancel the running calculation."""
+        if not self.runner.is_running:
+            return
+        self._status("Cancelling...")
+        self.cancel_btn.config(state=tk.DISABLED)
+        self.log.append("\n=== Cancelling (terminating workers) ===\n")
+        self.runner.cancel()
+
+    def _log_ts(self, text):
+        """Append a log line from the worker thread (via after())."""
+        self.after(0, self.log.append, text)
 
 
 def check_with_help(parent, text, var, help_text):

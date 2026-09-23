@@ -24,8 +24,8 @@ from irma.gui.element_table import (
     NUCLIDE_EDITOR_COLS)
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    check_with_help, form_section, init_form_styles, scrolled_columns,
-    parse_float, parse_int)
+    RunPanel, check_with_help, form_section, init_form_styles,
+    scrolled_columns, parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.mlip.calculators import POTENTIALS
 
@@ -367,8 +367,10 @@ HELP = {
 }
 
 
-class MlipPanel(ttk.Frame):
+class MlipPanel(RunPanel):
     """Structure + pretrained MLIP -> phonon-model bundle -> IRMA inputs."""
+
+    error_title = "MLIP"
 
     def __init__(self, parent, runner, status_setter=None):
         super().__init__(parent, padding=8)
@@ -856,30 +858,6 @@ class MlipPanel(ttk.Frame):
         return cmd
 
     # -------------------------------------------------------------- actions --
-    def _start(self, cmd, banner, success_msg, error_label, on_ok=None):
-        """Run one mlip CLI command through the shared runner."""
-        if self.runner.is_running or getattr(self, "_busy", False):
-            messagebox.showwarning("Running",
-                                   "A calculation is already in progress.")
-            return
-        self.log.clear()
-        self.log.append(f"=== {banner} ===\n")
-        self.log.append("$ " + " ".join(cmd[3:]) + "\n\n")
-        self._status(banner + "...")
-        self._set_busy(True)
-        # token-scoped completion: the runner clears its running flag
-        # before the Tk-thread update executes, so a stale completion
-        # must never touch a newer action's state (review finding)
-        token = object()
-        self._active_token = token
-
-        def done(ok, msg):
-            self.after(0, self._finish, token, on_ok, ok, msg)
-        self.runner.run_command(
-            cmd, success_msg=success_msg,
-            on_log=self._log_ts, on_done=done,
-            error_label=error_label)
-
     def _run_build(self):
         """Start a bundle build."""
         try:
@@ -1113,45 +1091,6 @@ class MlipPanel(ttk.Frame):
         self._dos_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # ------------------------------------------------------------- plumbing --
-    def _cancel(self):
-        """Cancel the running command."""
-        if not self.runner.is_running:
-            return
-        self._status("Cancelling...")
-        self.cancel_btn.config(state=tk.DISABLED)
-        self.log.append("\n=== Cancelling (terminating workers) ===\n")
-        self.runner.cancel()
-
-    def _log_ts(self, text):
-        """Append a log line from the worker thread (via after())."""
-        self.after(0, self.log.append, text)
-
-    def _set_busy(self, busy):
-        """Enable/disable every action button as one unit."""
-        state = tk.DISABLED if busy else tk.NORMAL
-        for btn in (self.build_btn, self.emit_btn, self.validate_btn,
-                    self.env_create_btn, self.env_remove_btn):
-            btn.config(state=state)
-        self.cancel_btn.config(state=tk.NORMAL if busy
-                               else tk.DISABLED)
-        self._busy = busy
-
-    def _finish(self, token, on_ok, ok, msg):
-        """Completion on the Tk thread; ignores superseded runs."""
-        if token is not getattr(self, "_active_token", None):
-            return                        # a newer action owns the panel
-        self._active_token = None
-        self._set_busy(False)
-        self.log.append(f"\n{msg}\n")
-        if ok:
-            self._status("Done")
-            if on_ok is not None:
-                on_ok()
-        elif msg.startswith("Calculation cancelled"):
-            self._status("Cancelled")
-        else:
-            self._status("Error")
-            messagebox.showerror("MLIP", msg[:500])
-
-    def cleanup_temp_files(self):
-        """No panel-owned temp files (the CLI owns its outputs)."""
+    def _action_buttons(self):
+        return (self.build_btn, self.emit_btn, self.validate_btn,
+                self.env_create_btn, self.env_remove_btn)
