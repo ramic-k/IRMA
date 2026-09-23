@@ -54,7 +54,7 @@ def test_build_validate_emit_end_to_end(al_poscar, tmp_path, capsys):
                "--supercell", "2 2 2", "--mesh", "4 4 4"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "bundle written and validated" in out
+    assert "bundle written" in out
     assert "irma mlip emit" in out                 # next-steps block
 
     assert main(["validate", outdir]) == 0

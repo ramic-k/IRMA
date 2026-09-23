@@ -503,21 +503,14 @@ def _cmd_build(args) -> int:
         jobs=args.jobs, worker_threads=args.worker_threads,
         scratch_dir=os.path.join(args.outdir, "scratch"))
 
-    from irma.mlip.bundle import validate_bundle, write_bundle
+    from irma.mlip.bundle import write_bundle
     bundle = write_bundle(
         args.outdir, phonon_result=pr, relax_result=rr,
         calc_meta=calc_meta, args_used=vars(args) | {"argv": "irma mlip"},
         mesh=mesh, input_structure_path=args.structure,
         born_path=args.born, disordered=args.disordered,
         dos_sigma_mev=args.dos_smearing, overwrite=args.overwrite)
-    problems = validate_bundle(bundle.path)
-    if problems:
-        print("Error: the written bundle failed validation (bug):",
-              file=sys.stderr)
-        for p in problems:
-            print(f"  - {p}", file=sys.stderr)
-        return 2
-    print(f"  bundle written and validated: {bundle.path}")
+    print(f"  bundle written: {bundle.path}")
 
     if args.emit:
         return _do_emit(bundle, [t.strip() for t in args.emit.split(",")],
