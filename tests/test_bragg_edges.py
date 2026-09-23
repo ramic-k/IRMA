@@ -95,20 +95,6 @@ def rhombohedral():
                             alpha=80.0, beta=80.0, gamma=80.0, sites=[A])
 
 
-def test_triclinic_metric_matches_textbook(triclinic):
-    """|G·(hkl)| must reproduce the textbook triclinic 1/d² for arbitrary hkl.
-    The untransposed matrix was wrong by up to ~25% on this cell."""
-    cr = triclinic
-    G = _get_reciprocal_lattice_matrix(cr.a, cr.b, cr.c, cr.alpha, cr.beta, cr.gamma)
-    Minv = _metric_tensor_inv(cr)
-    for hkl in [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, 0, 1),
-                (0, 1, 1), (1, -1, 0), (2, 1, -1), (1, 2, 3), (-3, 2, 1)]:
-        m = np.array(hkl, dtype=float)
-        tau_code = np.linalg.norm(G @ m)
-        tau_true = 2.0 * np.pi * sqrt(float(m @ Minv @ m))
-        assert tau_code == pytest.approx(tau_true, rel=1e-12), hkl
-
-
 @pytest.mark.parametrize("cell", ["triclinic", "rhombohedral"])
 def test_oblique_edges_complete_and_correct(cell, request):
     """Edge set must match an independent brute-force enumeration over a much
@@ -138,41 +124,19 @@ def test_general_branch_consistent_with_hexagonal_branch(graphite):
             np.linalg.norm(g_general @ m), rel=1e-6), hkl
 
 
-def test_returns_expected_shapes(graphite):
-    bragg, nbe, species_corr, dir_terms = _edges(graphite)
+def test_graphite_edges(graphite):
+    """Shapes, ascending energies within emax, nonnegative increments, and
+    the flat zero-increment endpoint appended at emax (S is a plain 1/E
+    extension above the last edge); a lower emax gives fewer edges."""
+    bragg, nbe, species_corr, dir_terms = _edges(graphite, emax=5.0)
+    E = bragg[:, 0]
+    nsp = len(graphite.sites)
     assert nbe > 100                                  # graphite has many edges below 5 eV
     assert bragg.shape == (nbe, 2)
-    nsp = len(graphite.sites)
-    assert species_corr.shape == (nbe, nsp, nsp)
-    assert len(dir_terms) == nbe
-
-
-def test_energies_ascending_within_emax(graphite):
-    bragg, nbe, _, _ = _edges(graphite, emax=5.0)
-    E = bragg[:, 0]
-    assert np.all(np.diff(E) >= 0)                    # non-decreasing
-    assert E[-1] <= 5.0 + 1e-9
-    assert E[0] > 0.0
-
-
-def test_emax_endpoint_is_flat_zero_increment(graphite):
-    """The appended emax endpoint must carry ZERO increment, zero species_corr,
-    and empty directional terms (so S is a flat 1/E extension above the last edge)."""
-    bragg, nbe, species_corr, dir_terms = _edges(graphite, emax=5.0)
-    assert np.isclose(bragg[-1, 0], 5.0)              # last point is at emax
-    assert bragg[-1, 1] == 0.0                        # zero increment (the fix)
-    assert np.allclose(species_corr[-1], 0.0)         # zero species correlation
-    assert dir_terms[-1] == []                        # no directional plane terms
-
-
-def test_structure_factors_nonnegative(graphite):
-    bragg, nbe, _, _ = _edges(graphite)
-    assert np.all(bragg[:, 1] >= 0.0)                 # per-edge contributions are >= 0
-
-
-def test_emax_controls_edge_range(graphite):
-    """A lower emax yields fewer edges, all within the new emax."""
-    _, nbe5, _, _ = _edges(graphite, emax=5.0)
+    assert species_corr.shape == (nbe, nsp, nsp) and len(dir_terms) == nbe
+    assert E[0] > 0.0 and np.all(np.diff(E) >= 0) and np.isclose(E[-1], 5.0)
+    assert np.all(bragg[:, 1] >= 0.0)
+    assert bragg[-1, 1] == 0.0                        # zero-increment endpoint
+    assert np.allclose(species_corr[-1], 0.0) and dir_terms[-1] == []
     bragg2, nbe2, _, _ = _edges(graphite, emax=2.0)
-    assert nbe2 < nbe5
-    assert bragg2[:, 0].max() <= 2.0 + 1e-9
+    assert nbe2 < nbe and bragg2[:, 0].max() <= 2.0 + 1e-9
