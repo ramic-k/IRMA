@@ -101,10 +101,11 @@ def reject_unsafe_phonopy_yaml(phonopy_yaml_path) -> None:
                     f"writes UTF-8)")
             if (b"!!" in line or b"!<" in line
                     or line.lstrip(b"\xef\xbb\xbf").startswith(b"%TAG")):
+                text = line.decode("utf-8", "replace").strip()[:80]
                 raise ValueError(
                     f"{path}:{lineno}: refusing to parse: a YAML tag or %TAG "
                     f"directive, which phonopy's loader can execute (phonopy "
-                    f"writes neither)")
+                    f"writes neither): {text!r}")
 
 
 def phonopy_yaml_embeds_nac(phonopy_yaml_path) -> bool:
