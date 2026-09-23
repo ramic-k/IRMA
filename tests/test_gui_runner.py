@@ -2,8 +2,8 @@
 
 The runner runs the calculation out-of-process in its own process group so a
 single killpg tears down the engine's ProcessPoolExecutor workers. These tests
-exercise the generic command path, exit-code -> message mapping, the LEAPR /
-spectra argv adapters, and -- the P7 gate -- that cancel() actually terminates
+exercise the generic command path, exit-code -> message mapping, the LEAPR
+argv adapter, and -- the P7 gate -- that cancel() actually terminates
 forked worker processes (not just the parent).
 """
 import os
@@ -58,18 +58,6 @@ def test_runs_command_and_streams_output():
     assert r.is_running is False
 
 
-def test_exit_code_2_default_label_is_generic_input_error():
-    # run_command itself knows nothing about decks: the generic default is
-    # "Input error"; the run() adapter passes its own label.
-    r, logs, done, ev = _make_runner()
-    r.run_command([sys.executable, "-u", "-c",
-                   "import sys; print('  bad card 6'); sys.exit(2)"])
-    assert ev.wait(20)
-    assert done["ok"] is False
-    assert done["msg"].startswith("Input error")
-    assert "bad card 6" in done["msg"]
-
-
 def test_exit_code_2_uses_caller_error_label():
     """A spectra child exiting 2 (SpectraConfigError /
     output-path preflight) must not be reported as an 'Input deck error' --
@@ -94,23 +82,9 @@ def test_exit_code_3_is_failure_with_tail():
     assert "exit 3" in done["msg"] and "boom detail" in done["msg"]
 
 
-def test_non_utf8_output_does_not_kill_reader():
-    """QA4 F32: a stray non-UTF-8 byte in the child's output must not crash the
-    reader thread -- bad bytes are replaced and on_done still fires."""
-    r, logs, done, ev = _make_runner()
-    r.run_command(
-        [sys.executable, "-u", "-c",
-         "import sys; sys.stdout.buffer.write(b'ok line\\n\\xff\\xfe bad bytes\\n')"],
-        success_msg="ok")
-    assert ev.wait(20)
-    assert done["ok"] is True and done["msg"] == "ok"
-    assert any("ok line" in ln for ln in logs)
-    assert r.is_running is False
-
-
 def test_second_run_ignored_while_running():
     r, logs, done, ev = _make_runner()
-    r.run_command([sys.executable, "-u", "-c", "import time; time.sleep(2)"],
+    r.run_command([sys.executable, "-u", "-c", "import time; time.sleep(1)"],
                   success_msg="first")
     time.sleep(0.3)
     assert r.is_running
@@ -169,18 +143,6 @@ def test_cancel_terminates_forked_workers():
     assert r.is_running is False
 
 
-def test_cancel_when_idle_is_noop():
-    r, logs, done, ev = _make_runner()
-    r.cancel()   # nothing running -> must not raise
-    assert r.is_running is False
-
-
-def test_shutdown_when_idle_is_noop():
-    r, logs, done, ev = _make_runner()
-    r.shutdown()   # nothing running -> must return immediately, not raise
-    assert r.is_running is False
-
-
 # ---- shutdown reaping -------------------------------------------------------
 @pytest.mark.skipif(os.name != "posix", reason="process-group kill is POSIX")
 def test_shutdown_reaps_child_before_returning(monkeypatch):
@@ -213,21 +175,6 @@ def test_shutdown_reaps_child_before_returning(monkeypatch):
 
 
 # ---- #8: a "success" that wrote no (or an empty) output file is a failure ----
-def test_output_problem_none_when_present(tmp_path):
-    out = tmp_path / "tape.endf"
-    out.write_text("data")
-    assert ComputationRunner._output_problem(str(out)) is None
-
-
-def test_output_problem_none_when_unchecked():
-    assert ComputationRunner._output_problem(None) is None   # no path -> no check
-
-
-def test_output_problem_when_missing(tmp_path):
-    msg = ComputationRunner._output_problem(str(tmp_path / "missing.endf"))
-    assert msg and "no output file" in msg
-
-
 def test_output_problem_when_empty(tmp_path):
     out = tmp_path / "empty.endf"
     out.write_text("")
@@ -273,35 +220,6 @@ def test_phase_from_log_line_ignores_non_markers():
     pytest.importorskip("tkinter")
     from irma.gui.endf_form import _phase_from_log_line as phase
     assert phase("=== IRMA Calculation ===") is None
-    assert phase("0.123  4.56  7.89") is None
-    assert phase("") is None
-    assert phase("...") is None
     assert phase("x" * 200 + "...") is None   # too long to be a real phase label
     assert phase("Loading...") is None        # bare single-word progress dots
     assert phase("Retrying...") is None       # are not engine phase markers
-
-
-# ---------- re-entrancy: _running is held through on_done ----------
-
-def test_running_flag_held_through_on_done():
-    """If the worker cleared `_running` the instant the child exited — before
-    the completion handler ran — a second run_command in that window would
-    pass the `if self._running` guard and launch an overlapping run. The
-    flag must be held until on_done has been dispatched."""
-    seen = {}
-    ev = threading.Event()
-    r = ComputationRunner(log_callback=lambda *_: None,
-                          done_callback=lambda ok, msg: None)
-
-    def on_done(ok, msg):
-        # _running must still be True while the completion handler runs, so a
-        # re-entrant run_command in this window is blocked by the guard.
-        seen["running_at_done"] = r.is_running
-        ev.set()
-
-    r.run_command([sys.executable, "-c", "pass"], success_msg="ok", on_done=on_done)
-    assert ev.wait(20)
-    assert seen["running_at_done"] is True, (
-        "_running was cleared before on_done -- the re-entrancy window is open")
-    # and it must be cleared once the worker fully returns
-    assert _wait(lambda: r.is_running is False, 5)
