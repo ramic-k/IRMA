@@ -375,6 +375,13 @@ against an IRMA tape:
   the exact total. A cell below -1% of the table maximum stops the export: the
   direction sampling is too coarse for that share, and a larger
   `export.num_directions` fixes it.
+- **Cell setting.** NCrystal 4.4.6 builds a wrong reciprocal lattice for a
+  cell with cos α − cos β cos γ ≠ 0 (a bug in its general lattice branch,
+  `NCLatticeUtils.cc:75-78`), which misplaces every Bragg edge. The exporter
+  refuses such a cell before it bakes anything. Build the phonon model on a cell
+  with α = β = 90° or α = γ = 90°: orthorhombic, tetragonal, hexagonal and
+  monoclinic cells pass, and for FCC or BCC use the conventional cell, not the
+  primitive one.
 - **Provenance pin.** Each data file records the IRMA git SHA (marked `-dirty`
   if the tree had uncommitted edits), IRMA version, the phonopy-yaml SHA-256,
   mesh, direction counts, multiphonon order, and temperature, as `meta.*` lines.

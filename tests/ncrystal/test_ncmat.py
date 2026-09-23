@@ -9,6 +9,7 @@ import pytest
 from irma.ncrystal.ncmat import (
     lattice_to_cell_params,
     assemble_material_ncmat,
+    check_ncrystal_lattice,
     debye_msd,
     debye_temperature_from_msd,
 )
@@ -57,3 +58,16 @@ def test_assemble_two_species():
     # the plugin parser accepts ONLY 'pack <path>' lines after @CUSTOM_IRMA
     custom = txt.split("@CUSTOM_IRMA\n", 1)[1].splitlines()
     assert [line.split() for line in custom] == [["pack", p] for p in packs]
+
+
+def test_cells_in_ncrystals_buggy_lattice_branch_are_refused():
+    # FCC primitive cell (60, 60, 60): cos a - cos b cos g = 0.25, refused
+    fcc = 2.025 * np.array([[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
+    with pytest.raises(ValueError, match="NCLatticeUtils"):
+        check_ncrystal_lattice(fcc)
+    # orthorhombic, and hexagonal with gamma 120.00285 (the BeO fixture), pass
+    check_ncrystal_lattice(np.diag([3.0, 4.0, 5.0]))
+    g = math.radians(120.00285)
+    check_ncrystal_lattice(np.array([[2.7, 0.0, 0.0],
+                                     [2.7 * math.cos(g), 2.7 * math.sin(g), 0.0],
+                                     [0.0, 0.0, 4.37]]))

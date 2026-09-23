@@ -104,7 +104,10 @@ def _get_reciprocal_lattice_matrix(a, b, c, alpha_deg, beta_deg, gamma_deg):
         k_vec [Å⁻¹] = G @ [h, k, l]
         d-spacing [Å] = 2π / |k_vec|
 
-    Algorithm mirrors NCrystal NCLatticeUtils.cc (getReciprocalLatticeRot).
+    The special cases follow NCrystal's NCLatticeUtils.cc
+    (getReciprocalLatticeRot). The general branch does not: NCrystal 4.4.6
+    stores m57 in an element that should be zero there (NCLatticeUtils.cc:75-78),
+    so the NCrystal exporter refuses cells where m57 is nonzero.
     """
     tol  = 1e-10
     k2pi = 2.0 * np.pi
