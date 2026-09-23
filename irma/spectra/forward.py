@@ -100,10 +100,7 @@ class SpectrumResult:
 
     @property
     def I_total_per_angle(self):
-        """Per-bank total (inelastic + elastic), (n_angles, nE), or None for a
-        cuts-only result that produced no per-angle spectra."""
-        if self.I_inelastic_per_angle is None:
-            return None
+        """Per-bank total (inelastic + elastic), (n_angles, nE)."""
         return self.I_inelastic_per_angle + self.I_elastic_per_angle
 
     @property
@@ -138,17 +135,9 @@ def build_locus_support(geometry, e_fixed_meV, angles_deg, dE, e_max, dQ,
     # sampled there too. Spanning only [0, e_max] would let the fill_value=0
     # interpolator silently zero the energy-gain wing.
     E_env = np.arange(min(0.0, float(e_min)), float(e_max) + 0.5 * dE, dE)
-    if geometry in ("vision", "indirect"):
-        def Qof(tt):
-            """|Q|(E) locus at scattering angle ``tt`` (indirect geometry)."""
-            return Q_indirect(E_env, e_fixed_meV, tt)
-    elif geometry == "direct":
-        def Qof(tt):
-            """|Q|(E) locus at scattering angle ``tt`` (direct geometry)."""
-            return Q_direct(E_env, e_fixed_meV, tt)
-    else:
-        raise ValueError(f"build_locus_support: unknown geometry {geometry!r}")
-    Qall = np.concatenate([np.asarray(Qof(tt), float) for tt in angles_deg])
+    Qof = Q_indirect if geometry in ("vision", "indirect") else Q_direct
+    Qall = np.concatenate([np.asarray(Qof(E_env, e_fixed_meV, tt), float)
+                           for tt in angles_deg])
     Qall = Qall[np.isfinite(Qall) & (Qall > 0)]
     q_lo = float(Qall.min()); q_hi = float(Qall.max())
     Q_support = np.arange(max(q_floor, q_lo - q_pad), q_hi + q_pad + dQ, dQ)
@@ -156,21 +145,11 @@ def build_locus_support(geometry, e_fixed_meV, angles_deg, dE, e_max, dQ,
 
 
 def _report_mode0_order(m0, auto_order, q_grid, progress):
-    """Report the mode-0 phonon order (and warn when the 2000 cap truncates).
-
-    The mode-0 analogue of the engine's auto-order INFO/WARNING lines: 'auto'
-    sizes the contin ladder to the converged Poisson(f0*alpha_max) order from
-    the DOS Debye-Waller lambda (derive_mode0_phonon_order), so the chosen
-    order must be visible at runtime, not only in the result metadata.
-    """
-    eff = int(m0["nphon_effective"])
-    req = int(m0["nphon_required"])
-    if auto_order:
-        progress(f"mode-0 multiphonon: auto-sized phonon-expansion order to "
-                 f"{eff} (converges the Poisson(f0*alpha) ladder at "
-                 f"Q_max={float(np.max(q_grid)):.1f} 1/Angstrom)")
-    else:
-        progress(f"mode-0 multiphonon: phonon-expansion order {eff} (explicit)")
+    """Report the mode-0 phonon order; warn when the 2000 cap truncates it."""
+    eff, req = int(m0["nphon_effective"]), int(m0["nphon_required"])
+    how = (f"auto-sized to converge at Q_max={float(np.max(q_grid)):.1f} 1/Angstrom"
+           if auto_order else "explicit")
+    progress(f"mode-0 multiphonon: phonon-expansion order {eff} ({how})")
     if req > eff:
         progress(f"WARNING: mode-0 required phonon order ~{req} exceeds the "
                  f"safety cap ({eff}); the highest-Q rows fall back to the "
@@ -632,24 +611,19 @@ def kinematic_envelope(geometry, e_fixed_meV, two_theta_min_deg, two_theta_max_d
             np.asarray(Qof(E, e_fixed_meV, two_theta_max_deg), float))
 
 
-def kinematic_mask(Q, E, env_E, q_lo, q_hi):
+def kinematic_mask(Q, q_lo, q_hi):
     """Accessibility mask ``(nQ, nE)`` for the instrument kinematic band.
 
     ``True`` where ``|Q|`` is reachable at energy transfer ``E`` -- i.e.
-    ``q_lo(E) <= |Q| <= q_hi(E)`` with the :func:`kinematic_envelope` edges
-    aligned to ``E``. Forbidden energies carry NaN edges, which compare False, so
+    ``q_lo(E) <= |Q| <= q_hi(E)``, with the :func:`kinematic_envelope` edges
+    evaluated on the map's own energy axis. Forbidden energies carry NaN edges, which compare False, so
     they map to inaccessible. Use it to BLANK ``S(Q,E)`` outside the accessible
     region (the Euphonic-style ``--angle-range`` mask -- the characteristic
     "arch") instead of only overlaying the envelope curves.
     """
     Q = np.asarray(Q, float)
-    E = np.asarray(E, float)
     lo = np.asarray(q_lo, float)
     hi = np.asarray(q_hi, float)
-    env_E = np.asarray(env_E, float)
-    if lo.shape != E.shape or not np.array_equal(env_E, E):
-        lo = np.interp(E, env_E, lo)
-        hi = np.interp(E, env_E, hi)
     with np.errstate(invalid="ignore"):           # NaN edges -> False (inaccessible)
         return (Q[:, None] >= lo[None, :]) & (Q[:, None] <= hi[None, :])
 
@@ -667,8 +641,8 @@ def save_sqe_map(path, Q, E, S, envelope=None, masked=False):
     E = np.asarray(E, float)
     S = np.asarray(S, float)
     if masked and envelope is not None:
-        env_E, q_lo, q_hi = envelope
-        S = np.where(kinematic_mask(Q, E, env_E, q_lo, q_hi), S, np.nan)
+        _env_E, q_lo, q_hi = envelope
+        S = np.where(kinematic_mask(Q, q_lo, q_hi), S, np.nan)
     path = str(path)
     if path.endswith(".npz"):
         arrs = dict(Q=Q, E=E, S=S)
@@ -807,14 +781,11 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
         # area(Q) and the line centroid at E=0.
         if E_out[0] <= 0.0 <= E_out[-1]:
             area = elastic_model.elastic_dsigma_dOmega(Q_grid, q_res=dQ_map)
-            if E_out.size == 1:
-                S_map[:, 0] += area / dE
-            else:
-                j = min(max(int(np.searchsorted(E_out, 0.0, side="right")) - 1, 0),
-                        E_out.size - 2)
-                w_hi = (0.0 - E_out[j]) / (E_out[j + 1] - E_out[j])
-                S_map[:, j] += area * (1.0 - w_hi) / dE
-                S_map[:, j + 1] += area * w_hi / dE
+            j = min(max(int(np.searchsorted(E_out, 0.0, side="right")) - 1, 0),
+                    E_out.size - 2)
+            w_hi = (0.0 - E_out[j]) / (E_out[j + 1] - E_out[j])
+            S_map[:, j] += area * (1.0 - w_hi) / dE
+            S_map[:, j + 1] += area * w_hi / dE
             elastic_deposited = True
             if E_out[0] == 0.0 or E_out[-1] == 0.0:
                 # The line CENTER sits on the axis edge: once broadened, only the

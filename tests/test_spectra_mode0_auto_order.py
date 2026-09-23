@@ -182,7 +182,7 @@ def test_compute_spectrum_mode0_honors_auto_order():
                               progress=msgs.append, **common)
     eff = r_auto.metadata["effective_multiphonon_order"]
     assert 2 <= eff < 100                          # derived, not the fixed 100
-    assert any("auto-sized phonon-expansion order" in m for m in msgs)
+    assert any("(auto-sized" in m for m in msgs)
     r_fix = compute_spectrum(multiphonon_max_order=eff,
                              auto_multiphonon_order=False,
                              progress=lambda *a, **k: None, **common)
