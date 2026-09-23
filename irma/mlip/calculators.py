@@ -621,8 +621,8 @@ def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
         if version is not None:
             cached = os.path.join(_mlip_cache_dir(), "models",
                                   _pet_checkpoint_filename(alias, version))
-            if os.path.isfile(cached):        # pinned rerun: fully offline
-                return replace(spec, model=cached)
+            if os.path.isfile(cached):        # pinned rerun: offline, hash checked
+                return replace(spec, model=_download_pet_checkpoint(alias, version))
         interp = _dispatch_interpreter("pet-mad")
         if interp:
             # resolution needs the upet package; run it in the registered

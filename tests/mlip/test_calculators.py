@@ -477,6 +477,16 @@ def test_pet_mad_explicit_version_skips_resolution(monkeypatch, fake_torch):
     assert meta["checkpoint"] == "pet-omat-s@1.2.3"
 
 
+def test_pinned_pet_mad_cache_hit_is_hash_checked(monkeypatch, tmp_path):
+    # a pinned version found in the cache must still match its recorded sha256
+    from irma.mlip.calculators import canonicalize_spec
+    monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "pet-mad-s-v1.5.0.ckpt").write_bytes(b"tampered")
+    with pytest.raises(Exception, match="sha256"):
+        canonicalize_spec(CalculatorSpec("pet-mad", model="pet-mad-s@1.5.0"))
+
+
 def test_pet_mad_checkpoint_file_uses_checkpoint_path(monkeypatch, tmp_path, fake_torch):
     made = {}
     _stub_upet(monkeypatch, made)

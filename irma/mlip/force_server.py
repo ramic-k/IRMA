@@ -21,7 +21,7 @@ protocol stream.
   {"cmd": "identity", "spec": {..}}
       -> {"ok": true, "identity": <fingerprint string>, "version": <pkg>}
   {"cmd": "calc", "positions": [[..]], "cell": [[..]], "numbers": [..],
-   "pbc": [..]}
+   "pbc": [..], "stress": <bool: stress wanted>}
       -> {"ok": true, "energy": .., "forces": [[..]], "stress": [..]}
   {"cmd": "shutdown"} -> {"ok": true}  (and the process exits)
 
@@ -120,11 +120,15 @@ def main() -> int:
                               atoms.get_forces(), dtype=float).tolist()}
                 from ase.calculators.calculator import (
                     PropertyNotImplementedError)
-                try:
-                    result["stress"] = np.asarray(
-                        atoms.get_stress(voigt=True), dtype=float).tolist()
-                except (PropertyNotImplementedError, NotImplementedError):
-                    pass          # a stressless checkpoint omits stress
+                # Stress only when the client asks or the forward pass already
+                # made it: for a checkpoint without stress, get_stress would
+                # rerun the whole model before raising.
+                if req.get("stress") or "stress" in calc.results:
+                    try:
+                        result["stress"] = np.asarray(
+                            atoms.get_stress(voigt=True), dtype=float).tolist()
+                    except (PropertyNotImplementedError, NotImplementedError):
+                        pass          # a stressless checkpoint omits stress
                 _reply(out, result)
                 continue
 

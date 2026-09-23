@@ -22,6 +22,7 @@ All heavy imports are function-level (core-clean module).
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 
@@ -338,6 +339,13 @@ def _cmd_build(args) -> int:
     if args.worker_threads < 1:
         return _err(f"--worker-threads must be >= 1, "
                     f"got {args.worker_threads}")
+    for flag, value in (("--delta", args.delta), ("--fmax", args.fmax),
+                        ("--snap-symmetry", args.snap_symmetry),
+                        ("--dos-smearing", args.dos_smearing)):
+        if value is not None and not (math.isfinite(value) and value > 0):
+            return _err(f"{flag} must be a finite number > 0, got {value}")
+    if args.nmax < 0:
+        return _err(f"--nmax must be >= 0, got {args.nmax}")
     supercell_arg = _parse_supercell(args.supercell) \
         if args.supercell is not None else None
     mesh_arg = _parse_mesh(args.mesh) if args.mesh is not None else None
