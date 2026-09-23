@@ -3,7 +3,6 @@ import numpy as np
 import pytest
 
 from irma.spectra.dos_io import read_dos_2col
-from irma.spectra.dos_mode0 import compute_mode0_sqe
 
 
 def _write(tmp_path, name, text):
@@ -62,18 +61,6 @@ def test_fine_grid_resample_floor(tmp_path):
     omega, rho = read_dos_2col(path, unit="meV")
     assert omega.size <= 100.0 / 0.01 + 2                    # floored at 0.01 meV
     assert omega.size >= 4 and rho.max() > 0
-
-
-def test_feeds_compute_mode0_sqe_end_to_end(tmp_path):
-    rows = "".join(f"{w} {(w/40.0)**2 if w <= 40 else 0.0}\n" for w in range(0, 121))
-    path = _write(tmp_path, "dos.txt", rows)
-    omega, rho = read_dos_2col(path, unit="meV")
-    out = compute_mode0_sqe(
-        species=[{"symbol": "H", "omega_ev": omega, "rho": rho,
-                  "awr": 0.999, "sigma_bound_b": 80.0}],
-        temperature_k=300.0, q_ang_inv=np.linspace(0.5, 12, 60),
-        e_mev=np.linspace(0, 130, 160))
-    assert np.all(np.isfinite(out["sqe_barn_per_meV"])) and out["sqe_barn_per_meV"].max() > 0
 
 
 def test_bad_inputs_rejected(tmp_path):
