@@ -1488,7 +1488,8 @@ class NSPanel(RunPanel):
                 cfg_path, "--q-min", "0.0", "--q-max", f"{q_max:.3f}",
                 "--dq-map", str(cfg.grid.dq_max_invA),
                 "--angle-range", str(th_min), str(th_max),
-                "-o", self._pending_map]
+                # the full map: the Plot tab masks at view and export time
+                "--no-mask", "-o", self._pending_map]
         # a success guarantees a non-empty map file (the runner checks
         # output_path on exit 0), so on_ok can load and plot it
         self._start(
