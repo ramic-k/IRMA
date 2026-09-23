@@ -211,6 +211,20 @@ def test_compute_sqe_map_kinematic_envelope():
     assert np.all(q_hi[fin] >= q_lo[fin] - 1e-9)
 
 
+def test_compute_sqe_map_kinematic_factor_weights_each_energy_column():
+    """kinematic_factor=True multiplies the map by kf/ki(E) per column, as
+    compute_spectrum does (direct geometry: sqrt((Ei - E)/Ei))."""
+    common = dict(geometry="direct", e_fixed_meV=250.0, dos_species=[_carbon()],
+                  q_min=0.5, q_max=10.0, dQ_map=0.5, e_max=120.0, dE=2.0,
+                  broaden=False, **MAP_BASE)
+    plain = compute_sqe_map(**common)
+    weighted = compute_sqe_map(kinematic_factor=True, **common)
+    assert weighted.metadata["kinematic_factor"] is True
+    np.testing.assert_allclose(
+        weighted.S, plain.S * np.sqrt((250.0 - plain.E) / 250.0)[None, :],
+        rtol=1e-12, atol=0.0)
+
+
 def test_compute_sqe_map_broadening_changes_the_map():
     """broaden=True must actually apply the resolution kernel: the raw and
     broadened maps of the SAME input must differ. A no-op that only flips the

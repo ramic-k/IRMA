@@ -861,4 +861,4 @@ def run_map(cfg, *, q_min=0.0, q_max=None, dQ_map=None, angle_range=None,
     return compute_sqe_map(
         **_forward_kwargs(cfg, progress),
         angle_range_deg=tuple(angle_range), q_min=q_min, q_max=q_max, dQ_map=dQ_map,
-        broaden=broaden)
+        broaden=broaden, kinematic_factor=cfg.physics.kinematic_kf_ki)
