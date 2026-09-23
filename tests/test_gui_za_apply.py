@@ -64,8 +64,13 @@ def _quiet_dialogs(app, monkeypatch):
 def test_apply_relabels_the_natural_row_to_the_isotope_and_back(app):
     from irma.core.nuclear_data import lookup
     _set_text(app.atoms_text, NATURAL_C)
+    # an imported Card 6e spectrum follows its row to the new nuclide
+    app._imported_partial_spectra = [{"Z": 6, "A": 0, "delta": 0.01, "ni": 2,
+                                      "rho": [0.0, 1.0]}]
     app.za.set("6012")
     app._fill_from_za()
+    assert app._imported_partial_spectra[0]["A"] == 12
+    app._imported_partial_spectra = []
     rows = _rows(app)
     c12 = lookup((6, 12))
     assert (rows[0]["Z"], rows[0]["A"]) == (6, 12)

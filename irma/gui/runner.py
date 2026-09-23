@@ -128,7 +128,7 @@ class ComputationRunner:
             self._proc = None
             self._running = False
 
-    def _error_tail(self, n=12):
+    def _error_tail(self, n=4):
         """Last non-empty output lines, for error messages."""
         lines = [ln.rstrip("\n") for ln in self._tail if ln.strip()]
         return "\n".join(lines[-n:]) if lines else "(no output captured)"

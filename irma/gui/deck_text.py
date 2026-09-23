@@ -46,6 +46,15 @@ def emit_comment_lines(comments_raw):
     return [f"{_quote(cline)} /" for cline in comments_raw.splitlines()]
 
 
+def _whole(value, name, line):
+    """An integer field of an atom line; a non-integral value is an error
+    (the deck reader rejects it too)."""
+    if value != int(value):
+        raise ValueError(f"Atom line '{line}': {name} must be an integer, "
+                         f"got {value:g}.")
+    return int(value)
+
+
 def parse_atoms_text(text):
     """Parse Card 6d-style atom type lines from raw widget text.
 
@@ -63,14 +72,13 @@ def parse_atoms_text(text):
             raise ValueError(
                 f"Atom line '{line}' must contain at least 6 fields "
                 f"(Z A awr b_coh sigma_inc npos), got {len(parts)}.")
-        Z = int(parts[0])
-        A = int(parts[1])
+        Z, A, npos = (_whole(parts[k], name, line)
+                      for k, name in ((0, "Z"), (1, "A"), (5, "npos")))
         awr_at = parts[2]
         b_coh = parts[3]
         sigma_inc = parts[4]
-        npos = int(parts[5])
         coords = parts[6:]
-        if len(coords) < 3 * npos:
+        if len(coords) != 3 * npos:
             raise ValueError(
                 f"Atom line '{line}' declares npos={npos} but provides "
                 f"{len(coords)} coordinate values (need {3 * npos}).")

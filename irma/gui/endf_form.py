@@ -1305,6 +1305,7 @@ class EndfFormMixin:
                         return
                 new_rows = list(rows)
                 new_rows[i] = new_row
+                relabelled = (rows[i]["Z"], rows[i]["A"]), new_row["A"]
                 row_note = (f"atom row {i + 1}: {old_label} -> {label} "
                             f"({change_text}); positions kept")
             elif match["same_z"]:
@@ -1330,6 +1331,11 @@ class EndfFormMixin:
         self.spr.set(f"{spr:.6g}")
         if new_rows is not None:
             self._write_atom_rows([format_atom_row(r) for r in new_rows])
+            # imported Card 6e spectra follow their row to the new nuclide
+            (old_z, old_a), new_a = relabelled
+            for sp in self._imported_partial_spectra:
+                if (sp["Z"], sp["A"]) == (old_z, old_a):
+                    sp["A"] = new_a
         model_note = ""
         if new_rows is not None and self.inelastic_mode_var.get() in (1, 2):
             model_note = ("; the phonopy model's masses and phonons are not "
@@ -2529,8 +2535,8 @@ class EndfFormMixin:
         ilog = self._code(self.ilog)
         iint = self._code(self.iint)
 
-        npr = int(parse_float("npr (principal atom count)",
-                              self.npr.get().strip() or "1"))
+        npr = parse_int("npr (principal atom count)",
+                        self.npr.get().strip() or "1")
 
         # inelastic_mode is an iel=10 concept; 0 (classic) for everything else.
         inelastic_mode_val = int(self.inelastic_mode_var.get()) if iel == 10 else 0
@@ -2652,11 +2658,10 @@ class EndfFormMixin:
 
             # Card 6b: elastic_mode nat nspec inelastic_mode
             #          [edge_group_bins_per_decade] [edge_group_threshold_eV]
-            try:
-                bpd_i = int(float(self.coh_edge_group_bpd.get().strip() or "0"))
-            except ValueError:
-                bpd_i = 0
-            if self.coh_edge_group_enable_var.get() and bpd_i > 0:
+            bpd_i = (parse_int("Bragg-edge bins per decade",
+                               self.coh_edge_group_bpd.get().strip() or "0")
+                     if self.coh_edge_group_enable_var.get() else 0)
+            if bpd_i > 0:
                 thr = self.coh_edge_group_thr.get().strip() or "1.0"
                 lines.append(
                     f"{elastic_mode} {nat} {nspec} {inelastic_mode_val} {bpd_i} {thr} /")
@@ -2912,7 +2917,7 @@ class EndfFormMixin:
             else:
                 self.status_var.set("Error")
                 self.log.append(f"\n{message}\n")
-                messagebox.showerror("Calculation Error", message[:500])
+                messagebox.showerror("Calculation Error", message)
             self.cleanup_temp_files()
         self.root.after(0, _update)
 
