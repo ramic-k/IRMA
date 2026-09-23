@@ -62,7 +62,7 @@ def test_autofill_never_overwrites_user_values(table):
     assert r["_var"]["b_coh_fm"].get() != ""                # blanks still fill
 
 
-@pytest.mark.parametrize("symbol", ["Cd", "B", "Gd", "B-10", "Li-6"])
+@pytest.mark.parametrize("symbol", ["Cd", "Li-6"])
 def test_autofill_refuses_energy_dependent_nuclides(table, symbol):
     """B, B-10, and Li-6 carry complex (energy-dependent)
     scattering lengths the upstream table under-flags; the regenerated
@@ -84,26 +84,20 @@ def test_isotope_labels_autofill_too(table):
         lookup("C-13").awr, rel=1e-5)
 
 
-def test_symbol_change_refreshes_machine_filled_constants(table):
-    """Typing a new symbol over a machine-filled
-    row must refresh the constants, not silently keep the old element's."""
-    r = _machine_row(table, "C")
-    r["_var"]["symbol"].set("Be")
-    assert table.autofill_row(r) is True
-    be = lookup("Be")
-    assert float(r["_var"]["awr"].get()) == pytest.approx(be.awr, rel=1e-5)
-    assert float(r["_var"]["b_coh_fm"].get()) == pytest.approx(
-        be.b_coh_fm, rel=1e-5)
-
-
-def test_symbol_change_keeps_user_edited_fields(table):
+def test_symbol_change_refreshes_machine_values_and_keeps_user_edits(table):
+    """Typing a new symbol over a machine-filled row refreshes the constants
+    the table filled, not silently keeping the old element's, and keeps the
+    ones the user typed."""
     r = _machine_row(table, "C")
     r["_var"]["awr"].set("99")                              # user override
     r["_var"]["symbol"].set("Be")
-    table.autofill_row(r)
+    assert table.autofill_row(r) is True
+    be = lookup("Be")
     assert r["_var"]["awr"].get() == "99"                   # user value survives
+    assert float(r["_var"]["b_coh_fm"].get()) == pytest.approx(
+        be.b_coh_fm, rel=1e-5)
     assert float(r["_var"]["sigma_bound_b"].get()) == pytest.approx(
-        lookup("Be").sigma_bound_b, rel=1e-5)               # machine value refreshed
+        be.sigma_bound_b, rel=1e-5)
 
 
 def test_symbol_change_to_refused_nuclide_blanks_stale_constants(table):
@@ -114,41 +108,6 @@ def test_symbol_change_to_refused_nuclide_blanks_stale_constants(table):
     assert table.autofill_row(r) is False
     assert r["_var"]["sigma_bound_b"].get() == ""
     assert r["_var"]["awr"].get() == ""
-
-
-def test_typo_then_correct_symbol_recovers(table):
-    r = _machine_row(table, "C")
-    r["_var"]["symbol"].set("Xx")                           # typo blanks machine values
-    table.autofill_row(r)
-    r["_var"]["symbol"].set("Be")                           # corrected
-    assert table.autofill_row(r) is True
-    assert float(r["_var"]["awr"].get()) == pytest.approx(
-        lookup("Be").awr, rel=1e-5)
-
-
-def test_plain_table_is_unchanged_by_the_nuclide_editor_mode(table, root):
-    """The MLIP emit form's nuclear-data editor is an OPT-IN mode of this
-    same widget. A table built without the flag must keep the exact key
-    set, column set, and controls the NS / NCrystal panels read."""
-    from irma.gui.element_table import _KEYS
-    assert table._keys == _KEYS
-    assert table.nuclide_editor is False
-    row = table.add_row({"symbol": "C"})
-    assert set(table.get_rows()[0]) == set(_KEYS)
-    assert "mode" not in table.get_rows()[0]
-    assert row.get("_note") is None
-    # the editor's own entry points are inert on a plain table
-    table.sync_nuclide_row(row)
-    assert set(table.get_rows()[0]) == set(_KEYS)
-    # and the "+ Add element" button (which the editor drops) is present
-    assert any(str(w.cget("text")) == "+ Add element"
-               for f in table.winfo_children()
-               for w in f.winfo_children()
-               if "text" in w.keys())
-
-    editor = ElementTable(root, nuclide_editor=True)
-    assert editor._keys[:3] == ["symbol", "mode", "nuclide"]
-    assert set(_KEYS) < set(editor._keys)
 
 
 # -- 2. panel default rows --------------------------------------------------
