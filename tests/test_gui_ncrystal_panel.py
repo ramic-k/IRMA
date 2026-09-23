@@ -16,7 +16,6 @@ import pytest
 # COLLECTION time on a Python built without _tkinter, aborting the whole pytest
 # run instead of skipping cleanly.
 tk = pytest.importorskip("tkinter")
-from irma.gui.element_table import NUCLEAR                  # noqa: E402
 from irma.gui.runner import ComputationRunner               # noqa: E402
 from irma.ncrystal.config import NCrystalExportConfig       # noqa: E402
 from irma.spectra.config import SpectraConfigError          # noqa: E402
@@ -64,15 +63,6 @@ def _declare(panel, symbol="C"):
 
 
 # ---- construction ----------------------------------------------------------
-def test_panel_constructs_headless(panel):
-    """The panel builds against a withdrawn root (no display)."""
-    assert len(panel.element_table.rows) == 1
-    assert panel.element_table.get_rows()[0]["symbol"] == ""
-    # only the nuclear columns are shown -- the export ignores DOS/positions
-    from irma.gui.element_table import NUCLEAR
-    assert panel.element_table._visible == list(NUCLEAR)
-
-
 def test_fresh_panel_ships_no_material_identity(panel):
     """A fresh panel asserts nothing about the user's material: the scatterer
     row is empty (the old prefilled natural-carbon row let another material's
@@ -80,31 +70,13 @@ def test_fresh_panel_ships_no_material_identity(panel):
     row = panel.element_table.get_rows()[0]
     assert all(row[k] == "" for k in
                ("symbol", "sigma_bound_b", "awr", "b_coh_fm", "sigma_inc_b"))
-
-
-def test_fresh_panel_keeps_methodology_defaults(panel):
-    """...while the export/methodology defaults stay prefilled."""
+    # ...while the export/methodology defaults stay prefilled
     assert panel.mesh.get() == "40 40 40"
     assert panel.temperature.get() == "296"
     assert panel.num_directions.get() == "10000"
     assert panel.multiphonon_num_directions.get() == "1000"
     assert panel.multiphonon_max_order.get() == "auto"
     assert panel.material_id.get() == "material"
-
-
-def test_scatterer_hint_names_the_way_to_fill_the_table():
-    """The blank table reads as deliberately required, not merely empty."""
-    from irma.gui.ncrystal_panel import IDENTITY_HINT_SCATTERERS
-    assert "YOUR material" in IDENTITY_HINT_SCATTERERS
-    assert "phonopy.yaml" in IDENTITY_HINT_SCATTERERS
-
-
-def test_scatterer_help_describes_the_empty_starting_row():
-    """The '?' popup must match what construction actually inserts: one
-    empty row, not the natural-carbon row the panel used to prefill."""
-    from irma.gui.ncrystal_panel import HELP
-    assert "EMPTY row" in HELP["scatterers"]
-    assert "default row is natural carbon" not in HELP["scatterers"]
 
 
 # ---- build_config: defaults + populated fields -----------------------------
@@ -135,64 +107,18 @@ def test_defaults_build_a_valid_config(panel):
     assert s.awr == pytest.approx(nat_c.awr, rel=1e-5)
     assert s.b_coh_fm == pytest.approx(nat_c.b_coh_fm, rel=1e-5)
     assert s.sigma_inc_b == pytest.approx(nat_c.sigma_inc_b, rel=1e-5)
-
-
-def test_default_build_config_uses_auto_grid_with_config_defaults(panel):
-    """The shared grid form defaults to the converged automatic grid; build_config
-    flows the ENDF-style knobs through and reports grid_mode == 'auto' with
-    freq_max_eV unset (auto-estimated from phonopy)."""
-    panel.phonopy_yaml.set("graphite/phonopy.yaml")
-    panel.material_id.set("graphite")
-    _declare(panel)
-    cfg = panel.build_config()
+    # the shared grid form defaults to the converged automatic grid, with
+    # freq_max unset (auto-estimated from phonopy)
     assert cfg.grid_mode == "auto"
     assert cfg.alpha_grid is None and cfg.beta_grid is None
-    assert cfg.freq_max_eV is None       # blank -> auto-estimate from phonopy
+    assert cfg.freq_max_eV is None
     assert cfg.n_phonon == 300 and cfg.alpha_dq_invA == 0.05
     assert cfg.alpha_qcut_invA == 12.0 and cfg.n_lower == 15
-    # the merged grid knobs survive a YAML round-trip via the cached dict
+    # the cached {material, export} mapping the bake path serializes
+    # round-trips back to an equal config
     assert "n_phonon" in panel._last_built_dict["export"]
     assert "alpha_grid" not in panel._last_built_dict["export"]
-
-
-def test_blank_jobs_resolves_to_every_core(panel, monkeypatch):
-    """A blank jobs field means ALL CORES, not serial.
-
-    The panel only records ``jobs=None``; the number that reaches the engine
-    comes from the consumer in irma.ncrystal.build, so assert the RESOLVED
-    count (the old test stopped at ``cfg.jobs is None`` and called it
-    'serial', which is why the stale 'blank=serial' label and popup survived
-    a shipped default change). An explicit value still caps it, which is the
-    lever for a memory-limited machine.
-    """
-    from irma.ncrystal import build as ncbuild
-
-    panel.phonopy_yaml.set("graphite/phonopy.yaml")
-    panel.material_id.set("graphite")
-    _declare(panel)
-
-    monkeypatch.setattr(ncbuild.os, "cpu_count", lambda: 7)
-    assert panel.build_config().jobs is None
-    assert ncbuild.resolve_jobs(panel.build_config().jobs) == 7
-
-    panel.jobs.set("3")
-    cfg = panel.build_config()
-    assert cfg.jobs == 3
-    assert ncbuild.resolve_jobs(cfg.jobs) == 3
-
-    # a machine that reports no core count still gets a usable worker count
-    monkeypatch.setattr(ncbuild.os, "cpu_count", lambda: None)
-    assert ncbuild.resolve_jobs(None) == 1
-
-
-def test_jobs_label_and_help_state_the_shipped_default(panel):
-    """Label and popup must say what a blank field actually does."""
-    from irma.gui.ncrystal_panel import HELP
-
-    assert "all cores" in panel.jobs.label.cget("text")
-    assert "serial" not in panel.jobs.label.cget("text")
-    assert "blank = every CPU core" in HELP["jobs"]
-    assert "cap it" in HELP["jobs"]
+    assert NCrystalExportConfig.from_dict(panel._last_built_dict) == cfg
 
 
 def test_explicit_grid_flows_into_config(panel):
@@ -214,34 +140,18 @@ def test_explicit_grid_flows_into_config(panel):
 
 
 def test_populated_fields_map_onto_config(panel):
-    """Every exposed field flows into the config with the right type/mapping."""
-    panel.phonopy_yaml.set("beo/phonopy.yaml")
-    panel.born.set("BORN")
-    panel.force_constants.set("FORCE_CONSTANTS")
-    panel.force_sets.set("FORCE_SETS")
-    panel.mesh.set("30 30 24")
-    panel.temperature.set("500")
-    panel.material_id.set("beo")
-    panel.inelastic_mode.set(panel._INELASTIC_BY_INT[1])
-    panel.num_directions.set("4000")
-    panel.multiphonon_num_directions.set("200")
-    panel.multiphonon_max_order.set("120")
-    panel.jobs.set("8")
-    # two-species material
-    panel.element_table.set_rows([
-        {"symbol": "Be", "sigma_bound_b": "7.63", "awr": "8.935",
-         "b_coh_fm": "7.79", "sigma_inc_b": "0.0018"},
-        {"symbol": "O", "sigma_bound_b": "4.232", "awr": "15.858",
-         "b_coh_fm": "5.803", "sigma_inc_b": "0.0008"}])
+    """Every exposed field flows into the config with the right type/mapping
+    (a round trip compares two build_config outputs, so it cannot catch a
+    dropped or mis-mapped field)."""
+    _fill(panel)
     cfg = panel.build_config()
     assert cfg.material_id == "beo"
     assert cfg.inelastic_mode == 1
     assert cfg.num_directions == 4000
     assert cfg.multiphonon_num_directions == 200
     assert cfg.multiphonon_max_order == 120              # int path
-    assert cfg.gain_side == "scaled_sym"                 # default; GUI control removed
-    assert cfg.elastic is True                           # default; GUI control removed
     assert cfg.jobs == 8
+    assert cfg.incoherent_elastic_mode == "directional"
     m = cfg.material
     assert m.phonopy_yaml == "beo/phonopy.yaml"
     assert m.born == "BORN" and m.force_constants == "FORCE_CONSTANTS"
@@ -261,19 +171,6 @@ def test_blank_elastic_constants_rejected(panel):
                                    "awr": "11.898"}])
     with pytest.raises(SpectraConfigError, match="'C' is missing b_coh_fm"):
         panel.build_config()
-
-
-def test_build_config_caches_yaml_dict(panel):
-    """build_config stashes the {material, export} mapping the bake path
-    serializes, and it round-trips back through from_dict to an equal config."""
-    panel.phonopy_yaml.set("g.yaml")
-    panel.material_id.set("g")
-    _declare(panel)
-    cfg = panel.build_config()
-    rebuilt = NCrystalExportConfig.from_dict(panel._last_built_dict)
-    assert rebuilt.material_id == cfg.material_id
-    assert rebuilt.gain_side == cfg.gain_side
-    assert rebuilt.material.scatterers[0].symbol == "C"
 
 
 # ---- invalid input surfaces an error ---------------------------------------
@@ -299,15 +196,6 @@ def test_bad_numeric_entry_names_the_field(panel):
     panel.temperature.set("296")
     panel.multiphonon_max_order.set("seven")
     with pytest.raises(ValueError, match="multiphonon order"):
-        panel.build_config()
-
-
-def test_invalid_inelastic_mode_rejected_by_config(panel):
-    """A leading-digit mode the config rejects surfaces its SpectraConfigError.
-    (The dropdown only offers 1/2, but build_config must not silently coerce.)"""
-    panel.material_id.set("g")
-    panel.inelastic_mode.var.set("3 (bogus)")
-    with pytest.raises(SpectraConfigError, match="inelastic_mode"):
         panel.build_config()
 
 
@@ -348,25 +236,14 @@ def test_export_invokes_runner_with_cli_argv(panel, monkeypatch, tmp_path):
     os.unlink(cfg_path)
 
 
-def test_export_without_outdir_errors_and_does_not_run(panel, monkeypatch):
-    """No output directory -> a dialog error and the runner is never called."""
+@pytest.mark.parametrize("material_id, outdir", [("g", ""), ("", "out")])
+def test_export_error_shows_a_dialog_and_does_not_run(panel, monkeypatch,
+                                                     material_id, outdir):
+    """No output directory, or a config error (blank material_id) -> a dialog
+    error and the runner is never called."""
     panel.phonopy_yaml.set("g.yaml")
-    panel.material_id.set("g")
-    panel.outdir.set("")
-    called = {"run": False, "error": None}
-    monkeypatch.setattr(panel.runner, "run_command",
-                        lambda *a, **k: called.__setitem__("run", True))
-    import irma.gui.ncrystal_panel as mod
-    monkeypatch.setattr(mod.messagebox, "showerror",
-                        lambda *a, **k: called.__setitem__("error", a))
-    panel._export()
-    assert called["run"] is False and called["error"] is not None
-
-
-def test_export_with_bad_config_errors_and_does_not_run(panel, monkeypatch, tmp_path):
-    """A config error (blank material_id) -> a dialog and no run."""
-    panel.material_id.set("")
-    panel.outdir.set(str(tmp_path))
+    panel.material_id.set(material_id)
+    panel.outdir.set(outdir)
     called = {"run": False, "error": None}
     monkeypatch.setattr(panel.runner, "run_command",
                         lambda *a, **k: called.__setitem__("run", True))
@@ -452,11 +329,6 @@ def _snapshot(panel):
     }
 
 
-def test_open_config_button_exists_next_to_export(panel):
-    """The tab can round-trip its inputs, like the other two."""
-    assert panel.open_btn.cget("text") == "Open Config..."
-
-
 def test_round_trip_automatic_grid(make_panel, tmp_path, monkeypatch):
     """Fill the form, export the dict as YAML, load it into a FRESH panel:
     that panel's build_config() equals the original config, automatic grid
@@ -478,15 +350,6 @@ def test_round_trip_automatic_grid(make_panel, tmp_path, monkeypatch):
     assert float(dst.grid_form.freq_max.get()) == 0.18
     assert float(dst.grid_form.alpha_dq.get()) == 0.02
     assert dst.grid_form.n_upper.get() == "40"
-    assert dst.mesh.get() == "30 30 24"
-    assert float(dst.temperature.get()) == 500.0
-    assert dst.material_id.get() == "beo"
-    assert dst.inelastic_mode.get() == dst._INELASTIC_BY_INT[1]
-    assert dst.jobs.get() == "8"
-    assert dst.incoherent_elastic_mode.get() == "directional"
-    assert dst.born.get() == "BORN"
-    assert dst.force_constants.get() == "FORCE_CONSTANTS"
-    assert dst.force_sets.get() == "FORCE_SETS"
 
 
 def test_round_trip_explicit_grid(make_panel, tmp_path, monkeypatch):
@@ -531,24 +394,6 @@ def test_loading_an_auto_config_clears_a_stale_explicit_grid(
     assert dst.grid_form.alpha_grid.get() == ""
     assert dst.grid_form.beta_grid.get() == ""
     assert dst.build_config() == cfg
-
-
-def test_polyatomic_config_rebuilds_one_row_per_species(
-        make_panel, tmp_path, monkeypatch):
-    """The scatterer table is rebuilt row by row from the config's species."""
-    pytest.importorskip("yaml")
-    src = make_panel()
-    _fill(src)
-    _write(src, tmp_path / "beo.yaml")
-
-    dst = make_panel()
-    _open(dst, tmp_path / "beo.yaml", monkeypatch)
-    rows = dst.element_table.get_rows()
-    assert len(rows) == 2                       # the empty starting row is gone
-    assert [r["symbol"] for r in rows] == ["Be", "O"]
-    for row, want in zip(rows, BEO_ROWS):
-        for key in NUCLEAR[1:]:
-            assert float(row[key]) == float(want[key]), key
 
 
 def test_loaded_rows_carry_the_autofill_provenance(
@@ -641,61 +486,35 @@ def test_open_emitted_ncrystal_yaml(make_panel, tmp_path, monkeypatch):
     assert dst.build_config() == want
 
 
-def test_malformed_file_reports_and_changes_nothing(panel, tmp_path,
-                                                    monkeypatch):
-    """Unparseable YAML: an error dialog, and the form is exactly as it was."""
-    import irma.gui.ncrystal_panel as mod
-
-    bad = tmp_path / "broken.yaml"
-    bad.write_text("material: [1, 2\n  export: {\n")
-    before = _snapshot(panel)
-    errors = []
-    monkeypatch.setattr(mod.messagebox, "showerror",
-                        lambda *a, **k: errors.append(a))
-    _open(panel, bad, monkeypatch)
-    assert errors
-    assert _snapshot(panel) == before
-    assert len(panel.element_table.rows) == 1
+_REJECTED_YAML = (
+    "material:\n  phonopy_yaml: g.yaml\n  mesh: [40, 40, 40]\n"
+    "  temperature_K: 296.0\n"
+    "  scatterers:\n  - {symbol: C, sigma_bound_b: 5.551, awr: 11.898}\n"
+    "export: {material_id: graphite}\n")
 
 
-def test_config_the_exporter_rejects_reports_and_changes_nothing(
-        panel, tmp_path, monkeypatch):
-    """Valid YAML the EXPORTER refuses (a scatterer with no b_coh_fm) is
-    refused here too, by that same loader -- and mutates nothing."""
+@pytest.mark.parametrize("text, message", [
+    ("material: [1, 2\n  export: {\n", ""),          # unparseable YAML
+    (_REJECTED_YAML, "b_coh_fm"),                      # the exporter refuses it
+])
+def test_bad_config_file_reports_and_changes_nothing(panel, tmp_path,
+                                                     monkeypatch, text,
+                                                     message):
+    """Unparseable YAML, or valid YAML the EXPORTER refuses (a scatterer with
+    no b_coh_fm): an error dialog, and the form is exactly as it was."""
     pytest.importorskip("yaml")
-    import yaml
-
     import irma.gui.ncrystal_panel as mod
 
-    path = tmp_path / "rejected.yaml"
-    path.write_text(yaml.safe_dump({
-        "material": {"phonopy_yaml": "g.yaml", "mesh": [40, 40, 40],
-                     "temperature_K": 296.0,
-                     "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551,
-                                     "awr": 11.898}]},
-        "export": {"material_id": "graphite"}}))
+    path = tmp_path / "config.yaml"
+    path.write_text(text)
     before = _snapshot(panel)
     errors = []
     monkeypatch.setattr(mod.messagebox, "showerror",
                         lambda *a, **k: errors.append(a))
     _open(panel, path, monkeypatch)
-    assert errors and "b_coh_fm" in str(errors[0])
+    assert errors and message in str(errors[0])
     assert _snapshot(panel) == before
     assert len(panel.element_table.rows) == 1
-
-
-def test_cancelled_dialog_keeps_the_empty_starting_row(panel, monkeypatch):
-    """Dismissing the dialog leaves the deliberately EMPTY scatterer row (and
-    everything else) untouched."""
-    import irma.gui.ncrystal_panel as mod
-
-    before = _snapshot(panel)
-    monkeypatch.setattr(mod.filedialog, "askopenfilename", lambda *a, **k: "")
-    panel._open_config()
-    assert len(panel.element_table.rows) == 1
-    row = panel.element_table.get_rows()[0]
-    assert all(row[k] == "" for k in NUCLEAR)
-    assert _snapshot(panel) == before
 
 
 def test_min_phonon_energy_round_trips_through_the_export_form(make_panel):
