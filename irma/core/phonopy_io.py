@@ -1,27 +1,14 @@
 """phonopy_io.py — Load phonopy mesh data and compute anisotropic DOS tensors.
 
-Provides tools for reading phonon eigenvectors from phonopy and computing
-the anisotropic phonon DOS tensor ρ_{d,ij}(ε) needed for the phonopy-backed
-directional Debye-Waller / standalone MT4 treatments (inelastic_mode=1/2, iel=10).
-
-The DOS tensor ρ_{d,ij}(ε) for atom d and Cartesian directions i, j:
+The DOS tensor of atom d and Cartesian directions i, j, used by the
+inelastic_mode=1/2 paths:
 
     ρ_{d,ij}(ε_k) = (1/N_total) Σ_{q,ν} Re[e_{d,i,ν}(q) · conj(e_{d,j,ν}(q))]
                      × w_{q,ν} × G(ε_k − ε_{q,ν}, σ)
 
-where e_{d,i,ν}(q) is the phonopy unit-norm eigenvector component,
-w_{q,ν} is the BZ weight, G is a Gaussian kernel, and N_total = Σ w_{q,ν}.
-
-Normalization: the scalar partial DOS g_d(ε) = (1/3)Σ_i ρ_{d,ii}(ε)
-satisfies ∫g_d(ε)dε = 1 (consistent with LEAPR's tbeta=1 convention),
-because phonopy eigenvectors satisfy Σ_{d,i}|e_{d,i,ν}|² = 1 (unit norm).
-
-Phonopy eigenvector convention (np.linalg.eigh):
-    mesh.eigenvectors shape = (N_q, 3*N_atoms, N_branches)
-    axis 1 = component index 3*d+i  (ATOM-FIRST: atom d, direction i=0,1,2)
-    axis 2 = mode index ν
-    i.e., eigenvectors[q, 3*d+i, ν] = component of atom d, direction i, mode ν.
-    Correct reshape: .transpose(0,2,1).reshape(N_q, N_branches, N_atoms, 3).
+with e the unit-norm phonopy eigenvector, w the Brillouin-zone weight,
+N_total = Σ w and G(x, σ) = exp(−x²/2σ²)/(σ√2π). Because Σ_{d,i}|e|² = 1, the
+scalar partial DOS g_d = (1/3)Σ_i ρ_{d,ii} integrates to 1 (LEAPR's tbeta=1).
 """
 
 import numpy as np
@@ -41,19 +28,9 @@ from contextlib import contextmanager
 
 @contextmanager
 def isolated_phonopy_cwd():
-    """Pin the process cwd to a fresh empty directory while phonopy loads.
-
-    phonopy.load auto-reads FORCE_CONSTANTS / force_constants.hdf5 /
-    FORCE_SETS / BORN from the process working directory as a last resort —
-    even when explicit paths are given (its force-constants selection
-    probes ./FORCE_CONSTANTS before building FC from an explicit
-    force_sets_filename). IRMA passes every wanted source as an absolute
-    path (or relies on yaml-embedded data, which outranks the fallbacks),
-    so the correct behavior for ALL residual fallbacks is to find nothing:
-    an empty scratch cwd guarantees that, making the loaded model depend
-    only on the deck and the named phonopy.yaml — never on where IRMA
-    happens to run.
-    """
+    """Run phonopy in a fresh empty directory: phonopy.load probes
+    ./FORCE_CONSTANTS, ./FORCE_SETS and ./BORN even when explicit paths are
+    given, and what gets loaded must not depend on where IRMA runs."""
     import os
     import shutil
     import tempfile
@@ -65,35 +42,19 @@ def isolated_phonopy_cwd():
         yield
     finally:
         os.chdir(prev)
-        # rmtree, not rmdir: if phonopy wrote anything into the scratch cwd the
-        # dir is non-empty and rmdir would leave it (and its contents) in /tmp.
         shutil.rmtree(scratch, ignore_errors=True)
 
 
 @contextmanager
 def openmp_unpinned_serial_setup():
-    """Temporarily lift the OpenMP single-thread pin for a SERIAL phonopy run.
+    """Let phonopy's OpenMP q-point loop use all cores for a serial run_mesh.
 
-    The process-wide pin (OMP_NUM_THREADS=1 before native libraries load)
-    exists for the spawn worker pools (get_context("spawn")), where
-    free-threaded workers oversubscribe the machine. The big SERIAL phonopy
-    mesh runs (the full and symmetry-reduced eigensolves) happen long before
-    any pool is spawned, on otherwise-idle cores: phonopy's C
-    dynamical-matrix build parallelizes over q-points with no cross-q
-    reductions, so per-q results are unchanged (gated at ENDF tape
-    precision). BLAS pools stay at one thread — a threaded 12x12 eigh is
-    pathologically slower. The previous limit is restored on exit, before any
-    worker pool starts; the worker initializer re-pins each spawned worker as
-    a second line of defense. No-op when threadpoolctl is not installed.
+    Per-q results are unchanged; BLAS stays pinned to one thread.
     """
-    try:
-        import threadpoolctl
-    except ImportError:
-        yield
-        return
-    import os as _os
-    n = max(1, _os.cpu_count() or 1)
-    with threadpoolctl.threadpool_limits(limits=n, user_api="openmp"):
+    import os
+
+    import threadpoolctl
+    with threadpoolctl.threadpool_limits(limits=os.cpu_count() or 1, user_api="openmp"):
         yield
 
 
@@ -123,63 +84,24 @@ def _phonopy_yaml_has_top_level_key(phonopy_yaml_path, keys) -> bool:
 
 
 def reject_unsafe_phonopy_yaml(phonopy_yaml_path) -> None:
-    """Refuse to hand an UNTRUSTED phonopy.yaml to phonopy's YAML parser.
+    """Reject a phonopy.yaml with python YAML tags before phonopy parses it.
 
-    TRUST BOUNDARY. phonopy parses phonopy.yaml with PyYAML's unsafe
-    loader (``yaml.load(fp, Loader=CLoader)`` in
-    phonopy/interface/phonopy_yaml.py), so a ``!!python/object/apply:``
-    tag in the file executes arbitrary code AT PARSE TIME. Any
-    phonopy.yaml that did not originate on this machine — a received
-    bundle, a downloaded example, a deck pointing at someone else's
-    model — must therefore be treated as untrusted input, and every call
-    site that feeds such a file into ``phonopy.load`` (or any other
-    phonopy parse) must call this guard FIRST.
-
-    The check is the same cheap streaming scan the embeds-detection
-    helpers use (no YAML parse, compressed files supported). Rejected,
-    with ValueError, is any line carrying:
-
-    - ``!!python/`` — the shorthand form of the unsafe tag namespace;
-    - ``tag:yaml.org,2002:python`` — the same namespace via a verbatim
-      ``!<...>`` tag;
-    - a ``%TAG`` directive — never emitted by phonopy, and the only way
-      to alias the python tag namespace past a textual scan.
-
-    A legitimate phonopy.yaml contains none of these in any scalar, so
-    false positives are not a practical concern. Scanning is not a
-    sandbox: it makes the known code-execution vector fail closed, it
-    does not make phonopy's parser safe.
+    phonopy uses PyYAML's unsafe loader, so '!!python/' tags (or a %TAG
+    directive aliasing them) execute code; call this before any phonopy.load.
     """
     path = str(phonopy_yaml_path)
     with _open_phonopy_yaml(path, errors="replace") as f:
         for lineno, line in enumerate(f, 1):
-            if "!!python/" in line or "tag:yaml.org,2002:python" in line:
+            if ("!!python/" in line or "tag:yaml.org,2002:python" in line
+                    or line.startswith("%TAG")):
                 raise ValueError(
-                    f"{path}:{lineno}: refusing to parse: the file carries "
-                    f"a non-standard '!!python/' YAML tag, which phonopy's "
-                    f"unsafe YAML loader would EXECUTE as code; this is not "
-                    f"a legitimate phonopy.yaml — do not open it with "
-                    f"phonopy tooling")
-            if line.startswith("%TAG"):
-                raise ValueError(
-                    f"{path}:{lineno}: refusing to parse: the file carries "
-                    f"a %TAG directive, which phonopy never emits and which "
-                    f"can alias the code-executing '!!python/' YAML tag "
-                    f"namespace; this is not a legitimate phonopy.yaml")
+                    f"{path}:{lineno}: refusing to parse: unsafe YAML tag "
+                    f"(!!python/ or %TAG) that phonopy's loader would execute")
 
 
 def phonopy_yaml_embeds_nac(phonopy_yaml_path) -> bool:
-    """True if the phonopy.yaml carries embedded NAC parameters.
-
-    Matches the current top-level ``nac:`` block as well as the older
-    flat ``born_effective_charge:`` / ``dielectric_constant:`` keys that
-    phonopy's parser still accepts. Used to decide phonopy.load's
-    ``is_nac``: NAC saved inside the deck-named model file is part of that
-    model and is honored, but phonopy's fallback of auto-reading a file
-    named ``BORN`` from the process working directory is never allowed —
-    whether NAC is applied must depend only on the deck (Card 6f) and the
-    named phonopy.yaml, not on where IRMA runs.
-    """
+    """True if the phonopy.yaml carries embedded NAC parameters: the current
+    ``nac:`` block or the older flat keys phonopy still accepts."""
     return _phonopy_yaml_has_top_level_key(
         phonopy_yaml_path,
         ("nac:", "born_effective_charge:", "dielectric_constant:"),
@@ -194,21 +116,11 @@ def phonopy_yaml_embeds_force_constants(phonopy_yaml_path) -> bool:
 
 
 def pinned_primitive_matrix_kwargs(phonopy_yaml_path) -> dict:
-    """kwargs pinning phonopy.load's primitive-cell semantics across versions.
+    """kwargs pinning phonopy.load's primitive cell.
 
-    phonopy 4 changed the meaning of an OMITTED ``primitive_matrix``: it now
-    defaults to ``"auto"`` (symmetry-guessed primitive), where phonopy 2/3
-    used the yaml's stored matrix, or the identity when the yaml stores none.
-    An auto-guessed non-identity matrix re-bases the primitive cell, which
-    re-interprets mesh dimensions and shifts frequencies enough to break
-    byte-pinned tapes and frozen validation references.
-
-    Contract (identical physics on every supported phonopy):
-    - yaml stores a top-level ``primitive_matrix:``: pass nothing — the
-      stored value wins under every version, and passing an explicit value
-      would OVERRIDE a stored non-identity matrix.
-    - yaml stores none: pass ``primitive_matrix="P"`` (identity), pinning
-      the phonopy 2/3 behavior under phonopy 4's ``"auto"`` default.
+    phonopy 4 defaults an omitted ``primitive_matrix`` to "auto" (a guessed
+    primitive cell). When the yaml stores a matrix pass nothing, since an
+    explicit value would override it; otherwise pass "P" (the identity).
     """
     if _phonopy_yaml_has_top_level_key(phonopy_yaml_path,
                                        ("primitive_matrix:",)):
@@ -217,20 +129,11 @@ def pinned_primitive_matrix_kwargs(phonopy_yaml_path) -> dict:
 
 
 def resolve_force_constants_source(phonopy_yaml_path) -> dict:
-    """Locate the force constants belonging to the named phonopy model.
+    """phonopy.load kwargs for the named model's force constants.
 
-    Force constants embedded in the yaml itself outrank every file in
-    phonopy.load (they win even over an explicit filename), so they are
-    reported first ({} — phonopy reads them from the yaml). Otherwise the
-    directory of phonopy.yaml is searched in the order the directional-DW
-    loader has always used: ``force_constants.hdf5``, ``FORCE_CONSTANTS``
-    (text), ``FORCE_SETS``; the matching phonopy.load keyword argument
-    (``force_constants_filename`` or ``force_sets_filename``) is returned.
-
-    Raises FileNotFoundError when no source exists: phonopy.load's fallback
-    of searching the process working directory is never allowed — which
-    model gets computed must depend only on the deck-named phonopy.yaml,
-    not on where IRMA runs.
+    Embedded in the yaml ({}), else force_constants.hdf5, FORCE_CONSTANTS or
+    FORCE_SETS next to it. Raises when there is none, since phonopy's fallback
+    of searching the working directory is never used.
     """
     import os
 
@@ -238,23 +141,16 @@ def resolve_force_constants_source(phonopy_yaml_path) -> dict:
         print(f"  Using force constants embedded in {phonopy_yaml_path}", flush=True)
         return {}
     yaml_dir = os.path.dirname(os.path.abspath(str(phonopy_yaml_path)))
-    fc_hdf5 = os.path.join(yaml_dir, 'force_constants.hdf5')
-    fc_text = os.path.join(yaml_dir, 'FORCE_CONSTANTS')
-    fc_sets = os.path.join(yaml_dir, 'FORCE_SETS')
-    if os.path.exists(fc_hdf5):
-        print(f"  Using force constants: {fc_hdf5}", flush=True)
-        return {'force_constants_filename': fc_hdf5}
-    if os.path.exists(fc_text):
-        print(f"  Using force constants: {fc_text}", flush=True)
-        return {'force_constants_filename': fc_text}
-    if os.path.exists(fc_sets):
-        print(f"  Using force sets: {fc_sets}", flush=True)
-        return {'force_sets_filename': fc_sets}
+    for name, key in (("force_constants.hdf5", "force_constants_filename"),
+                      ("FORCE_CONSTANTS", "force_constants_filename"),
+                      ("FORCE_SETS", "force_sets_filename")):
+        path = os.path.join(yaml_dir, name)
+        if os.path.exists(path):
+            print(f"  Using {name}: {path}", flush=True)
+            return {key: path}
     raise FileNotFoundError(
-        f"No force constants found for {phonopy_yaml_path}: checked the "
-        f"yaml itself for an embedded force_constants block, then "
-        f"{fc_hdf5}, {fc_text}, {fc_sets}."
-    )
+        f"No force constants found for {phonopy_yaml_path} (embedded, "
+        f"force_constants.hdf5, FORCE_CONSTANTS, FORCE_SETS)")
 
 
 # -------------------------------------------------- primitive structure ----
@@ -441,36 +337,28 @@ class PhonopyMeshData:
         return len(self.masses_amu)
 
 
-def warn_dynamic_instability(frequencies_ev, qpoints, *, emit=print) -> None:
-    """Warn if the phonon mesh has imaginary modes away from Gamma.
-
-    Mirrors the ENDF driver's stability diagnostic so the exporter and other mesh
-    consumers surface the same signal: an imaginary mode AT Gamma is acoustic-sum-
-    rule / NAC numerical noise (routine and expected), but one at a NON-Gamma
-    q-point is a genuine finite-wavevector dynamical instability worth flagging
-    before a model is trusted (or a pack is baked from it). Warnings go to ``emit``
-    (default ``print``); nothing is raised.
-    """
+def warn_dynamic_instability(frequencies_ev, qpoints) -> None:
+    """Warn about imaginary modes: any away from Gamma (a real instability),
+    or ones at Gamma beyond the acoustic-sum-rule noise."""
     freqs = np.asarray(frequencies_ev, dtype=float)
     qpts = np.asarray(qpoints, dtype=float)
     is_gamma_q = np.all(np.abs(qpts) < 1.0e-9, axis=1)
     nongamma_imag = (freqs < -1.0e-6) & ~is_gamma_q[:, None]
     if np.any(nongamma_imag):
-        emit(f"WARNING: {int(np.count_nonzero(nongamma_imag))} imaginary phonon "
+        print(f"WARNING: {int(np.count_nonzero(nongamma_imag))} imaginary phonon "
              f"mode(s) at non-Gamma q-points (min "
              f"{np.min(freqs[nongamma_imag]) * 1000:.3f} meV) -- the phonon model "
              "is DYNAMICALLY UNSTABLE (a finite-wavevector soft mode); review the "
              "structure and force constants before trusting this evaluation.")
     elif np.any(freqs < -1.0e-4):
-        emit("WARNING: imaginary modes near Gamma (min "
+        print("WARNING: imaginary modes near Gamma (min "
              f"{np.min(freqs) * 1000:.2f} meV) beyond the acoustic-sum-rule noise "
              "band; they are excluded from the grid, but review the phonon model.")
 
 
-# A user phonon-energy cutoff that moves the mean-square displacement trace
-# by more than this fraction is reported as a warning (author decision
-# 2026-09-16): on graphite a 5 meV cutoff removes 0.13% of the modes but 29%
-# of the displacement.
+# A phonon-energy cutoff that moves the mean-square displacement trace by more
+# than this fraction is a warning (a 5 meV cutoff on graphite removes 0.13% of
+# the modes but 29% of the displacement).
 PHONON_CUTOFF_WARN_FRACTION = 0.01
 
 
@@ -498,52 +386,39 @@ def mode_floor_mask(energies_mev, qpoints, n_branches,
     is_gamma_mode = np.repeat(is_gamma_q, n_branches)
     floor = np.where(is_gamma_mode, GAMMA_ACOUSTIC_FLOOR_MEV,
                      MODE_ENERGY_FLOOR_MEV)
-    user_floor = validate_min_phonon_energy_mev(min_phonon_energy_mev)
-    if user_floor > 0.0:
-        floor = np.maximum(floor, user_floor)
+    if min_phonon_energy_mev > 0.0:
+        floor = np.maximum(floor, min_phonon_energy_mev)
     return energies_mev > floor
 
 
 def coherent_mode_mask(energies_mev, q_folded, min_phonon_energy_mev=0.0):
-    """Which modes the coherent one-phonon term keeps at its folded q points.
+    """Modes the coherent one-phonon term keeps; ``energies_mev`` is
+    (points, branches) at the (points, 3) folded reduced q.
 
-    The coherent term evaluates the dynamical matrix at the folded momentum
-    transfers, so ``energies_mev`` is (points, branches) and ``q_folded`` the
-    (points, 3) reduced q of each row. Without a user cutoff it keeps every
-    positive mode, which is the established coherent behaviour (a Gamma
-    Goldstone mode has zero or negative energy there and drops out). With a
-    cutoff it applies the same rule as every mesh consumer,
-    ``mode_floor_mask`` with the cutoff, so all terms are built from one
-    population.
+    Without a cutoff every positive mode is kept (the established coherent
+    behaviour); with one, ``mode_floor_mask`` applies as for the mesh sums.
     """
     energies = np.asarray(energies_mev, dtype=float)
-    cutoff = validate_min_phonon_energy_mev(min_phonon_energy_mev)
-    if cutoff <= 0.0:
+    if min_phonon_energy_mev <= 0.0:
         return energies > 0.0
     n_points, n_branches = energies.shape
     mask = mode_floor_mask(energies.reshape(-1), np.asarray(q_folded, dtype=float),
-                           n_branches, cutoff)
+                           n_branches, min_phonon_energy_mev)
     return mask.reshape(n_points, n_branches)
 
 
 def phonon_cutoff_summary(mesh_data, temperature_K):
-    """What a user phonon-energy cutoff removed from ``mesh_data``, at one temperature.
+    """What a user phonon-energy cutoff removed from ``mesh_data`` at one temperature.
 
-    Compares the cutoff mask with the baseline mask (the automatic floors
-    alone) on the same mesh and reports, as a dictionary: the imaginary
-    mode count, the modes the baseline floors already drop, the ADDITIONAL
-    positive modes the cutoff removes with their Brillouin-zone-weighted
-    fraction, the per-atom DOS trace deficit (the weighted eigenvector
-    weight those modes carried, out of 3 per atom), and the mean-square
-    displacement trace per atom before and after the cutoff at
-    ``temperature_K``. ``warn`` is True when the displacement trace moved by
-    more than ``PHONON_CUTOFF_WARN_FRACTION``. Displacements weight modes as
-    1/E^2, so a cutoff that removes a negligible share of the modes can
-    still remove a large share of the Debye-Waller exponent; the report
-    exists so that is never silent.
+    A dictionary with the modes the automatic floors already drop, the extra
+    modes the cutoff removes and their weight, the per-atom DOS trace deficit,
+    and the mean-square displacement trace per atom with and without the
+    cutoff. Displacements weight modes as 1/E^2, so removing few modes can
+    remove much of the Debye-Waller exponent; ``warn`` is True when the trace
+    moved by more than ``PHONON_CUTOFF_WARN_FRACTION``.
     """
     from dataclasses import replace
-    cutoff = validate_min_phonon_energy_mev(mesh_data.min_phonon_energy_mev)
+    cutoff = float(mesh_data.min_phonon_energy_mev)
     freq = np.asarray(mesh_data.frequencies_ev, dtype=float)
     n_q, n_branches = freq.shape
     energies = freq.reshape(-1) * 1.0e3
@@ -558,9 +433,9 @@ def phonon_cutoff_summary(mesh_data, temperature_K):
     # deficit is normalised by the q weight, not by the mode weight
     q_weight = total_weight / n_branches
     trace_deficit = (weights[removed, None] * per_atom_weight[removed]).sum(axis=0) / q_weight
-    u_after = thermal_displacement_matrices_perq(mesh_data, temperature_K)
-    u_before = thermal_displacement_matrices_perq(replace(mesh_data, min_phonon_energy_mev=0.0),
-                                                  temperature_K)
+    u_after = compute_thermal_displacement_matrices(mesh_data, temperature_K)
+    u_before = compute_thermal_displacement_matrices(
+        replace(mesh_data, min_phonon_energy_mev=0.0), temperature_K)
     trace_before = np.einsum("aii->a", u_before)
     trace_after = np.einsum("aii->a", u_after)
     mean_before = float(np.mean(trace_before))
@@ -595,36 +470,15 @@ def format_phonon_cutoff_summary(summary):
         + ", ".join(f"{3.0 - d:.6f}" for d in s["dos_trace_deficit_per_atom"])
         + f". Mean-square displacement trace per atom "
         f"{np.mean(s['trace_u_before_A2']):.6g} -> {np.mean(s['trace_u_after_A2']):.6g} A^2 "
-        f"({100.0 * s['mean_trace_u_change']:+.2f}%). No replacement spectrum; the "
-        f"coherent one-phonon term is truncated the same way.",
+        f"({100.0 * s['mean_trace_u_change']:+.2f}%).",
     ]
     if s["warn"]:
         lines.append(
-            f"WARNING: the cutoff changed the mean-square displacement by "
-            f"{100.0 * abs(s['mean_trace_u_change']):.1f}%, above "
-            f"{100.0 * PHONON_CUTOFF_WARN_FRACTION:g}%: the Debye-Waller factors "
-            f"and every term built from them now describe a truncated vibrational "
-            f"model, not the phonon model as computed. Displacements weight modes "
-            f"as 1/E^2, so low-energy modes matter far more than their count.")
+            f"WARNING: the phonon-energy cutoff changed the mean-square "
+            f"displacement by {100.0 * abs(s['mean_trace_u_change']):.1f}% (above "
+            f"{100.0 * PHONON_CUTOFF_WARN_FRACTION:g}%); the Debye-Waller factors "
+            f"describe a truncated phonon model.")
     return lines
-
-
-def tdm_freq_min_thz(qpoints):
-    """Two-tier mode floor as a global phonopy ``freq_min`` (in THz).
-
-    Phonopy's ``ThermalDisplacementMatrices`` API only accepts a GLOBAL
-    frequency cutoff, so the two-tier floor collapses to: the Gamma-tier
-    guard when the mesh contains a Gamma point (tiny-positive
-    Goldstone/ASR noise would otherwise poison U ~ coth/omega) and the
-    1-ueV overflow guard on Gamma-free (shifted MP) meshes. EVERY
-    ThermalDisplacementMatrices construction must take its freq_min from
-    here so the MT2 and MT4 Debye-Waller tensors stay mutually
-    consistent.
-    """
-    qpoints = np.asarray(qpoints, dtype=float)
-    has_gamma = bool(np.any(np.all(np.abs(qpoints) < 1.0e-9, axis=1)))
-    floor_mev = GAMMA_ACOUSTIC_FLOOR_MEV if has_gamma else MODE_ENERGY_FLOOR_MEV
-    return floor_mev * 1.0e-3 / THZ_TO_EV
 
 
 def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
@@ -663,14 +517,8 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
             "phonopy is required for non-cubic inelastic calculations. "
             "Install with: pip install phonopy")
 
-    # Use is_mesh_symmetry=False (full Monkhorst-Pack mesh, all weights=1).
-    # The symmetrized (irreducible BZ) mesh gives WRONG per-atom DOS tensors
-    # for non-symmorphic space groups: the irreducible q-points represent only
-    # one star member, so atom permutations from other star members are missing.
-    # With the full mesh (q and all its symmetry images explicitly included),
-    # the BZ average correctly gives equivalent values for symmetry-equivalent
-    # atoms.  This is also why phonopy requires is_mesh_symmetry=False for its
-    # own thermal_displacement_matrices calculation.
+    # The full mesh: an irreducible q-point stands for one star member only,
+    # so per-atom tensors would miss the atom permutations of the others.
     print(f"  Running phonopy mesh {mesh_dim[0]}×{mesh_dim[1]}×{mesh_dim[2]} "
           f"with eigenvectors (full mesh)...", flush=True)
     with openmp_unpinned_serial_setup():
@@ -702,26 +550,16 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
     )
 
 
-def thermal_displacement_matrices_perq(mesh_data, temperature_k):
-    """Thermal-displacement tensor U_ij (Angstrom^2) with the PER-Q mode floor.
-
-    Direct mode sum, mirroring phonopy's ``ThermalDisplacementMatrices``:
+def compute_thermal_displacement_matrices(mesh_data, temperature_k):
+    """Thermal-displacement tensors U_ij [Angstrom^2], one per atom:
 
         U_ij(d) = (1/N) Σ_{q,nu} (hbar^2 / (2 M_d E_qnu)) coth(E/2kT)
                                   · Re[e_{d,i,nu}(q) e*_{d,j,nu}(q)]
 
-    with the same two-tier per-q ``mode_floor_mask`` used by the DOS-tensor and
-    one-phonon paths (Goldstone guard AT Gamma, 1-ueV overflow guard elsewhere),
-    rather than phonopy's single GLOBAL ``freq_min``. The eigenvectors are the
-    unit-norm dynamical-matrix eigenvectors (Σ_{d,i}|e|²=1), so the displacement
-    of atom d carries the 1/M_d mass factor explicitly.
-
-    On a Gamma-free mesh the per-q floor equals the global floor, so this
-    reproduces phonopy exactly (pinned by tests). On a Gamma-containing mesh it
-    keeps the off-Gamma low-omega modes in [1 ueV, GAMMA_ACOUSTIC_FLOOR] that
-    phonopy's global Gamma-tier cutoff would wrongly drop -- the modes that carry
-    real 1/omega-weighted Debye-Waller weight -- keeping the MT2/MT4 DW tensor
-    consistent with the one-phonon mode set.
+    The eigenvectors are unit-norm, so the 1/M_d factor is explicit. The modes
+    are those of the two-tier ``mode_floor_mask`` used by the DOS tensor and
+    the one-phonon sums; on a Gamma-free mesh this matches phonopy's
+    thermal-displacement matrices.
     """
     n_atoms = mesh_data.n_atoms
     n_branches = mesh_data.n_branches
@@ -760,27 +598,6 @@ def thermal_displacement_matrices_perq(mesh_data, temperature_k):
     return 0.5 * (U + U.transpose(0, 2, 1))               # symmetrize i<->j
 
 
-def compute_thermal_displacement_matrices(mesh_data, temperature_k):
-    """Compute thermal displacement matrices U_ij in Angstrom^2.
-
-    Always the explicit per-q vectorized mode sum
-    (thermal_displacement_matrices_perq), for three reasons. Consistency:
-    on a Gamma-CONTAINING mesh a single global frequency floor (the Gamma
-    tier, as in phonopy's ``ThermalDisplacementMatrices`` API) would drop
-    the off-Gamma modes in [1 ueV, GAMMA_ACOUSTIC_FLOOR] that the
-    one-phonon sum keeps, whereas the per-q two-tier floor keeps the DW
-    tensor consistent with the one-phonon mode set. Speed: the einsum sum
-    is vectorized over all modes (~1 s on a 40^3 mesh of a 9-atom cell,
-    where a per-q Python loop takes ~a minute). Independence: it needs
-    only the mesh arrays — no phonopy import — so reconstructed
-    PhonopyMeshData objects work too. On a Gamma-free mesh the per-q floor
-    coincides with phonopy's global ``freq_min`` and the result matches
-    phonopy's ``ThermalDisplacementMatrices`` to ~1e-7 A^2 (equivalence
-    pinned by tests/test_tdm_perq_floor.py).
-    """
-    return thermal_displacement_matrices_perq(mesh_data, temperature_k)
-
-
 def thermal_displacements_to_f_matrix(thermal_mats_ang2, awr_by_atom, tev):
     """Convert phonopy U_ij tensors to IRMA's dimensionless F-matrix.
 
@@ -803,10 +620,6 @@ def thermal_displacements_to_f_matrix(thermal_mats_ang2, awr_by_atom, tev):
     """
     thermal_mats = np.asarray(thermal_mats_ang2, dtype=float)
     awr = np.asarray(awr_by_atom, dtype=float)
-    if thermal_mats.shape[:1] != awr.shape[:1]:
-        raise ValueError(
-            "thermal_mats_ang2 and awr_by_atom must have matching atom counts"
-        )
 
     kT_meV = float(tev) * 1000.0
     scale = (awr * kT_meV / HBAR2_OVER_2MN_MEV_A2)[:, np.newaxis, np.newaxis]
@@ -815,18 +628,8 @@ def thermal_displacements_to_f_matrix(thermal_mats_ang2, awr_by_atom, tev):
 
 def compute_dos_tensor(mesh_data, freq_max_ev, n_freq, sigma_ev=None,
                        chunk_size=5000):
-    """Compute anisotropic DOS tensor from phonopy eigenvectors.
-
-    Returns the 3×3 partial DOS tensor per atom on a uniform energy grid:
-
-        ρ_{d,ij}(ε_k) = (1/N_total) Σ_{q,ν} Re[e_{d,i,ν}·conj(e_{d,j,ν})]
-                         × w_{q,ν} × G(ε_k − ε_{q,ν}, σ)
-
-    where G(x, σ) = exp(−x²/2σ²) / (σ√2π) is the Gaussian kernel and
-    N_total = Σ_{q,ν} w_{q,ν} is the total BZ weight.
-
-    The scalar partial DOS g_d(ε) = (1/3)Σ_i ρ_{d,ii}(ε) satisfies
-    ∫g_d(ε)dε ≈ 1 (one per atom, consistent with tbeta=1 in LEAPR).
+    """The 3×3 partial DOS tensor per atom on a uniform energy grid (see the
+    module docstring).
 
     Parameters
     ----------
@@ -838,8 +641,7 @@ def compute_dos_tensor(mesh_data, freq_max_ev, n_freq, sigma_ev=None,
     sigma_ev : float or None
         Gaussian smearing width [eV]. Default: 2 × grid spacing.
     chunk_size : int
-        Modes processed per batch (memory control). Default 5000 gives
-        ~50 MB peak usage for a 40×40×40 mesh with 4 atoms.
+        Modes processed per batch.
 
     Returns
     -------
@@ -860,16 +662,12 @@ def compute_dos_tensor(mesh_data, freq_max_ev, n_freq, sigma_ev=None,
     energy_grid = np.linspace(0.0, freq_max_ev, n_freq)
     dos_tensor = np.zeros((n_atoms, 3, 3, n_freq), dtype=np.float64)
 
-    # Flatten (q, ν) → mode index
     freq_flat = mesh_data.frequencies_ev.flatten()               # (N_modes,)
     weights_flat = np.repeat(mesh_data.weights, n_branches)      # (N_modes,)
     eigs_flat = mesh_data.eigenvectors.reshape(
         n_q * n_branches, n_atoms, 3)                            # (N_modes, N_atoms, 3)
 
-    # Filter: keep only positive-frequency modes above the two-tier mode
-    # floor (Goldstone guard at Gamma, 1 ueV overflow guard elsewhere).
-    # Imaginary/negative modes are unphysical for the DOS tensor and should
-    # not be broadened onto the positive energy grid.
+    # Modes above the two-tier floor; imaginary modes are dropped.
     valid_mask = mode_floor_mask(
         freq_flat * 1.0e3, mesh_data.qpoints, n_branches,
         mesh_data.min_phonon_energy_mev)
@@ -893,27 +691,19 @@ def compute_dos_tensor(mesh_data, freq_max_ev, n_freq, sigma_ev=None,
         wt_c = wt_valid[start_idx:end_idx]        # (C,)
         eig_c = eigs_valid[start_idx:end_idx]     # (C, N_atoms, 3)
 
-        # Outer products: R[m,d,i,j] = Re[eig[m,d,i] * conj(eig[m,d,j])]
-        # eig_c shape: (C, N_atoms, 3)
         R = np.real(
             eig_c[:, :, :, np.newaxis] *
             np.conj(eig_c[:, :, np.newaxis, :])
         )  # (C, N_atoms, 3, 3)
 
-        # Gaussian kernel: G[m, k] = exp(-(ε_k - ε_m)² / 2σ²) × norm × w_m
         diff = energy_grid[np.newaxis, :] - freq_c[:, np.newaxis]  # (C, n_freq)
         G = np.exp(-diff**2 / two_sig2) * inv_gauss_norm             # (C, n_freq)
         G *= wt_c[:, np.newaxis]                                      # weight each mode
 
-        # Accumulate: dos_tensor[d,i,j,k] += Σ_m R[m,d,i,j] * G[m,k]
         dos_tensor += np.einsum('mdij,mk->dijk', R, G, optimize=True)
 
-    # Normalise by total BZ weight
     dos_tensor /= n_total
-
-    # Symmetrise: ρ_{d,ij} should be real and symmetric (i↔j) by construction,
-    # but floating-point asymmetry from complex eigenvectors may introduce tiny
-    # off-diagonal imaginary residuals that were already taken as Re[…] above.
+    # R is exactly symmetric; this is a no-op safeguard.
     dos_tensor = 0.5 * (dos_tensor + dos_tensor.transpose(0, 2, 1, 3))
 
     return dos_tensor, energy_grid

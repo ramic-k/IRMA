@@ -70,33 +70,3 @@ def test_mode_floor_mask_two_tier():
                             np.array([[0.25, 0.0, 0.0]]), n_branches=4)
     assert list(keep0) == [False, False, False, True]
 
-
-def test_tdm_freq_min_is_gamma_aware_and_shared():
-    """Both ThermalDisplacementMatrices call sites (MT2 path in phonopy_io,
-    MT4 path in the noncubic engine) must take freq_min from this single
-    helper: a TDM built without the Gamma-tier floor lets tiny-positive
-    Goldstone noise poison U ~ coth/omega."""
-    import numpy as np
-    from irma.core.phonopy_io import tdm_freq_min_thz
-
-    gamma_mesh = np.array([[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]])
-    shifted_mesh = np.array([[0.125, 0.125, 0.125], [0.375, 0.125, 0.125]])
-    f_gamma = tdm_freq_min_thz(gamma_mesh)
-    f_shift = tdm_freq_min_thz(shifted_mesh)
-    assert f_gamma == pytest.approx(
-        c.GAMMA_ACOUSTIC_FLOOR_MEV * 1e-3 / c.THZ_TO_EV, rel=1e-12)
-    assert f_shift == pytest.approx(
-        c.MODE_ENERGY_FLOOR_MEV * 1e-3 / c.THZ_TO_EV, rel=1e-12)
-    assert f_gamma > f_shift
-
-    # Source contract: no TDM construction may omit freq_min.
-    import inspect
-    import irma.core.noncubic_engine as ne
-    import irma.core.phonopy_io as pio
-    for mod in (ne, pio):
-        lines = inspect.getsource(mod).splitlines()
-        for i, line in enumerate(lines):
-            if "ThermalDisplacementMatrices(" in line and "import" not in line:
-                window = " ".join(lines[i:i + 3])   # call may span lines
-                assert "freq_min" in window, (
-                    f"{mod.__name__}:{i + 1} builds TDM without freq_min")

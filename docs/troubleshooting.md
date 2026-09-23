@@ -101,7 +101,7 @@ excluded from the DOS-tensor grid and the mode sums, but the warning means
 the phonon calculation itself is unstable and should be reviewed before you
 trust the evaluation.
 
-## "refusing to parse: the file carries a non-standard '!!python/' YAML tag"
+## "refusing to parse: unsafe YAML tag"
 
 Every `phonopy.yaml` handed to IRMA is scanned before phonopy sees it, and a
 file carrying a `!!python/` tag (or the `tag:yaml.org,2002:python` verbatim
