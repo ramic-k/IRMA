@@ -190,8 +190,9 @@ can write them by hand in YAML, TOML, or JSON.
 | `scatterers` | list | — | per-species scattering data (see below) |
 | `lattice` | `[a,b,c,α,β,γ]` | — | mode-0 only, unit cell (Å, deg) for the coherent-elastic Bragg peaks |
 
-Each **scatterer** entry: `symbol`, `sigma_bound_b`, `awr`, optional `b_coh_fm`,
-`sigma_inc_b`, and mode-0 fields `dos_file`, `dos_unit` (`meV|eV|cm-1|THz`),
+Each **scatterer** entry: `symbol`, `sigma_bound_b`, `awr`, `b_coh_fm` and
+`sigma_inc_b` (both required for `inelastic_mode` 1/2 except for C, which has
+built-in values; in mode 0 only for the elastic line that uses them), and mode-0 fields `dos_file`, `dos_unit` (`meV|eV|cm-1|THz`),
 `multiplicity`, `positions` (fractional `[x,y,z]` sites for the elastic Bragg peaks).
 
 ### `physics`

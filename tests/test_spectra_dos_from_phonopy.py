@@ -57,7 +57,7 @@ def _phonopy_cfg(scatterers):
         "physics": {"inelastic_mode": 0, "dos_source": "phonopy",
                     "elastic": False, "max_phonon_order": 100},
         "grid": {"e_max_meV": 250.0, "de_meV": 1.0, "dq_max_invA": 0.1},
-        "instrument": {"geometry": "vision", "e_fixed_meV": 3.5, "angles_deg": [45.0]},
+        "instrument": {"geometry": "vision", "e_fixed_meV": 3.5},
     })
 
 

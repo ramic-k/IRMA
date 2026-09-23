@@ -10,7 +10,7 @@ compute_spectrum faithfully. Fast, data-free, CI-safe.
 import pytest
 
 from irma.spectra.config import (
-    SpectraConfig, PhysicsConfig, GridConfig, InstrumentConfig,
+    SpectraConfig, PhysicsConfig, GridConfig, InstrumentConfig, Scatterer,
     SpectraConfigError, load, dump, validate,
 )
 
@@ -123,6 +123,9 @@ def test_unknown_field_raises():
     (_direct_cfg, {"instrument.angles_deg": [10.0, 200.0]}),
     (_vision_cfg, {"instrument.sigma_coeffs": [0.0, -0.01, 0.0]}),
     (_vision_cfg, {"instrument.sigma_coeffs": [0.31, 0.005, 8.1e-7, 1e-9]}),
+    (_vision_cfg, {"instrument.angles_deg": [30.0, 90.0]}),   # vision banks are fixed
+    (_direct_cfg, {"material.scatterers": [                   # mode 1 needs b_coh, sigma_inc
+        Scatterer("O", sigma_bound_b=4.23, awr=15.86)]}),
 ])
 def test_validator_rejects(factory, changes):
     with pytest.raises(SpectraConfigError):
@@ -137,6 +140,18 @@ def test_validator_rejects(factory, changes):
 def test_validator_accepts(changes):
     cfg = _mutated(_vision_cfg, changes)
     assert validate(cfg) is cfg
+
+
+def test_number_strings_are_read_as_numbers():
+    # YAML 1.1 loads 2e2 (no point) and 1.5e3 (unsigned exponent) as strings
+    d = _vision_cfg().to_dict()
+    d["grid"]["e_max_meV"] = "2e2"
+    d["material"]["scatterers"][0]["awr"] = "1.1898e1"
+    cfg = SpectraConfig.from_dict(d)
+    assert cfg.grid.e_max_meV == 200.0 and cfg.material.scatterers[0].awr == 11.898
+    d["grid"]["e_max_meV"] = "lots"
+    with pytest.raises(SpectraConfigError, match="grid.e_max_meV"):
+        SpectraConfig.from_dict(d)
 
 
 # ---- validator: geometry / kinematics --------------------------------------

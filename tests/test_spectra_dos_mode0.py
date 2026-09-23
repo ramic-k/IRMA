@@ -85,6 +85,7 @@ def test_one_phonon_peaks_at_the_dos():
     {"omega_ev": [0.0, 0.001, 0.003], "rho": [0.0, 1.0, 1.0]},          # non-uniform
     {"omega_ev": [0.0, 0.001], "rho": [0.0, -1.0]},                     # negative rho
     {"omega_ev": [0.0, 0.001], "rho": [0.0, 0.0]},                      # all-zero
+    {"omega_ev": [0.001, 0.002, 0.003], "rho": [0.0, 1.0, 1.0]},        # not from 0
 ])
 def test_bad_dos_grids_rejected(bad):
     sp = {"symbol": "H", "awr": 1.0, "sigma_bound_b": 80.0, **bad}

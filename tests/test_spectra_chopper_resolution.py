@@ -216,6 +216,22 @@ def test_config_accepts_chopper_spec_and_round_trips():
     assert cs["instrument"] == "ARCS" and cs["frequency"] == 600.0
 
 
+@pytest.mark.parametrize("chopper, match", [
+    ({"frequency": 700.0}, "maximum"),                  # ARCS spins to 600 Hz
+    ({"package": "ARCS-100-1.5-AST", "frequency": 300.0}, "transmission"),
+])
+def test_config_rejects_chopper_settings_that_cannot_run(chopper, match):
+    from irma.spectra.config import validate, SpectraConfigError
+    with pytest.raises(SpectraConfigError, match=match):
+        validate(_direct_chopper_cfg(**chopper))
+
+
+def test_config_rejects_unknown_chopper_key():
+    from irma.spectra.config import SpectraConfigError
+    with pytest.raises(SpectraConfigError, match="variant"):
+        _direct_chopper_cfg(variant="x")
+
+
 def test_config_rejects_chopper_on_indirect_geometry():
     from irma.spectra.config import SpectraConfig, validate, SpectraConfigError
     cfg = SpectraConfig.from_dict({

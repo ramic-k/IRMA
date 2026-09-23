@@ -174,7 +174,8 @@ def _add_common(p):
                         "sites)")
     p.add_argument("--scatterer", action="append", type=parse_scatterer, default=[],
                    help="SYMBOL,sigma_bound_b,awr[,b_coh_fm[,sigma_inc_b]] "
-                        "(repeatable). Mode-0 extras ride as key=value tokens: "
+                        "(repeatable; modes 1/2 need b_coh_fm and sigma_inc_b except for C). "
+                        "Mode-0 extras ride as key=value tokens: "
                         "dos=FILE, unit=meV|eV|cm-1|THz, mult=N, "
                         "pos=x:y:z;x:y:z;...")
     p.add_argument("--de", type=float,
