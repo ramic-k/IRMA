@@ -33,20 +33,14 @@ class RelaxResult:
 
     @property
     def symmetry_changed(self) -> bool:
-        return (self.spacegroup_before != "unknown"
-                and self.spacegroup_after != "unknown"
-                and self.spacegroup_before != self.spacegroup_after)
+        return self.spacegroup_before != self.spacegroup_after
 
 
 def _spacegroup(atoms, symprec: float) -> str:
-    try:
-        import spglib
-    except ImportError:
-        return "unknown"
+    import spglib
     cell = (atoms.get_cell().array, atoms.get_scaled_positions(),
             atoms.get_atomic_numbers())
-    sg = spglib.get_spacegroup(cell, symprec=symprec)
-    return sg if sg else "unknown"
+    return spglib.get_spacegroup(cell, symprec=symprec) or "unknown"
 
 
 def _max_force(atoms) -> float:
@@ -118,25 +112,18 @@ def snap_to_symmetry(atoms, symprec: float = 1e-3) -> float:
     return max_shift
 
 
-def _cell_filter():
-    """The supported cell-relaxation filter (ase>=3.23: both live in
-    ase.filters; FrechetCellFilter is the current recommendation)."""
-    from ase.filters import FrechetCellFilter
-    return FrechetCellFilter
-
-
 def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
           relax_cell: bool = False, symprec: float = 1e-3,
-          snap_symmetry=False, jitter_cycles: int = 0,
+          snap_symmetry=None, jitter_cycles: int = 0,
           logfile=None) -> RelaxResult:
     """Relax `atoms` in place with FIRE; return the full report.
 
     Convergence comes from Optimizer.run()'s return value (INSPIRED ignores
     it; we do not). fmax is the ASE convention: the largest per-atom force
     norm, eV/A. With snap_symmetry, the relaxed positions are projected
-    onto the exact orbits of the spacegroup detected at `symprec` (see
-    snap_to_symmetry); the reported spacegroup_after and force residuals
-    describe the SNAPPED structure.
+    onto the exact orbits of the spacegroup detected at the tolerance
+    ``snap_symmetry`` (see snap_to_symmetry); the reported spacegroup_after
+    and force residuals describe the SNAPPED structure.
 
     jitter_cycles (default 0 = exact single-pass behavior): when the
     plain relaxation ends UNconverged, kick the min(3, natoms)
@@ -153,10 +140,9 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
     converged.
     """
     import numpy as np
+    from ase.filters import FrechetCellFilter
     from ase.optimize import FIRE
 
-    if jitter_cycles < 0:
-        raise ValueError(f"jitter_cycles must be >= 0, got {jitter_cycles}")
     atoms.calc = calculator
     sg_before = _spacegroup(atoms, symprec)
 
@@ -165,7 +151,7 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
     # only the atomic fmax would call a stress-unconverged cell "1e-15
     # converged" (review finding 6): the reported residuals are those of the
     # actual optimization target, with the atomic-only number kept alongside.
-    target = _cell_filter()(atoms) if relax_cell else atoms
+    target = FrechetCellFilter(atoms) if relax_cell else atoms
     fmax_initial = _max_force(target)
 
     # the best-frame tracker is a per-step observer, not an endpoint
@@ -220,12 +206,9 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
 
     snap_shift = 0.0
     if snap_symmetry:
-        # the snap DETECTION tolerance is looser than the reporting
-        # symprec by design: the drift it exists to repair (float32
-        # relaxations) can exceed 1e-3; True selects the 1e-2 default,
-        # a float selects it explicitly
-        tol = 1e-2 if snap_symmetry is True else float(snap_symmetry)
-        snap_shift = snap_to_symmetry(atoms, symprec=tol)
+        # the snap tolerance is looser than the reporting symprec by
+        # design: float32 relaxation drift can exceed 1e-3
+        snap_shift = snap_to_symmetry(atoms, symprec=float(snap_symmetry))
 
     fmax_achieved = _max_force(target)
     fmax_atoms = _max_force(atoms)

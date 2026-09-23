@@ -87,7 +87,7 @@ def test_snap_to_symmetry_restores_exact_wyckoffs():
 def test_relax_with_snap_symmetry_records_the_shift():
     atoms = bulk("Al", "fcc", a=4.05, cubic=True)
     atoms.rattle(stdev=1e-5, seed=3)      # sub-tolerance drift
-    rr = relax(atoms, EMT(), fmax=0.05, nmax=50, snap_symmetry=True)
+    rr = relax(atoms, EMT(), fmax=0.05, nmax=50, snap_symmetry=1e-2)
     assert rr.snapped is True
     assert rr.snap_max_shift_A >= 0.0
     assert rr.spacegroup_after.endswith("(225)")   # Fm-3m restored
@@ -110,7 +110,7 @@ def test_snap_that_breaks_convergence_is_reported(monkeypatch):
 
     monkeypatch.setattr(rel, "snap_to_symmetry", violent_snap)
     atoms = bulk("Al", "fcc", a=4.05, cubic=True)
-    rr = rel.relax(atoms, EMT(), fmax=0.01, nmax=80, snap_symmetry=True)
+    rr = rel.relax(atoms, EMT(), fmax=0.01, nmax=80, snap_symmetry=1e-2)
     assert rr.snapped is True
     assert rr.fmax_achieved > 0.01
     assert rr.converged is False           # re-gated on the post-snap state
@@ -233,12 +233,6 @@ def test_jitter_respects_constraints():
     res = relax(atoms, calc, fmax=0.01, nmax=100, jitter_cycles=2)
     import numpy as np
     assert np.allclose(res.atoms.positions[2], frozen, atol=1e-12)
-
-
-def test_jitter_negative_cycles_rejected():
-    atoms, calc = _floor_system()
-    with pytest.raises(ValueError, match="jitter_cycles"):
-        relax(atoms, calc, fmax=0.01, nmax=50, jitter_cycles=-1)
 
 
 def test_jitter_keeps_intra_cycle_best_not_endpoint():

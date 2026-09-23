@@ -15,7 +15,7 @@ SevenNet and friends all log to stdout) and none of it can corrupt the
 protocol stream.
 
   {"cmd": "init", "spec": {"potential": .., "model": .., "threads": ..}}
-      -> {"ok": true, "meta": {..}, "properties": ["energy", ..]}
+      -> {"ok": true, "meta": {..}}
   {"cmd": "canonicalize", "spec": {..}}
       -> {"ok": true, "model": <pinned model string>}
   {"cmd": "identity", "spec": {..}}
@@ -32,7 +32,6 @@ import importlib.util
 import json
 import os
 import sys
-import traceback
 
 
 def _load_calculators(path):
@@ -50,14 +49,8 @@ def _load_calculators(path):
     return module
 
 
-def _classify(exc, calculators, cmd):
-    if isinstance(exc, calculators.MlipDependencyError):
-        return "dependency"
-    if isinstance(exc, ImportError) and cmd != "calc":
-        # a raw import failure while setting UP the environment (init/
-        # canonicalize/identity) is a dependency problem (CLI exit 4);
-        # one inside a backend's forward pass at calc time is a runtime
-        # bug and must not masquerade as "pip install something"
+def _classify(exc):
+    if isinstance(exc, ImportError):          # MlipDependencyError included
         return "dependency"
     if isinstance(exc, (ValueError, TypeError, KeyError)):
         return "value"
@@ -67,12 +60,6 @@ def _classify(exc, calculators, cmd):
 def _reply(out, payload):
     out.write(json.dumps(payload) + "\n")
     out.flush()
-
-
-def _fail(out, exc, calculators, cmd=None):
-    _reply(out, {"ok": False, "kind": _classify(exc, calculators, cmd),
-                 "error": f"{type(exc).__name__}: {exc}",
-                 "traceback": traceback.format_exc()})
 
 
 def main() -> int:
@@ -87,20 +74,13 @@ def main() -> int:
     out = os.fdopen(protocol_fd, "w")
 
     calc = None
-    atoms_proto = None
-
     for line in sys.stdin:
-        line = line.strip()
-        if not line:
+        if not line.strip():
             continue
+        cmd = None
         try:
             req = json.loads(line)
-        except json.JSONDecodeError as exc:
-            _fail(out, exc, calculators)
-            continue
-        cmd = req.get("cmd")
-
-        try:
+            cmd = req.get("cmd")
             if cmd == "shutdown":
                 _reply(out, {"ok": True})
                 return 0
@@ -120,23 +100,15 @@ def main() -> int:
                             calculators._package_version(spec.potential)})
                     continue
                 calc, meta = calculators.make_calculator(spec)
-                from ase import Atoms
-                atoms_proto = Atoms
-                # the full property list is advertised unconditionally;
-                # whether a checkpoint actually serves stress is decided
-                # per calc call, where a stressless checkpoint (e.g.
-                # Egret-1 via mace-off) simply omits "stress" from its
-                # reply and the client raises only if stress was needed
-                properties = ["energy", "forces", "stress"]
-                _reply(out, {"ok": True, "meta": meta,
-                             "properties": properties})
+                _reply(out, {"ok": True, "meta": meta})
                 continue
 
             if cmd == "calc":
                 if calc is None:
                     raise RuntimeError("calc before successful init")
                 import numpy as np
-                atoms = atoms_proto(
+                from ase import Atoms
+                atoms = Atoms(
                     numbers=req["numbers"],
                     positions=np.asarray(req["positions"], dtype=float),
                     cell=np.asarray(req["cell"], dtype=float),
@@ -152,9 +124,7 @@ def main() -> int:
                     result["stress"] = np.asarray(
                         atoms.get_stress(voigt=True), dtype=float).tolist()
                 except (PropertyNotImplementedError, NotImplementedError):
-                    pass          # stressless checkpoint: omit stress only;
-                    # any OTHER stress failure is a real error and
-                    # propagates through the protocol like one
+                    pass          # a stressless checkpoint omits stress
                 _reply(out, result)
                 continue
 
@@ -162,7 +132,8 @@ def main() -> int:
         except SystemExit:
             raise
         except BaseException as exc:              # noqa: BLE001 -- protocol boundary
-            _fail(out, exc, calculators, cmd)
+            _reply(out, {"ok": False, "kind": _classify(exc),
+                         "error": f"{type(exc).__name__}: {exc}"})
             if cmd == "init":
                 return 1          # a server that cannot init is useless
 

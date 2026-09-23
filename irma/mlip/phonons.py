@@ -29,9 +29,8 @@ from dataclasses import dataclass, replace
 
 from irma.mlip.calculators import CalculatorSpec, make_calculator
 
-# 2: MACE-family checkpoint files are loaded from bytes verified against
-# a digest pinned in the spec; caches written before that contract
-# existed are not reused under it.
+# hashed into the fingerprint; bump it when the force contract changes so
+# older caches are not reused (2: MACE-family checkpoint handling)
 FINGERPRINT_VERSION = 2
 
 
@@ -51,8 +50,6 @@ class PhononResult:
 
 def supercell_matrix(cellpar_abc, lmin_or_dims):
     """The Lmin rule: ceil(lmin/a_i) per axis, or three explicit integers."""
-    if isinstance(lmin_or_dims, bool):
-        raise ValueError(f"supercell got a boolean: {lmin_or_dims!r}")
     if isinstance(lmin_or_dims, (int, float)):
         lmin = float(lmin_or_dims)
         if not math.isfinite(lmin) or lmin <= 0:
@@ -123,11 +120,11 @@ def _fingerprint(atoms, phonon, delta, supercell, spec: CalculatorSpec) -> str:
 _WORKER_CALC = None
 
 
-def _worker_spec(spec: CalculatorSpec, worker_threads: int) -> CalculatorSpec:
-    """The spec each pool worker rebuilds its calculator from: the
-    parent's canonical spec (model identity and pinned checkpoint digest
-    included), with only the thread width changed."""
-    return replace(spec, threads=worker_threads)
+def _supercell_forces(calc, symbols, cell, spos):
+    from ase import Atoms
+    sc = Atoms(symbols=symbols, scaled_positions=spos, cell=cell, pbc=True)
+    sc.calc = calc
+    return sc.get_forces()
 
 
 def _worker_init(spec: CalculatorSpec):
@@ -137,10 +134,7 @@ def _worker_init(spec: CalculatorSpec):
 
 def _worker_forces(payload):
     index, symbols, cell, spos = payload
-    from ase import Atoms
-    sc = Atoms(symbols=symbols, scaled_positions=spos, cell=cell, pbc=True)
-    sc.calc = _WORKER_CALC
-    return index, sc.get_forces()
+    return index, _supercell_forces(_WORKER_CALC, symbols, cell, spos)
 
 
 # --- scratch persistence -----------------------------------------------------
@@ -166,35 +160,24 @@ def _purge_scratch(scratch, progress, reason):
 
 
 def _load_cached(scratch, fingerprint, n_disp, natoms_sc, progress):
-    """Return {index: forces} for valid cached files, or wipe on mismatch.
+    """Return {index: forces} for the valid cached files.
 
-    ANY untrusted metadata state (absent, corrupt, wrong version, mismatched
-    fingerprint) purges every cached force file before the new fingerprint is
-    installed -- otherwise metadata loss followed by an interrupted rerun
-    could bless stale forces on shape alone (review finding 2).
+    Unless fingerprint.json matches this build, every cached force file is
+    purged before the new fingerprint is written, so stale forces are never
+    accepted on shape alone.
     """
     import numpy as np
     fp_path = os.path.join(scratch, "fingerprint.json")
     os.makedirs(scratch, exist_ok=True)
-    stored = None
-    if os.path.isfile(fp_path):
-        try:
-            stored = json.load(open(fp_path))
-        except (json.JSONDecodeError, OSError):
-            stored = None
-        if stored is not None and (
-                stored.get("version") != FINGERPRINT_VERSION
-                or stored.get("fingerprint") != fingerprint):
+    try:
+        with open(fp_path) as fh:
+            ok = json.load(fh).get("fingerprint") == fingerprint
+    except (OSError, ValueError, AttributeError):
+        ok = False
+    if not ok:
+        if any(n.startswith("forces_") for n in os.listdir(scratch)):
             _purge_scratch(scratch, progress,
-                           "scratch fingerprint mismatch (structure/model/"
-                           "settings changed)")
-            stored = None
-        elif stored is None:
-            _purge_scratch(scratch, progress, "corrupt scratch metadata")
-    elif any(n.startswith("forces_") for n in os.listdir(scratch)):
-        _purge_scratch(scratch, progress,
-                       "cached forces without fingerprint metadata")
-    if stored is None:
+                           "cached forces do not match this build")
         tmp = fp_path + ".tmp"
         with open(tmp, "w") as fh:
             json.dump({"version": FINGERPRINT_VERSION,
@@ -225,41 +208,16 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
                             supercell, delta=0.03, jobs=1,
                             worker_threads=1, scratch_dir,
                             progress=print) -> PhononResult:
-    """Finite-displacement FC for the relaxed structure; see module docstring."""
+    """Finite-displacement FC for the relaxed structure; see module docstring.
+
+    ``spec`` must be canonical (canonicalize_spec), so the fingerprint and
+    every worker see one model identity; ``supercell`` is three integers.
+    """
     import numpy as np
-    from irma.mlip.calculators import (_clamp_native_threads,
-                                       canonicalize_spec)
-
-    # clamp before canonicalize can import torch (see cli._cmd_build)
-    _clamp_native_threads(spec.threads)
-
-    # enforce pinned model identities HERE, not just in the CLI: a direct
-    # API caller with a floating spec (e.g. pet-mad without @version) must
-    # not fingerprint one upstream release while workers load another
-    # (idempotent for already-canonical and non-floating specs)
-    spec = canonicalize_spec(spec)
 
     delta = float(delta)
     if not math.isfinite(delta) or delta <= 0:
         raise ValueError(f"delta must be positive and finite, got {delta!r}")
-    if isinstance(jobs, bool) or not isinstance(jobs, int):
-        raise ValueError(f"jobs must be an integer, got {jobs!r}")
-    if jobs < 1:
-        raise ValueError(f"jobs must be >= 1, got {jobs}")
-    if isinstance(worker_threads, bool) or not isinstance(worker_threads,
-                                                          int):
-        raise ValueError(
-            f"worker_threads must be an integer, got {worker_threads!r}")
-    if worker_threads < 1:
-        raise ValueError(
-            f"worker_threads must be >= 1, got {worker_threads}")
-    supercell = supercell_matrix([1.0, 1.0, 1.0], supercell) \
-        if not isinstance(supercell, (int, float)) else supercell
-    # (explicit dims re-validated; an Lmin scalar here is a caller bug)
-    if isinstance(supercell, (int, float)):
-        raise ValueError("compute_force_constants needs explicit supercell "
-                         "dimensions; apply the Lmin rule via "
-                         "supercell_matrix() first")
 
     t0 = time.perf_counter()
     phonon = _build_phonopy(atoms_relaxed, supercell)
@@ -287,13 +245,8 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
     forces = dict(cached)
     if todo and jobs <= 1:
         calc = make_calculator(spec)[0]
-        from ase import Atoms
         for k, i in enumerate(todo, 1):
-            _, symbols, cell, spos = payload(i)
-            sc = Atoms(symbols=symbols, scaled_positions=spos, cell=cell,
-                       pbc=True)
-            sc.calc = calc
-            forces[i] = sc.get_forces()
+            forces[i] = _supercell_forces(calc, *payload(i)[1:])
             _save_force(scratch_dir, i, forces[i])
             progress(f"  displacement {k}/{len(todo)} done")
     elif todo:
@@ -302,11 +255,10 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
         # 1 native thread per worker by default (the measured-safe
         # convention); --worker-threads widens each worker for machines
         # where jobs x threads < cores has headroom
-        worker_spec = _worker_spec(spec, worker_threads)
-        pool = ProcessPoolExecutor(max_workers=jobs,
-                                   mp_context=get_context("spawn"),
-                                   initializer=_worker_init,
-                                   initargs=(worker_spec,))
+        pool = ProcessPoolExecutor(
+            max_workers=jobs, mp_context=get_context("spawn"),
+            initializer=_worker_init,
+            initargs=(replace(spec, threads=worker_threads),))
         futures = {pool.submit(_worker_forces, payload(i)): i for i in todo}
         try:
             for k, fut in enumerate(as_completed(futures), 1):
