@@ -660,6 +660,7 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
                     sigma_coeffs=None, resolution_shape="gaussian",
                     resolution_model="poly", chopper_spec=None,
                     broaden=True, include_gain=True, gain_side="direct",
+                    kinematic_factor=False,
                     elastic_model=None, elastic=False, elastic_kind="both",
                     elastic_scatterers=None, incoherent_elastic_mode="isotropic",
                     dos_crystal=None,
@@ -673,7 +674,9 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
     be shown as a heatmap. The gain side and the elastic options are those of
     ``compute_spectrum``. The columns are optionally resolution-broadened, and
     the kinematic envelope is returned when ``angle_range_deg=(2th_min,
-    2th_max)`` and ``e_fixed_meV`` are given.
+    2th_max)`` and ``e_fixed_meV`` are given. ``kinematic_factor`` multiplies
+    the inelastic part by kf/ki per energy column (a count-rate map), as in
+    ``compute_spectrum``.
 
     The per-Q elastic area ``elastic_dsigma_dOmega(Q, q_res=dQ_map)``
     [barn/sr] is deposited as an E=0 line, split across the two bins
@@ -739,6 +742,10 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
     E_out = np.arange(float(e_min), float(e_max) + 0.5 * dE, dE)
     QQ, EE = np.meshgrid(Q_grid, E_out, indexing="ij")
     S_map = interp(np.column_stack([QQ.ravel(), EE.ravel()])).reshape(QQ.shape)
+    if kinematic_factor:
+        # count-rate weighting kf/ki per energy column, as in compute_spectrum:
+        # on the inelastic part, before the elastic line and the resolution
+        S_map *= np.nan_to_num(instr.kf_ki()(E_out), nan=0.0)[None, :]
     elastic_deposited = False
     if elastic_model is not None:
         # Split the per-Q area [barn/sr] linearly across the two bins
@@ -785,4 +792,5 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
                   "n_bragg_edges": (int(elastic_model.Q_bragg.size)
                                     if elastic_model is not None else 0),
                   "gain_side": gain_side, "gain_side_used": gain_side_used,
+                  "kinematic_factor": bool(kinematic_factor),
                   "engine_metadata": res.get("metadata", {})})

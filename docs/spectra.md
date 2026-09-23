@@ -210,7 +210,7 @@ built-in values; in mode 0 only for the elastic line that uses them), and mode-0
 | `incoherent_elastic_mode` | `isotropic` | Debye-Waller treatment of the incoherent elastic line: `isotropic` (one scalar Debye-Waller parameter per species, the trace/3 W′ the ENDF convention stores) or `directional` (powder-averaged anisotropic `⟨exp(-Q² û·U·û)⟩` per atom; modes 1/2 only; needs the engine's displacement tensors). Same option name as the NCrystal export. |
 | `include_energy_gain` | true | add the energy-gain (E<0) side |
 | `gain_side` | `direct` | energy-gain (E<0) evaluation. `direct` computes the gain side with explicit Bose occupation factors in every mode (the energy-loss output is unchanged); `detailed_balance` mirrors the loss side instead. The two agree to sub-bin level, with `direct` the more accurate: it uses each line's true energy, not the loss bin center |
-| `kinematic_kf_ki` | false | multiply by `kf/ki` (count-rate spectrum) |
+| `kinematic_kf_ki` | false | multiply by `kf/ki` (count-rate spectrum or 2-D map) |
 
 ### `grid`
 
