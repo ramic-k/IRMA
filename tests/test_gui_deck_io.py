@@ -618,10 +618,10 @@ def test_spr_field_labeled_free_atom(app):
     """The deck field is LEAPR's free-atom spr; the GUI must not label it
     sigma_b (bound) and offer H-1 = 81.67 b (a bound value) as an example,
     a ~4x cross-section error for anyone who followed it."""
-    from irma.gui.widgets import HelpButton, InfoLabel
+    from irma.gui.widgets import InfoLabel
     assert app.spr.label.cget("text") == "sigma_free [barn]:"
     helps = [w for w in app.spr.winfo_children()
-             if isinstance(w, (HelpButton, InfoLabel))]
+             if isinstance(w, InfoLabel)]
     assert helps, "spr field lost its help widget"
     msg = helps[0]._message
     assert "FREE-atom" in msg
