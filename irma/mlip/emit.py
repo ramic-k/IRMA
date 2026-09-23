@@ -23,10 +23,8 @@ inputs for IRMA's three consumers:
   forward model has no principal scatterer).
 - An NCrystal exporter YAML (crystalline only).
 
-Every emitted file passes two gates before it is kept: the public deck
-parser (GUI-importable) and a semantic validator replicating the engine's
-range rules (immediately runnable). Config YAMLs load through their real
-config loaders. Nothing executes.
+Config YAMLs are checked with their real config loaders before they are
+kept. Nothing executes.
 
 Nuclide identity: a phonopy model names elements, not isotopes, so the
 default identity is the natural element (ENDF codes it A = 0) and the
@@ -233,123 +231,12 @@ def _array_lines(values, ncols=5):
     return lines
 
 
-# ------------------------------------------------------------ deck gates ----
-
-def validate_deck_semantics(staged: dict) -> list:
-    """Engine range rules the GUI staging parser does not enforce.
-
-    Replicates driver.py Card 4/5 checks plus the ZA-membership rule so an
-    emitted deck is immediately runnable, not merely importable.
-    """
-    problems = []
-    mat, za = staged.get("mat"), staged.get("za")
-    if not (isinstance(mat, int) and mat >= 1):
-        problems.append(f"mat must be an integer >= 1, got {mat!r}")
-    # the staging parser stores za as a float (Card 4 field 2)
-    if za is None or float(za) != int(float(za)) or int(float(za)) <= 0:
-        problems.append(f"za must be a positive integer, got {za!r}")
-    else:
-        za = int(float(za))
-    if staged.get("iint") not in (0, 1):
-        problems.append(f"iint must be 0 or 1, got {staged.get('iint')!r}")
-    if staged.get("awr", 0) <= 0:
-        problems.append(f"awr must be > 0, got {staged.get('awr')!r}")
-    if staged.get("spr", 0) <= 0:
-        problems.append(f"spr must be > 0, got {staged.get('spr')!r}")
-    if staged.get("nphon", 0) < 1:
-        problems.append(f"nphon must be >= 1, got {staged.get('nphon')!r}")
-    temps = staged.get("temperatures") or []
-    if not temps:
-        problems.append("no temperatures")
-    elif any(t <= 0 for t in temps):
-        # the staging parser stores abs(temp) and tolerates 0; the driver
-        # rejects it -- gate here so an emitted deck is runnable
-        problems.append(f"temperatures must be > 0, got {temps}")
-    for axis in ("alpha", "beta"):
-        grid = staged.get(axis) or []
-        if len(grid) >= 2:
-            diffs = [b - a for a, b in zip(grid, grid[1:])]
-            if min(diffs) <= 0:
-                problems.append(f"{axis} grid is not strictly increasing")
-    if staged.get("iel") == 10:
-        atoms = staged.get("atoms") or []
-        if isinstance(za, int):
-            from irma.core.crystal_input import principal_mismatch_message
-            message = principal_mismatch_message(za, atoms)
-            if message:
-                problems.append(message)
-        for t in atoms:
-            if t["A"] < 0:
-                problems.append(f"Card 6d Z={t['Z']}: A must be >= 0 "
-                                f"(0 = natural element)")
-    return problems
-
-
-def _gate_deck(path) -> dict:
-    """GUI parse + semantic validation; raises on any problem."""
-    from irma.core.deck import TokenReader, parse_leapr_input
-    from irma.gui.deck_text import parse_deck_to_staging
-    tokens, lines, _, token_lines = parse_leapr_input(path)
-    reader = TokenReader(tokens, token_lines=token_lines,
-                         filename=str(path), raw_lines=lines)
-    staged = parse_deck_to_staging(reader, str(path))
-    problems = validate_deck_semantics(staged)
-    if problems:
-        raise RuntimeError(
-            f"emitted deck {path} failed the semantic gate (emitter bug): "
-            + "; ".join(problems))
-    return staged
-
-
 # ------------------------------------------------------------- ENDF decks ----
 
 def _guard_target(path, overwrite):
     if os.path.exists(path) and not overwrite:
         raise FileExistsError(
             f"{path} exists; pass overwrite=True (--overwrite) to replace it")
-
-
-def _deck_targets(species, out_dir):
-    """Every path one emit_endf_decks call publishes, in write order."""
-    return ([os.path.join(out_dir, f"endf_{s.symbol}.input")
-             for s in species]
-            + [os.path.join(out_dir, "emit_manifest.json")])
-
-
-def preflight_emit_targets(bundle, targets, *, out_dir=None, overwrite=False,
-                           nuclides=None, overrides=None):
-    """Guard EVERY path an emit invocation will write, before any emitter
-    publishes anything.
-
-    Emission is transactional at the conflict level: a FileExistsError on
-    the LAST target of a multi-artifact invocation must surface before the
-    FIRST artifact is published, so a failed command never leaves a
-    partial, mixed-generation output set. Each emitter preflights its own
-    targets; the CLI calls this across targets before running any emitter.
-    Returns the planned paths (the per-file guards at each write site stay
-    as the second line of defense).
-    """
-    unknown = sorted(set(targets) - {"endf", "spectra", "ncrystal"})
-    if unknown:
-        raise ValueError(f"unknown emit target(s) {unknown}; choose from "
-                         f"endf, spectra, ncrystal")
-    species = resolve_species(bundle, nuclides=nuclides, overrides=overrides,
-                              progress=lambda *a, **k: None)
-    out_dir = out_dir or bundle.path
-    disordered = bool(bundle.manifest.get("disordered"))
-    paths = []
-    if "endf" in targets:
-        paths += _deck_targets(species, out_dir)
-    if "spectra" in targets:
-        paths.append(os.path.join(out_dir, "spectra.yaml"))
-        if disordered:
-            paths += [os.path.join(out_dir, f"dos_{s.symbol}.dat")
-                      for s in species]
-    if "ncrystal" in targets:
-        paths.append(os.path.join(out_dir, "ncrystal.yaml"))
-    for path in paths:
-        _guard_target(path, overwrite)
-    return paths
 
 
 def emit_endf_decks(bundle: Bundle, *, temperature_k, mats, nuclides=None,
@@ -394,6 +281,8 @@ def emit_endf_decks(bundle: Bundle, *, temperature_k, mats, nuclides=None,
         if isinstance(mat, bool) or not isinstance(mat, int) or mat < 1:
             raise ValueError(f"--mat {symbol}={mat!r}: MAT must be an "
                              f"integer >= 1")
+    if not temperature_k > 0:
+        raise ValueError(f"--temperature must be > 0, got {temperature_k!r}")
 
     out_dir = out_dir or bundle.path
     os.makedirs(out_dir, exist_ok=True)
@@ -477,26 +366,10 @@ def _comment_cards(bundle, symbol, extra=""):
     return cards
 
 
-def _write_deck(path, lines, overwrite, expect):
-    """Guarded, gated, atomic deck write: gates run on the .tmp sibling; the
-    previous file survives any failure (review finding 4)."""
+def _write_deck(path, lines, overwrite):
     _guard_target(path, overwrite)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
+    with open(path, "w") as fh:
         fh.write("\n".join(lines) + "\n")
-    try:
-        staged = _gate_deck(tmp)
-        for key, value in expect.items():
-            got = staged.get(key)
-            if got != value:
-                raise RuntimeError(
-                    f"emitted deck {path}: staged {key}={got!r}, expected "
-                    f"{value!r} (emitter bug)")
-    except BaseException:
-        os.remove(tmp)
-        raise
-    os.replace(tmp, path)
-    return staged
 
 
 def _uniform_rho(e_mev, rho):
@@ -524,12 +397,6 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
     """_preview (tests/smoke only): coarse grids + tiny sampling + low
     phonon order, so an emitted deck can be RUN through the engine in
     seconds. Never a production surface."""
-    # transactional at the conflict level: every target this call will
-    # write (all decks + the emit manifest) is guarded BEFORE any is
-    # published, so a conflict on the last cannot strand a fresh first
-    # deck beside stale siblings (CDX-1)
-    for target in _deck_targets(species, out_dir):
-        _guard_target(target, overwrite)
     freq_max_ev = bundle.manifest["phonons"]["freq_max_meV"] * 1e-3
     mesh = _emit_mesh(bundle)
     cellpar = _cellpar(bundle)
@@ -604,9 +471,7 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
             "/",
         ]
         path = os.path.join(out_dir, f"endf_{prin.symbol}.input")
-        _write_deck(path, lines, overwrite,
-                    expect={"inelastic_mode": inelastic_mode, "iint": iint,
-                            "elastic_mode": ef_field})
+        _write_deck(path, lines, overwrite)
         progress(f"  wrote {path} (iel=10 mode-{inelastic_mode} "
                  f"{elastic_format.upper()}, za={prin.za}, "
                  f"grid {len(alpha)}x{len(beta)})")
@@ -696,9 +561,6 @@ def _emit_classic_decks(bundle, species, temperature_k, mats, out_dir,
     SB = sigma_bound_total, obtained through Card 5 spr (free-atom
     equivalent, npr=1) and iel=0 + twt=0 (the driver's LTHR=2 route).
     """
-    # all-target preflight before anything is published (CDX-1)
-    for target in _deck_targets(species, out_dir):
-        _guard_target(target, overwrite)
     _require_stable(bundle, allow_unstable)
     dos = _species_dos(bundle, species, progress)
     freq_max_ev = bundle.manifest["phonons"]["freq_max_meV"] * 1e-3
@@ -730,7 +592,7 @@ def _emit_classic_decks(bundle, species, temperature_k, mats, out_dir,
             "/",
         ]
         path = os.path.join(out_dir, f"endf_{prin.symbol}.input")
-        _write_deck(path, lines, overwrite, expect={"iel": 0, "iint": 0})
+        _write_deck(path, lines, overwrite)
         progress(f"  wrote {path} (classic DOS deck, za={prin.za})")
         paths.append(path)
     _write_emit_manifest(bundle, species, mats, out_dir,
@@ -808,24 +670,18 @@ def emit_spectra_yaml(bundle: Bundle, *, temperature_k,
     else:
         _require_stable(bundle, allow_unstable)
         # absolute dos paths (matching the crystalline branch's abspathed
-        # phonopy_yaml), so the YAML resolves from any working directory;
-        # every dos target guarded BEFORE any is published (CDX-1)
+        # phonopy_yaml), so the YAML resolves from any working directory
         dos_dir = os.path.dirname(os.path.abspath(out_path))
-        dpaths = {s.symbol: os.path.join(dos_dir, f"dos_{s.symbol}.dat")
-                  for s in species}
-        for dpath in dpaths.values():
-            _guard_target(dpath, overwrite)
         dos = _species_dos(bundle, species, progress)
         import numpy as np
         scatterers = []
         for s in species:
             e, rho = dos[s.symbol]
-            dpath = dpaths[s.symbol]
-            tmp_d = dpath + ".tmp"
-            np.savetxt(tmp_d, np.column_stack((e, rho)),
+            dpath = os.path.join(dos_dir, f"dos_{s.symbol}.dat")
+            _guard_target(dpath, overwrite)
+            np.savetxt(dpath, np.column_stack((e, rho)),
                        header="energy_meV dos (species-projected, "
                               "quick-look mesh)")
-            os.replace(tmp_d, dpath)
             entry = _scatterer_entry(s)
             # incoherent-total elastic convention (disordered): the elastic
             # line carries the TOTAL bound cross section
@@ -936,9 +792,7 @@ def _write_emit_manifest(bundle, species, mats, out_dir, kind,
         ],
     }
     path = os.path.join(out_dir, "emit_manifest.json")
-    if os.path.exists(path) and not overwrite:
-        raise FileExistsError(
-            f"{path} exists; pass overwrite=True (--overwrite) to replace it")
+    _guard_target(path, overwrite)
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         json.dump(record, fh, indent=2, sort_keys=True)
