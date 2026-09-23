@@ -5,7 +5,7 @@ crystalline scatterer with a published ENDF/B-VIII.1 evaluation, a
 structure-dependent (+Sd) variant, and a measured cold-neutron total cross
 section to overlay. Unlike graphite it is only weakly anisotropic, which
 makes it the control case for the Debye-Waller argument: where graphite's
-$W_c/W_{ab} \approx 6.6$ makes the isotropic approximation fail by orders
+$W_c/W_{ab} \approx 6.6$ makes the first-order approximation fail by orders
 of magnitude at high momentum transfer, beryllium's near-isotropic
 displacement tensor lets the isotropic and directional treatments stay
 together. The beryllium phonon calculation is a representative VASP/PAW PBE
@@ -167,4 +167,4 @@ the measured cold-region total below the Bragg cutoff. The extinction port
 is verified to 0.000% at the kernel level and to a median of 0.07% through
 the full evaluation chain. Just as important, beryllium completes the
 graphite Debye-Waller argument: a nearly isotropic crystal is where the
-isotropic approximation is supposed to hold, and here it does.
+first-order approximation is supposed to hold, and here it does.
