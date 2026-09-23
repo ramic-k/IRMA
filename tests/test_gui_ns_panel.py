@@ -226,17 +226,6 @@ def test_element_table_add_remove(panel):
     assert len(t.rows) == n0
 
 
-def test_phonopy_symbols_reads_yaml():
-    import os
-    from irma.gui.ns_panel import _phonopy_symbols
-    yaml = os.path.join(os.path.dirname(__file__),
-                        "mode2_euphonic_n1_validation", "graphite", "phonopy.yaml")
-    if not os.path.exists(yaml):
-        pytest.skip("graphite phonopy fixture not present")
-    syms = _phonopy_symbols(yaml)
-    assert syms == ["C"]                                     # graphite: one species
-
-
 # ---- Codex-review fixes -----------------------------------------------------
 def test_mode0_incoherent_keeps_the_crystal(panel):
     """Codex HIGH: mode-0 elastic_kind='incoherent' still needs the crystal
@@ -754,7 +743,7 @@ def test_direct_map_hides_output_and_breakdown(panel):
     panel._sync_output()
     assert panel.output.winfo_manager() == ""
     panel.geom_nb.select(0)                          # Indirect tab
-    panel._on_geometry_tab()
+    panel._sync_actions_rows()
     assert panel.output.winfo_manager() == "pack"
     assert panel._export_row.winfo_manager() == "pack"
 

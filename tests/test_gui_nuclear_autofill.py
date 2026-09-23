@@ -164,7 +164,7 @@ def test_phonopy_autofill_pulls_constants_for_new_rows(root, monkeypatch):
     from irma.gui.runner import ComputationRunner
     panel = ns_panel.NSPanel(tk.Frame(root), runner=ComputationRunner())
     panel.phonopy_yaml.set("fake.yaml")
-    monkeypatch.setattr(ns_panel, "_phonopy_symbols", lambda p: ["Be", "C"])
+    monkeypatch.setattr(ns_panel, "phonopy_species", lambda p: ["Be", "C"])
     panel.element_table.set_rows([{"symbol": "C", "awr": "99"}])
     panel._autofill_from_phonopy()
     rows = {r["symbol"]: r for r in panel.element_table.get_rows()}
@@ -186,7 +186,7 @@ def test_phonopy_autofill_preserves_provenance_for_later_symbol_edit(
     from irma.gui.runner import ComputationRunner
     panel = ns_panel.NSPanel(tk.Frame(root), runner=ComputationRunner())
     panel.phonopy_yaml.set("fake.yaml")
-    monkeypatch.setattr(ns_panel, "_phonopy_symbols", lambda p: ["C"])
+    monkeypatch.setattr(ns_panel, "phonopy_species", lambda p: ["C"])
     # The panel ships ONE BLANK row (material identity is the user's to
     # declare); typing the symbol is what makes it a machine-filled carbon row.
     assert panel.element_table.rows[0]["_var"]["symbol"].get() == ""
