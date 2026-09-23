@@ -22,7 +22,8 @@ from typing import Optional, Union
 import numpy as np
 
 # VISION preset defaults (kept in lockstep with irma.spectra.sqe)
-from irma.spectra.sqe import VISION_EF_MEV, VISION_SIGMA_COEFFS, sigma_of_E
+from irma.spectra.sqe import (
+    VISION_BANKS, VISION_EF_MEV, VISION_SIGMA_COEFFS, sigma_of_E)
 
 _CHOPPER_KEYS = ("instrument", "package", "frequency")
 # Allowed values of the string-valued config fields.
@@ -58,6 +59,42 @@ def _require_exact_int(value, name, minimum):
     return int(f)
 
 
+def _number(value, name):
+    """A numeric field as parsed, with number strings converted: YAML 1.1
+    loads an exponent literal without a point or a signed exponent ('2e2',
+    '1.5e3') as a string."""
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            raise SpectraConfigError(f"{name} must be a number, got {value!r}") from None
+    return value
+
+
+def _numbers(value, name):
+    """A list-of-numbers field as floats."""
+    try:
+        return [float(x) for x in value]
+    except (TypeError, ValueError):
+        raise SpectraConfigError(
+            f"{name} must be a list of numbers, got {value!r}") from None
+
+
+# numeric scalar fields of each section, converted by _number in from_dict
+_NUMBER_FIELDS = {
+    "scatterer": ("sigma_bound_b", "awr", "b_coh_fm", "sigma_inc_b"),
+    "material": ("temperature_K",),
+    "grid": ("e_min_meV", "e_max_meV", "de_meV", "dq_max_invA", "q_max_invA",
+             "q_pad_invA"),
+    "instrument": ("e_fixed_meV", "bank_halfwidth_deg"),
+}
+
+
+def _convert_numbers(obj, section, prefix):
+    for name in _NUMBER_FIELDS[section]:
+        setattr(obj, name, _number(getattr(obj, name), f"{prefix}.{name}"))
+
+
 def _strict_bool(name, val):
     """Strictly-typed boolean config field: bool (or 0/1) only.
 
@@ -77,7 +114,8 @@ def _strict_bool(name, val):
 # -----------------------------------------------------------------------------
 @dataclasses.dataclass
 class Scatterer:
-    """Optional per-site scattering override (else read from the phonopy yaml).
+    """One scattering species. Modes 1/2 need ``b_coh_fm`` and ``sigma_inc_b``
+    for every species except C, which has built-in values.
 
     ``dos_file`` + ``dos_unit`` + ``multiplicity`` are used only by the DOS-based
     path (inelastic_mode=0): the partial phonon-DOS file for this species, the
@@ -222,13 +260,16 @@ class SpectraConfig:
         scat = [_build(Scatterer, dict(s)) for s in mat_d.pop("scatterers", [])]
         material = _build(MaterialConfig, mat_d)
         material.scatterers = scat
+        _convert_numbers(material, "material", "material")
         material.mesh = [_require_exact_int(x, "material.mesh entries", 1)
                          for x in material.mesh]
         if material.lattice is not None:
-            material.lattice = [float(x) for x in material.lattice]
+            material.lattice = _numbers(material.lattice, "material.lattice")
         for s in material.scatterers:
+            _convert_numbers(s, "scatterer", f"scatterer {s.symbol!r}")
             if s.positions is not None:
-                s.positions = [[float(x) for x in p] for p in s.positions]
+                s.positions = [_numbers(p, f"scatterer {s.symbol!r} positions")
+                               for p in s.positions]
         physics = _build(PhysicsConfig, dict(d.get("physics", {})))
         try:
             from irma.core.phonopy_io import validate_min_phonon_energy_mev
@@ -244,10 +285,13 @@ class SpectraConfig:
         physics.kinematic_kf_ki = _strict_bool(
             "physics.kinematic_kf_ki", physics.kinematic_kf_ki)
         grid = _build(GridConfig, dict(d.get("grid", {})))
+        _convert_numbers(grid, "grid", "grid")
         instrument = _build(InstrumentConfig, dict(d.get("instrument", {})))
+        _convert_numbers(instrument, "instrument", "instrument")
         for f in ("angles_deg", "q_cuts", "sigma_coeffs", "map_coverage_deg"):
             if getattr(instrument, f) is not None:
-                setattr(instrument, f, [float(x) for x in getattr(instrument, f)])
+                setattr(instrument, f, _numbers(getattr(instrument, f),
+                                                f"instrument.{f}"))
         if instrument.cut_dq_invA is not None:
             instrument.cut_dq_invA = float(instrument.cut_dq_invA)
         instrument.map_mask = _strict_bool("instrument.map_mask", instrument.map_mask)
@@ -255,6 +299,11 @@ class SpectraConfig:
             "instrument.export_components", instrument.export_components)
         if instrument.chopper_spec is not None:
             cs = dict(instrument.chopper_spec)
+            unknown = set(cs) - set(_CHOPPER_KEYS)
+            if unknown:
+                raise SpectraConfigError(
+                    f"unknown instrument.chopper_spec key(s) {sorted(unknown)}; "
+                    f"allowed: {list(_CHOPPER_KEYS)}")
             instrument.chopper_spec = {k: cs.get(k) for k in _CHOPPER_KEYS}
         return cls(material=material, physics=physics, grid=grid, instrument=instrument)
 
@@ -337,6 +386,7 @@ def validate(cfg: SpectraConfig) -> SpectraConfig:
 
     Range checks are written as ``not x > 0`` so a NaN fails them too.
     """
+    from irma.core.noncubic_helpers import _FALLBACK_C_SCATTERING_LENGTHS_ANGSTROM
     m, p, g, ins = cfg.material, cfg.physics, cfg.grid, cfg.instrument
 
     # A string inelastic_mode alias becomes its integer first, so every later
@@ -375,6 +425,13 @@ def validate(cfg: SpectraConfig) -> SpectraConfig:
             raise SpectraConfigError(f"{name}: sigma_bound_b must be > 0, got {s.sigma_bound_b}")
         if s.sigma_inc_b is not None and not s.sigma_inc_b >= 0:
             raise SpectraConfigError(f"{name}: sigma_inc_b must be >= 0, got {s.sigma_inc_b}")
+        # the engine has built-in values for carbon only
+        if (p.inelastic_mode in (1, 2)
+                and s.symbol not in _FALLBACK_C_SCATTERING_LENGTHS_ANGSTROM
+                and (s.b_coh_fm is None or s.sigma_inc_b is None)):
+            raise SpectraConfigError(
+                f"{name}: inelastic_mode {p.inelastic_mode} needs b_coh_fm and "
+                "sigma_inc_b (built-in values exist only for C)")
 
     if p.inelastic_mode == 0:
         if not m.scatterers:
@@ -445,6 +502,8 @@ def validate(cfg: SpectraConfig) -> SpectraConfig:
         raise SpectraConfigError(
             "instrument.map_coverage_deg must be [2th_min, 2th_max] with "
             f"0 < min < max < 180 deg, got {cov}")
+    if not ins.e_fixed_meV > 0:
+        raise SpectraConfigError(f"instrument.e_fixed_meV must be > 0, got {ins.e_fixed_meV}")
     if ins.resolution_model == "chopper":
         if ins.geometry != "direct" or ins.resolution_shape != "gaussian":
             raise SpectraConfigError(
@@ -456,14 +515,19 @@ def validate(cfg: SpectraConfig) -> SpectraConfig:
             raise SpectraConfigError(
                 f"instrument.chopper_spec is missing {missing} (CLI flags: "
                 "--chopper-instrument, --chopper-package, --chopper-frequency)")
-        from irma.spectra.chopper_resolution import instrument_geometry, _norm_frequency
+        from irma.spectra.chopper_resolution import (
+            _norm_frequency, chopper_sigma_of_E, instrument_geometry)
         try:
-            instrument_geometry(spec["instrument"], spec["package"])
-            _norm_frequency(spec["frequency"])
+            geom = instrument_geometry(spec["instrument"], spec["package"])
+            freq = _norm_frequency(spec["frequency"])
+            if freq > geom["max_frequency"]:
+                raise ValueError(
+                    f"frequency {freq:g} Hz is above the {spec['instrument']} "
+                    f"maximum of {geom['max_frequency']} Hz")
+            # raises when this package and frequency do not transmit Ei
+            chopper_sigma_of_E(np.array([0.0]), Ei=ins.e_fixed_meV, **spec)
         except (TypeError, ValueError) as exc:
             raise SpectraConfigError(f"instrument.chopper_spec: {exc}") from None
-    if not ins.e_fixed_meV > 0:
-        raise SpectraConfigError(f"instrument.e_fixed_meV must be > 0, got {ins.e_fixed_meV}")
     if not ins.bank_halfwidth_deg > 0:
         raise SpectraConfigError(
             f"instrument.bank_halfwidth_deg must be > 0, got {ins.bank_halfwidth_deg}")
@@ -471,6 +535,13 @@ def validate(cfg: SpectraConfig) -> SpectraConfig:
         raise SpectraConfigError(
             f"instrument.angles_deg is required for geometry '{ins.geometry}' "
             "(only the vision preset fills its banks)")
+    banks = sorted(VISION_BANKS.values())
+    if (ins.geometry == "vision" and ins.angles_deg is not None
+            and sorted(ins.angles_deg) != banks):
+        raise SpectraConfigError(
+            f"instrument.angles_deg {ins.angles_deg} does not apply to the vision "
+            f"preset (fixed banks at {banks} deg); use geometry 'indirect' for "
+            "other angles")
     if ins.angles_deg is not None and not all(0.0 < a < 180.0 for a in ins.angles_deg):
         raise SpectraConfigError("instrument.angles_deg must lie strictly in (0, 180) deg")
     if ins.q_cuts is not None and not all(q > 0 for q in ins.q_cuts):

@@ -50,6 +50,10 @@ def _validate_dos(omega_ev, rho, symbol):
     if not np.allclose(d, delta1, rtol=1e-4, atol=0.0):
         raise ValueError(f"species {symbol!r}: dos omega grid must be UNIFORMLY "
                          f"spaced (resample first)")
+    # the kernels index the grid as omega = j*delta, so it must start at 0
+    if abs(omega[0]) > 1e-6 * delta1:
+        raise ValueError(f"species {symbol!r}: dos omega grid must start at 0 "
+                         f"(got {omega[0]:g} eV; prepend zeros or resample from 0)")
     if not np.all(rho >= 0.0) or not np.any(rho[1:] > 0.0):
         raise ValueError(f"species {symbol!r}: dos rho must be non-negative with at "
                          f"least one positive point above omega=0")
@@ -99,7 +103,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev, nphon=100):
     ----------
     species : list of dict, one per scattering species, each with
         ``symbol`` (label), ``omega_ev`` + ``rho`` (the partial phonon DOS on a
-        UNIFORM omega grid, eV; rho[0] is reconstructed internally), ``awr``
+        UNIFORM omega grid from 0, eV; rho[0] is reconstructed internally), ``awr``
         (mass ratio M_d/m_n -> alpha_d and the Debye-Waller), ``sigma_bound_b``
         (the TOTAL bound cross section sigma_coh+sigma_inc for the incoherent-
         approximation inelastic weight) and ``multiplicity`` (number of atoms of
