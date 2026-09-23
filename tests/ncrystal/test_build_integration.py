@@ -96,6 +96,23 @@ def test_graphite_single_pack_engine_equality(tmp_path):
 
 
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
+def test_explicit_force_constants_file_is_used(tmp_path):
+    # a FORCE_CONSTANTS file under another name is found only through
+    # material.force_constants; the pack must equal the sibling-file pack
+    import shutil
+    shutil.copy(_GRAPHITE_YAML, tmp_path / "phonopy.yaml")
+    fc = tmp_path / "fc.alt"
+    shutil.copy(_GRAPHITE_YAML.parent / "FORCE_CONSTANTS", fc)
+    cfg = _graphite_cfg()
+    ref = build_packs(cfg, progress=lambda *a: None)[0][0]
+    cfg.material.phonopy_yaml = str(tmp_path / "phonopy.yaml")
+    cfg.material.force_constants = str(fc)
+    pack = build_packs(cfg, progress=lambda *a: None)[0][0]
+    assert pack.sab_values == ref.sab_values
+    assert pack.metadata["force_constants_name"] == "fc.alt"
+
+
+@pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
 def test_graphite_elastic_block_and_roundtrip(tmp_path):
     cfg = _graphite_cfg()
     pack_paths, ncmat_path = write_packs(cfg, tmp_path, progress=lambda *a: None)
