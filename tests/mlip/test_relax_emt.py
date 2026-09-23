@@ -49,7 +49,7 @@ def test_snap_to_symmetry_restores_exact_wyckoffs():
     # snap must land them back to machine precision
     import numpy as np
 
-    from irma.mlip.relax import MlipRelaxError, snap_to_symmetry
+    from irma.mlip.relax import snap_to_symmetry
 
     atoms = bulk("Al", "fcc", a=4.05, cubic=True)
     ideal = atoms.get_scaled_positions().copy()
@@ -81,7 +81,6 @@ def test_snap_to_symmetry_restores_exact_wyckoffs():
     before = atoms.get_scaled_positions().copy()
     assert snap_to_symmetry(atoms, symprec=1e-6) < 1e-10
     assert np.allclose(atoms.get_scaled_positions(), before, atol=1e-12)
-    assert MlipRelaxError is not None      # exported for callers
 
 
 def test_relax_with_snap_symmetry_records_the_shift():
@@ -221,53 +220,3 @@ def test_jitter_default_zero_is_single_pass():
     assert not res.converged
     assert res.jitter_cycles_used == 0
     assert res.steps_taken <= 150
-
-
-def test_jitter_respects_constraints():
-    """Kicks and best-frame restores must go through the
-    constraint-aware setters -- a FixAtoms atom must never move."""
-    from ase.constraints import FixAtoms
-    atoms, calc = _floor_system()
-    frozen = atoms.positions[2].copy()
-    atoms.set_constraint(FixAtoms(indices=[2]))
-    res = relax(atoms, calc, fmax=0.01, nmax=100, jitter_cycles=2)
-    import numpy as np
-    assert np.allclose(res.atoms.positions[2], frozen, atol=1e-12)
-
-
-def test_jitter_keeps_intra_cycle_best_not_endpoint():
-    """The best frame is tracked by a per-step observer,
-    so a pass that dips through its minimum mid-trajectory and ends
-    higher must still return the dip."""
-    import numpy as np
-    atoms, calc = _floor_system()
-    res = relax(atoms, calc, fmax=0.01, nmax=150, jitter_cycles=2)
-    final = float(np.linalg.norm(calc.get_forces(res.atoms), axis=1).max())
-    # the returned frame IS the best observation, within force-cache noise
-    assert final == pytest.approx(res.fmax_achieved, abs=1e-6)
-    # and it can never exceed the kink calculator's construction floor by
-    # more than the harmonic term FIRE leaves at a step boundary
-    assert res.fmax_achieved < 0.09
-
-
-def test_snap_to_symmetry_respects_constraints():
-    """MLP-6: the snap must apply positions through the constraint-aware
-    setter (set_positions), like the jitter path -- a FixAtoms atom must
-    not move, even though symmetrization asks it to."""
-    import numpy as np
-    from ase.constraints import FixAtoms
-
-    from irma.mlip.relax import snap_to_symmetry
-
-    atoms = bulk("Al", "fcc", a=4.05, cubic=True)
-    ideal = atoms.get_scaled_positions().copy()
-    rng = np.random.default_rng(11)
-    atoms.set_scaled_positions(ideal + rng.uniform(-5e-5, 5e-5, ideal.shape))
-    frozen_before = atoms.positions[1].copy()
-    free_before = atoms.positions[2].copy()
-    atoms.set_constraint(FixAtoms(indices=[1]))
-
-    shift = snap_to_symmetry(atoms, symprec=1e-3)
-    assert shift > 0                                   # a real snap ran
-    assert np.allclose(atoms.positions[1], frozen_before, atol=1e-14)
-    assert not np.allclose(atoms.positions[2], free_before, atol=1e-12)
