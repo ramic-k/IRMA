@@ -1,4 +1,4 @@
-"""Per-q Debye-Waller TDM floor (audit §B 3b / b-ii).
+"""Per-q Debye-Waller TDM floor.
 
 The thermal-displacement tensor U_ij feeds the Debye-Waller factor. phonopy's
 ``ThermalDisplacementMatrices`` accepts only a single GLOBAL freq_min, so on a
@@ -24,13 +24,12 @@ from irma.core.phonopy_io import (
     mode_floor_mask,
 )
 
-_BE = "tests/mode2_euphonic_n1_validation/beryllium/phonopy.yaml"
+_BE = os.path.join(os.path.dirname(__file__), "mode2_euphonic_n1_validation",
+                   "beryllium", "phonopy.yaml")
 
 
 def _load(mesh):
     pytest.importorskip("phonopy")
-    if not os.path.exists(_BE):
-        pytest.skip("Be phonopy fixture not present (self-contained validation dir)")
     from irma.core.phonopy_io import load_phonopy_mesh
     return load_phonopy_mesh(_BE, mesh)
 
@@ -53,8 +52,6 @@ def test_perq_reproduces_phonopy_on_gamma_free_mesh():
     u_perq = compute_thermal_displacement_matrices(md, 296.0)
     # ~1e-10 in practice; 1e-8 leaves headroom for BLAS/summation-order noise.
     assert np.allclose(u_phonopy, u_perq, atol=1e-8, rtol=0.0)
-
-
 
 
 def test_perq_keeps_off_gamma_soft_mode_a_global_floor_drops():
