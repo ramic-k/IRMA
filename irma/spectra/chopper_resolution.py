@@ -276,13 +276,14 @@ def chopper_sigma_of_E(E, *, Ei, instrument, package, frequency):
     """Gaussian sigma(E) [meV] for a direct-geometry DGS, fed to the convolution.
 
     Looks up the instrument geometry, evaluates :func:`direct_resolution_fwhm`
-    on the energy-LOSS side (the gain side E<0 and the Ef->0 edge fall back to
-    the elastic resolution), and converts FWHM -> sigma. Raises if the chosen
-    chopper/frequency does not transmit Ei (NaN everywhere).
+    at every energy transfer, loss and gain (on the gain side Ef > Ei, so the
+    width grows with |E|), and converts FWHM -> sigma. Transfers at or above
+    Ei, where no final neutron exists, are clipped just below Ei. Raises if the
+    chosen chopper/frequency does not transmit Ei (NaN everywhere).
     """
     geom = instrument_geometry(instrument, package)
     E = np.asarray(E, float)
-    Et = np.clip(E, 0.0, float(Ei) * (1.0 - 1e-6))     # loss side; gain -> elastic
+    Et = np.minimum(E, float(Ei) * (1.0 - 1e-6))        # Ef > 0 at every transfer
     fwhm = np.atleast_1d(direct_resolution_fwhm(Et, Ei=Ei, frequency=frequency, geom=geom))
     if not np.any(np.isfinite(fwhm)):
         raise ValueError(
