@@ -64,6 +64,15 @@ def test_non_ascii_comment_rejected():
     _expect(GOOD.replace("0/\n/\n", "0/\n'M\u00e1rquez'/\n/\n"), "non-ASCII")
 
 
+def test_cutoff_that_removes_every_mode_is_refused():
+    # a one-value card before Card 6g is the cutoff; '500 /' (e.g. a Card 6g
+    # missing mpdir) would remove every graphite mode
+    pytest.importorskip("phonopy")
+    from test_noncubic_fast_ci import _DECK, _YAML
+    deck = _DECK.format(mode=2, yaml=_YAML).replace("40 20/\n", "500/\n40 20/\n")
+    _expect(deck, "removes every phonon mode")
+
+
 def test_empty_file():
     _expect("", "no LEAPR cards found")
 
