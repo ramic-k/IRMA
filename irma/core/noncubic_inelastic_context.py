@@ -343,9 +343,7 @@ def build_model_context(
 
     # NOTE: only the q-weight norm is kept (it seeds multiphonon_q_weight_norm
     # below). The per-temperature histogram lookups, signed work grids and
-    # multiphonon direction set are deliberately NOT built here: the compute
-    # phase (_cfa_coherent_one_phonon / _cfa_incoherent_and_multiphonon)
-    # builds them from scratch, so context copies would be dead setup work.
+    # multiphonon direction set are built by compute_from_args, not here.
     incoherent_one_phonon_q_weight_norm = float(np.sum(incoherent_one_phonon_mesh_weights))
     multiphonon_mode_energies_mev = incoherent_one_phonon_mode_energies_mev
     multiphonon_mode_frequencies_thz = incoherent_one_phonon_mode_frequencies_thz
@@ -547,8 +545,8 @@ def build_compute_context(
     sigma_total_by_atom = sigma_coh_by_atom + sigma_inc_by_atom
     # NOTE: the authoritative multiphonon sigma_total scale is rebuilt downstream
     # per CARD-6d ATOM-TYPE GROUP (export_multiphonon_sigma_total_scale in
-    # noncubic_engine._cfa_site_groups_and_multiphonon_policy, using
-    # 1/len(group_indices)), and that per-group version is what the worker reads.
+    # noncubic_engine.compute_from_args, using 1/len(group_indices)), and that
+    # per-group version is what the worker reads.
     # An element-SYMBOL-multiplicity normalization is NOT the contract and would
     # diverge from the per-group convention whenever two inequivalent Card 6d
     # groups share one element symbol, so it is deliberately not computed/exported
@@ -594,8 +592,8 @@ def build_compute_context(
     multiphonon_dir_chunk_size = max(
         1, min(multiphonon_num_directions, _MULTIPHONON_DIR_CHUNK))
     # The multiphonon direction set, work/signed grids, signed histogram
-    # lookups and base prefactors are built by the compute phase itself
-    # (noncubic_engine._cfa_incoherent_and_multiphonon), not cached here.
+    # lookups and base prefactors are built by compute_from_args, not cached
+    # here.
     finish_stage("block partitions prepared")
 
     print(

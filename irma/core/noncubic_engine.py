@@ -108,7 +108,6 @@ normalization.
 from __future__ import annotations
 
 import argparse
-import gc
 import json
 import math
 import multiprocessing as mp
@@ -136,7 +135,6 @@ for _name in (
     os.environ.setdefault(_name, "1")
 
 import numpy as np
-from types import SimpleNamespace
 
 # Physical unit constants. Values are identical to phonopy.units (which phonopy
 # is deprecating); hardcoded here so this module imports WITHOUT phonopy. phonopy
@@ -208,10 +206,10 @@ THz = 1000000000000.0
 # global + set_worker_state, the shared-memory staging/attach helpers, the
 # thread-limiting pool initializer, the sparse-block IPC, and the projection /
 # q-sampling / precompute helpers live in noncubic_workers so this module
-# stays navigable. Re-imported here so the engine's _cfa_* phases below and
-# existing ``from irma.core.noncubic_engine import ...`` callers keep working
+# stays navigable. Re-imported here so compute_from_args and existing
+# ``from irma.core.noncubic_engine import ...`` callers keep working
 # unchanged. WORKER_STATE itself is intentionally NOT re-exported:
-# set_worker_state (called from the phases below) rebinds it in
+# set_worker_state (called from compute_from_args) rebinds it in
 # noncubic_workers, run_blocks stages THAT dict into shared memory for the
 # spawned workers, and the serial path's kernels read it there — a copy bound
 # here would only go stale.
@@ -380,1647 +378,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def _cfa_setup_mesh_and_grids(S):
-    """Load the phonopy mesh, build the Q/E work grids, thermal-displacement
-    matrices and the direction quadrature.
-
-    One phase of compute_from_args; shared state travels in the
-    namespace S (unpacked to locals on entry, packed on exit).
-    """
-    args = getattr(S, "args")
-    context = getattr(S, "context")
-    e_grid_mev = getattr(S, "e_grid_mev")
-    q_grid_ang_inv = getattr(S, "q_grid_ang_inv")
-
-    start = time.time()
-    multiphonon_num_directions = (
-        max(1, int(args.num_directions))
-        if args.multiphonon_num_directions is None
-        else max(1, int(args.multiphonon_num_directions))
-    )
-
-    if q_grid_ang_inv is None or e_grid_mev is None:
-        if args.grid_from_oclimax_csv:
-            q_grid_ang_inv, e_grid_mev = load_grid_from_oclimax_csv(Path(args.grid_from_oclimax_csv))
-        else:
-            if args.q_grid_file:
-                q_grid_ang_inv = load_grid_from_text(Path(args.q_grid_file))
-            else:
-                q_grid_ang_inv = np.arange(args.q_min, args.q_max + 0.5 * args.dq, args.dq, dtype=float)
-            if args.e_grid_file:
-                e_grid_mev = load_grid_from_text(Path(args.e_grid_file))
-            else:
-                e_grid_mev = np.arange(args.e_min, args.e_max + 0.5 * args.de, args.de, dtype=float)
-    else:
-        q_grid_ang_inv = np.asarray(q_grid_ang_inv, dtype=float)
-        e_grid_mev = np.asarray(e_grid_mev, dtype=float)
-
-    if context is None:
-        from irma.core.noncubic_inelastic_context import build_compute_context
-
-        context = build_compute_context(args, q_grid_ang_inv, e_grid_mev)
-
-    requested_inelastic_mode = int(getattr(args, "inelastic_mode", 0) or 0)
-    if requested_inelastic_mode not in (0, 1, 2):
-        raise ValueError("inelastic_mode must be 0, 1, or 2 in the noncubic inelastic driver.")
-    need_coherent_n1 = requested_inelastic_mode in (0, 2)
-    need_exact_incoherent_n1 = requested_inelastic_mode in (0, 2)
-    need_incoherent_approx_n1 = requested_inelastic_mode in (0, 1)
-
-    q_grid_ang_inv = context["q_grid_ang_inv"]
-    e_grid_mev = context["e_grid_mev"]
-    q_edges_ang_inv = context["q_edges_ang_inv"]
-    e_edges_mev = context["e_edges_mev"]
-    e_bin_widths_mev = context["e_bin_widths_mev"]
-    q_min_used = context["q_min_used"]
-    q_max_used = context["q_max_used"]
-    dq_used = context["dq_used"]
-    e_min_used = context["e_min_used"]
-    e_max_used = context["e_max_used"]
-    de_used = context["de_used"]
-    directions = context["directions"]
-    q_center_mags = context["q_center_mags"]
-    q_center_weights = context["q_center_weights"]
-    q_bin_sample_mags = context["q_bin_sample_mags"]
-    q_bin_sample_weights = context["q_bin_sample_weights"]
-    mesh = context["mesh"]
-    primitive = context["primitive"]
-    rec_lat_no_2pi = context["rec_lat_no_2pi"]
-    frequency_factor_to_thz = context["frequency_factor_to_thz"]
-    q_red = context["q_red"]
-    q_shell_index = context["q_shell_index"]
-    sample_weights = context["sample_weights"]
-    q_cart_physical = context["q_cart_physical"]
-    unit_directions = context["unit_directions"]
-    q_mags_physical = context["q_mags_physical"]
-    mev_to_joule = context["mev_to_joule"]
-    unit_conversion = context["unit_conversion"]
-    scattering_lengths = context["scattering_lengths"]
-    sigma_inc = context["sigma_inc"]
-    sigma_coh_by_atom = context["sigma_coh_by_atom"]
-    coherent_atom_prefactors = context["coherent_atom_prefactors"]
-    sigma_inc_by_atom = context["sigma_inc_by_atom"]
-    sigma_total_by_atom = context["sigma_total_by_atom"]
-    # NOTE: the multiphonon sigma_total scale is NOT taken from the context; it is
-    # rebuilt per Card-6d atom-type group as export_multiphonon_sigma_total_scale
-    # in _cfa_site_groups_and_multiphonon_policy (1/len(group_indices)), which is
-    # the authoritative per-group convention the worker reads.
-    incoherent_prefactors = context["incoherent_prefactors"]
-    incoherent_approx_prefactors = context["incoherent_approx_prefactors"]
-    incoherent_one_phonon_mesh_qpoints = context["incoherent_one_phonon_mesh_qpoints"]
-    incoherent_one_phonon_mesh_frequencies = context["incoherent_one_phonon_mesh_frequencies"]
-    incoherent_one_phonon_mesh_eigenvectors = context["incoherent_one_phonon_mesh_eigenvectors"]
-    incoherent_one_phonon_mesh_weights = context["incoherent_one_phonon_mesh_weights"]
-    incoherent_one_phonon_mode_energies_mev = context["incoherent_one_phonon_mode_energies_mev"]
-    incoherent_one_phonon_mode_frequencies_thz = context["incoherent_one_phonon_mode_frequencies_thz"]
-    incoherent_one_phonon_mode_weights = context["incoherent_one_phonon_mode_weights"]
-    incoherent_one_phonon_mode_eigvecs_valid = context["incoherent_one_phonon_mode_eigvecs_valid"]
-    # The full-mesh mode arrays (mesh_mode_*, mesh_frequencies/weights and a
-    # full-mesh eigenvector copy) are deliberately NOT context keys: no
-    # compute phase consumes them (the live mode sums read the
-    # incoherent_one_phonon_* reduced-mesh arrays), so caching them would
-    # only hold dead memory.
-    max_mode_energy_mev = context["max_mode_energy_mev"]
-    multiphonon_mode_energies_mev = context["multiphonon_mode_energies_mev"]
-    multiphonon_mode_frequencies_thz = context["multiphonon_mode_frequencies_thz"]
-    multiphonon_mode_weights = context["multiphonon_mode_weights"]
-    multiphonon_mode_eigvecs_valid = context["multiphonon_mode_eigvecs_valid"]
-    multiphonon_q_weight_norm = context["multiphonon_q_weight_norm"]
-    multiphonon_mode_projection_components = context["multiphonon_mode_projection_components"]
-    multiphonon_star_counts = context["multiphonon_star_counts"]
-    num_jobs = context["num_jobs"]
-    chunk_size = context["chunk_size"]
-    shell_chunk_size = context["shell_chunk_size"]
-    coherent_blocks = context["coherent_blocks"]
-    shell_blocks = context["shell_blocks"]
-    multiphonon_dir_chunk_size = context["multiphonon_dir_chunk_size"]
-    # The multiphonon direction set, work/signed grids, signed histogram
-    # lookups, base prefactors and the one-phonon histogram lookup are NOT
-    # context keys: the compute phases rebuild them from scratch
-    # (_cfa_coherent_one_phonon, _cfa_incoherent_and_multiphonon), so cached
-    # copies would be dead state that misleads readers about what is
-    # authoritative.
-
-    phase_start = time.time()
-    # Filled when a user phonon-energy cutoff is active; carried into the
-    # run metadata and printed once per temperature.
-    phonon_cutoff_summary = None
-    precomputed_tdm = getattr(args, "precomputed_thermal_mats", None)
-    if precomputed_tdm is not None:
-        # The engine's MT4 step already ran ThermalDisplacementMatrices on the
-        # SAME full mesh at the SAME temperature with the SAME mode floor
-        # (irma.core.phonopy_io.compute_thermal_displacement_matrices); reuse
-        # its arrays instead of repeating the run.
-        thermal_mats = np.asarray(precomputed_tdm, dtype=float)
-        print("Reusing the engine's thermal displacement matrices "
-              "(same mesh, same temperature)...", flush=True)
-    else:
-        # The TDMs depend only on the mesh eigenvectors, temperature, and
-        # atomic masses — all species-independent — so they are cached in
-        # the reusable model context keyed by temperature: a multi-species
-        # pack bake computes the tensor once for all principals, and lat=0
-        # multi-temperature decks compute each temperature once.
-        _model_ctx = (context.get("_model_context")
-                      if isinstance(context, dict) else None)
-        _tdm_cache = (_model_ctx.setdefault("thermal_mats_by_temperature", {})
-                      if isinstance(_model_ctx, dict) else None)
-        _tdm_key = round(float(args.temperature), 9)
-        if _tdm_cache is not None and _tdm_key in _tdm_cache:
-            thermal_mats = _tdm_cache[_tdm_key]
-            print("Reusing cached thermal displacement matrices "
-                  "(same mesh, same temperature)...", flush=True)
-        else:
-            print("Precomputing anisotropic thermal displacement matrices...",
-                  flush=True)
-            # Same per-q two-tier Debye-Waller mode floor as the MT2/driver
-            # path (phonopy_io.compute_thermal_displacement_matrices): the
-            # per-q sum keeps the off-Gamma soft modes in
-            # [1 ueV, GAMMA_ACOUSTIC_FLOOR] that the one-phonon and
-            # multiphonon mode sums also keep, so the Poisson/DW 2W is built
-            # from the same mode set as the kernels.
-            from irma.core.phonopy_io import (
-                PhonopyMeshData,
-                compute_thermal_displacement_matrices,
-            )
-            _mesh_data = PhonopyMeshData(
-                qpoints=np.asarray(mesh.qpoints, dtype=float),
-                frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
-                # Transient (N_q, N_branches, N_atoms, 3) layout copy,
-                # consumed by the per-q sum.
-                eigenvectors=reshape_mesh_eigenvectors(
-                    np.asarray(mesh.eigenvectors), len(primitive.masses)),
-                weights=np.asarray(
-                    getattr(mesh, "weights", np.ones(len(mesh.qpoints))),
-                    dtype=float),
-                masses_amu=np.asarray(primitive.masses, dtype=float),
-                atom_symbols=[str(s) for s in primitive.symbols],
-                atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
-                min_phonon_energy_mev=float(
-                    getattr(args, "min_phonon_energy_mev", 0.0)),
-                phonopy_mesh_object=mesh,
-            )
-            thermal_mats = compute_thermal_displacement_matrices(
-                _mesh_data, args.temperature)
-            del _mesh_data
-            if _tdm_cache is not None:
-                _tdm_cache[_tdm_key] = thermal_mats
-            print(
-                f"Thermal displacement matrices ready in {time.time() - phase_start:.1f} s",
-                flush=True,
-            )
-    _cutoff_mev = float(getattr(args, "min_phonon_energy_mev", 0.0))
-    if _cutoff_mev > 0.0:
-        # Report what the cutoff removed, whichever branch supplied the
-        # displacement matrices: the summary rebuilds both mode populations
-        # on the mesh at this temperature (two cheap per-mode sums), so a
-        # truncated model announces itself and records itself in the
-        # metadata. Cached per temperature with the model context.
-        from irma.core.phonopy_io import (
-            PhonopyMeshData, format_phonon_cutoff_summary,
-            phonon_cutoff_summary as _summary)
-        _summary_ctx = (context.get("_model_context")
-                        if isinstance(context, dict) else None)
-        _summary_cache = (_summary_ctx.setdefault("phonon_cutoff_summary_by_temperature", {})
-                          if isinstance(_summary_ctx, dict) else None)
-        _summary_key = round(float(args.temperature), 9)
-        if _summary_cache is not None and _summary_key in _summary_cache:
-            phonon_cutoff_summary = _summary_cache[_summary_key]
-        else:
-            phonon_cutoff_summary = _summary(PhonopyMeshData(
-                qpoints=np.asarray(mesh.qpoints, dtype=float),
-                frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
-                eigenvectors=reshape_mesh_eigenvectors(
-                    np.asarray(mesh.eigenvectors), len(primitive.masses)),
-                weights=np.asarray(
-                    getattr(mesh, "weights", np.ones(len(mesh.qpoints))), dtype=float),
-                masses_amu=np.asarray(primitive.masses, dtype=float),
-                atom_symbols=[str(s) for s in primitive.symbols],
-                atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
-                min_phonon_energy_mev=_cutoff_mev,
-                phonopy_mesh_object=mesh,
-            ), args.temperature)
-            if _summary_cache is not None:
-                _summary_cache[_summary_key] = phonon_cutoff_summary
-        for _line in format_phonon_cutoff_summary(phonon_cutoff_summary):
-            print(_line, flush=True)
-    kT_meV = KB_MEV_PER_K * args.temperature
-    if args.temperature <= BOSE_T0_LIMIT_K:
-        incoherent_one_phonon_mode_occupancies = np.zeros_like(
-            incoherent_one_phonon_mode_frequencies_thz
-        )
-    else:
-        incoherent_one_phonon_exponent = np.clip(
-            incoherent_one_phonon_mode_frequencies_thz * THzToEv
-            / (_BK_EV_PER_K * args.temperature),
-            0.0,
-            700.0,
-        )
-        incoherent_one_phonon_mode_occupancies = 1.0 / np.expm1(
-            incoherent_one_phonon_exponent
-        )
-
-    _loc = locals()
-    for _n in ['chunk_size', 'coherent_atom_prefactors', 'coherent_blocks', 'de_used', 'directions', 'dq_used', 'e_bin_widths_mev', 'e_edges_mev', 'e_grid_mev', 'e_max_used', 'e_min_used', 'frequency_factor_to_thz', 'incoherent_approx_prefactors', 'incoherent_one_phonon_mesh_qpoints', 'incoherent_one_phonon_mesh_weights', 'incoherent_one_phonon_mode_eigvecs_valid', 'incoherent_one_phonon_mode_energies_mev', 'incoherent_one_phonon_mode_frequencies_thz', 'incoherent_one_phonon_mode_occupancies', 'incoherent_one_phonon_mode_weights', 'incoherent_prefactors', 'max_mode_energy_mev', 'mesh', 'mev_to_joule', 'multiphonon_dir_chunk_size', 'multiphonon_mode_eigvecs_valid', 'multiphonon_mode_energies_mev', 'multiphonon_mode_frequencies_thz', 'multiphonon_mode_projection_components', 'multiphonon_mode_weights', 'multiphonon_num_directions', 'multiphonon_q_weight_norm', 'multiphonon_star_counts', 'need_coherent_n1', 'need_exact_incoherent_n1', 'need_incoherent_approx_n1', 'num_jobs', 'phase_start', 'primitive', 'q_bin_sample_mags', 'q_bin_sample_weights', 'q_cart_physical', 'q_center_mags', 'q_center_weights', 'q_edges_ang_inv', 'q_grid_ang_inv', 'q_mags_physical', 'q_max_used', 'q_min_used', 'q_red', 'phonon_cutoff_summary', 'q_shell_index', 'rec_lat_no_2pi', 'sample_weights', 'scattering_lengths', 'shell_blocks', 'sigma_coh_by_atom', 'sigma_inc', 'sigma_inc_by_atom', 'sigma_total_by_atom', 'start', 'thermal_mats', 'unit_conversion', 'unit_directions']:
-        # STRICT lookup: a renamed/missing local must fail HERE with a
-        # KeyError naming it, not plant a silent None for a later phase
-        # (names that are legitimately branch-dependent are initialized
-        # to None in the non-computing branch above).
-        setattr(S, _n, _loc[_n])
-
-
-def _cfa_site_groups_and_multiphonon_policy(S):
-    """Resolve site groups / principal-scatterer bookkeeping and the
-    multiphonon-order policy (honoring Card 3 nphon).
-
-    One phase of compute_from_args; shared state travels in the
-    namespace S (unpacked to locals on entry, packed on exit).
-    """
-    args = getattr(S, "args")
-    e_grid_mev = getattr(S, "e_grid_mev")
-    incoherent_approx_prefactors = getattr(S, "incoherent_approx_prefactors")
-    incoherent_prefactors = getattr(S, "incoherent_prefactors")
-    max_mode_energy_mev = getattr(S, "max_mode_energy_mev")
-    primitive = getattr(S, "primitive")
-    q_bin_sample_mags = getattr(S, "q_bin_sample_mags")
-    sigma_coh_by_atom = getattr(S, "sigma_coh_by_atom")
-    sigma_total_by_atom = getattr(S, "sigma_total_by_atom")
-    thermal_mats = getattr(S, "thermal_mats")
-
-
-    # Multiphonon-order policy. The incoherent multiphonon sum is Poisson(2W = Q^2 u.U.u);
-    # converging its high-Q tail to the free-gas limit requires order ~ 2W_max + 6*sqrt(2W_max)
-    # with 2W_max = Q_max^2 U_max (U_max = largest thermal-displacement eigenvalue). With the
-    # ANISOTROPIC Debye-Waller factor U_max can be large, so high Q needs a high order.
-    #
-    # We DO NOT silently override the deck. The user's Card 3 nphon is honored verbatim so a
-    # deliberate low-order study (e.g. one-phonon-only debugging) stays reproducible. The only
-    # behaviour:
-    #   - auto-sizing OFF (default): honor nphon; if it is below the requirement, WARN sternly
-    #     (the high-Q S(a,b) rows will truncate short of the free-gas limit).
-    #   - auto-sizing ON (Card 6g 3rd field = 1 / GUI checkbox / --auto-multiphonon-order):
-    #     raise the order up to the requirement (never below the deck nphon) and print INFO.
-    requested_order = args.multiphonon_max_order
-    max_q_for_order = float(np.max(q_bin_sample_mags)) if np.size(q_bin_sample_mags) else 0.0
-    _, required_order, two_w_max, u_max = derive_required_multiphonon_order(
-        max_q_for_order, thermal_mats, requested_order
-    )
-    auto_multiphonon_order = bool(getattr(args, "auto_multiphonon_order", False))
-    if auto_multiphonon_order:
-        # Auto-size UP to the requirement, capped at the 2000 safety limit, but NEVER below
-        # the deck nphon (a deliberately high deck order is still honored).
-        effective_order = max(requested_order, min(required_order, 2000))
-        if effective_order > requested_order:
-            print(
-                f"multiphonon: auto-sizing order {requested_order} -> {effective_order} to "
-                f"converge the incoherent Poisson(2W) sum for the anisotropic Debye-Waller "
-                f"factor (2W_max = Q_max^2 U_max = {two_w_max:.0f} at Q_max={max_q_for_order:.1f} "
-                f"1/Angstrom, U_max={u_max:.4f} Angstrom^2).",
-                flush=True,
-            )
-        else:
-            print(
-                f"multiphonon: auto-sizing requested but deck order {requested_order} already "
-                f">= the ~{required_order} required (2W_max={two_w_max:.0f} at "
-                f"Q_max={max_q_for_order:.1f} 1/Angstrom); honoring {requested_order}.",
-                flush=True,
-            )
-        if required_order > 2000 and effective_order < required_order:
-            print(
-                "WARNING: required multiphonon order exceeds the safety cap (2000); the "
-                "highest-Q rows may still fall short of the free-gas limit.",
-                flush=True,
-            )
-        args.multiphonon_max_order = effective_order
-    elif requested_order < required_order:
-        print(
-            f"WARNING: Card 3 nphon = {requested_order} is BELOW the ~{required_order} needed to "
-            f"converge the incoherent Poisson(2W) multiphonon sum with the ANISOTROPIC "
-            f"Debye-Waller factor (2W_max = Q_max^2 U_max = {two_w_max:.0f} at "
-            f"Q_max={max_q_for_order:.1f} 1/Angstrom, U_max={u_max:.4f} Angstrom^2). The high-Q "
-            f"S(a,b) rows will be TRUNCATED short of the free-gas limit and the cross section "
-            f"will roll off at high Q. Set Card 3 nphon >= {required_order}, or enable auto-sizing "
-            f"(Card 6g 3rd field auto_order = 1, or the GUI 'Auto-size multiphonon order' "
-            f"checkbox).",
-            flush=True,
-        )
-    elif requested_order >= 2:
-        print(
-            f"multiphonon: Card 3 nphon = {requested_order} >= the ~{required_order} required to "
-            f"converge 2W_max={two_w_max:.0f} (Q_max={max_q_for_order:.1f} 1/Angstrom); "
-            f"honoring the deck value.",
-            flush=True,
-        )
-
-    kT_mev = KB_MEV_PER_K * args.temperature
-    requested_beta_max = float(np.max(e_grid_mev) / kT_mev) if kT_mev > 0.0 else 0.0
-    estimated_one_phonon_beta_support = max_mode_energy_mev / kT_mev if kT_mev > 0.0 else 0.0
-    estimated_multiphonon_beta_support = (
-        args.multiphonon_max_order * estimated_one_phonon_beta_support
-        if args.multiphonon_max_order >= 2
-        else estimated_one_phonon_beta_support
-    )
-    # Energy-reach guard. The law needs the sum to reach the recoil ridge at
-    # the largest Q plus a few thermal widths, not the top of the energy
-    # grid: for any atom heavier than a few mass units the grid top lies far
-    # out on a Gaussian tail. Any order meeting the Poisson rule above
-    # passes this check (see multiphonon_energy_reach), so it fires only for
-    # an order below that requirement, or if the rule itself is changed.
-    energy_reach = multiphonon_energy_reach(
-        args.multiphonon_max_order, max_mode_energy_mev, max_q_for_order,
-        primitive.masses, args.temperature, float(np.max(e_grid_mev)))
-    needed_multiphonon_beta_support = (
-        energy_reach.needed_mev / kT_mev if kT_mev > 0.0 else 0.0)
-    coverage_warning = None
-    if energy_reach.short:
-        symbol = str(primitive.symbols[energy_reach.atom_index])
-        suggested_order = max(
-            required_order,
-            int(math.ceil(energy_reach.needed_mev / max_mode_energy_mev)))
-        if energy_reach.capped:
-            need_text = (
-                f"the recoil ridge of {symbol} at Q_max = {max_q_for_order:.1f} "
-                f"1/Angstrom sits at {energy_reach.ridge_mev / 1e3:.2f} eV, at or "
-                f"beyond the top of the energy grid, so the sum needs the grid "
-                f"top, {energy_reach.needed_mev / 1e3:.2f} eV")
-        else:
-            need_text = (
-                f"the recoil ridge of {symbol} at Q_max = {max_q_for_order:.1f} "
-                f"1/Angstrom sits at {energy_reach.ridge_mev / 1e3:.2f} eV with a "
-                f"thermal width of {energy_reach.width_mev / 1e3:.2f} eV, so the "
-                f"sum needs {energy_reach.needed_mev / 1e3:.2f} eV (ridge plus "
-                f"{MULTIPHONON_MARGIN_SIGMAS:g} widths)")
-        remedy = f"Raise Card 3 nphon to at least {suggested_order}"
-        if not auto_multiphonon_order:
-            remedy += ", or enable auto-sizing"
-        coverage_warning = (
-            f"multiphonon order {args.multiphonon_max_order} reaches "
-            f"{energy_reach.reach_mev / 1e3:.2f} eV of energy transfer; "
-            f"{need_text}. The law is truncated past the reach. {remedy}.")
-        print(f"WARNING: {coverage_warning}")
-    represented_principal_site_count = getattr(args, "represented_principal_site_count", None)
-    if represented_principal_site_count is None:
-        represented_principal_site_count = len(primitive.symbols)
-    represented_principal_site_count = int(represented_principal_site_count)
-    if represented_principal_site_count < 1:
-        raise ValueError("represented_principal_site_count must be a positive integer.")
-
-    site_groups = normalize_site_groups(
-        getattr(args, "site_groups", None),
-        len(primitive.symbols),
-    )
-    principal_group_index = int(getattr(args, "principal_group_index", 0) or 0)
-    if principal_group_index < 0 or principal_group_index >= len(site_groups):
-        raise ValueError("principal_group_index is out of range for the provided site groups.")
-    principal_site_indices = site_groups[principal_group_index]
-    principal_site_mask = np.zeros(len(primitive.symbols), dtype=bool)
-    principal_site_mask[principal_site_indices] = True
-    group_coherent_weights = np.array(
-        [float(np.sum(sigma_coh_by_atom[group])) for group in site_groups],
-        dtype=float,
-    )
-    coherent_partition_mode = str(getattr(args, "coherent_partition_mode", "auto") or "auto")
-    if coherent_partition_mode == "auto":
-        coherent_partition_mode = "exact-total" if len(site_groups) == 1 else "principal-xs-weighted"
-    if coherent_partition_mode not in ("exact-total", "principal-xs-weighted"):
-        raise ValueError("coherent_partition_mode must be 'auto', 'exact-total', or 'principal-xs-weighted'.")
-    group_weight_sum = float(np.sum(group_coherent_weights))
-    # Provenance-only field (kept in run metadata): the principal's share of
-    # the total coherent weight. The partition itself uses per-pair factors
-    # w_p/(w_p+w_o) inside principal_weighted_coherent_partition.
-    principal_cross_weight = (
-        float(group_coherent_weights[principal_group_index] / group_weight_sum)
-        if group_weight_sum > 0.0
-        else 1.0
-    )
-    export_incoherent_prefactors = incoherent_prefactors.copy()
-    export_incoherent_prefactors[~principal_site_mask] = 0.0
-    export_incoherent_approx_prefactors = incoherent_approx_prefactors.copy()
-    export_incoherent_approx_prefactors[~principal_site_mask] = 0.0
-    export_multiphonon_sigma_total_scale = np.zeros_like(sigma_total_by_atom, dtype=float)
-    for group_indices in site_groups:
-        group_scale = 1.0 / float(len(group_indices))
-        export_multiphonon_sigma_total_scale[group_indices] = (
-            sigma_total_by_atom[group_indices] / (4.0 * np.pi) * group_scale
-        )
-    export_multiphonon_sigma_total_scale[~principal_site_mask] = 0.0
-    print(
-        "Export grouping: "
-        f"{len(site_groups)} group(s), principal group={principal_group_index}, "
-        f"principal sites={len(principal_site_indices)}, "
-        f"coherent partition={coherent_partition_mode}",
-        flush=True,
-    )
-
-    _loc = locals()
-    for _n in ['coherent_partition_mode', 'coverage_warning', 'estimated_multiphonon_beta_support', 'estimated_one_phonon_beta_support', 'needed_multiphonon_beta_support', 'export_incoherent_approx_prefactors', 'export_incoherent_prefactors', 'export_multiphonon_sigma_total_scale', 'group_coherent_weights', 'principal_cross_weight', 'principal_group_index', 'principal_site_indices', 'represented_principal_site_count', 'requested_beta_max', 'site_groups']:
-        # STRICT lookup: a renamed/missing local must fail HERE with a
-        # KeyError naming it, not plant a silent None for a later phase
-        # (names that are legitimately branch-dependent are initialized
-        # to None in the non-computing branch above).
-        setattr(S, _n, _loc[_n])
-
-
-def _cfa_coherent_one_phonon(S):
-    """Accumulate the coherent one-phonon S(Q,E) over the direction
-    quadrature (block pool); defines the shared run_blocks runner.
-
-    One phase of compute_from_args; shared state travels in the
-    namespace S (unpacked to locals on entry, packed on exit).
-    """
-    args = getattr(S, "args")
-    coherent_atom_prefactors = getattr(S, "coherent_atom_prefactors")
-    coherent_blocks = getattr(S, "coherent_blocks")
-    coherent_partition_mode = getattr(S, "coherent_partition_mode")
-    e_bin_widths_mev = getattr(S, "e_bin_widths_mev")
-    e_edges_mev = getattr(S, "e_edges_mev")
-    e_grid_mev = getattr(S, "e_grid_mev")
-    frequency_factor_to_thz = getattr(S, "frequency_factor_to_thz")
-    incoherent_one_phonon_mesh_weights = getattr(S, "incoherent_one_phonon_mesh_weights")
-    incoherent_one_phonon_mode_eigvecs_valid = getattr(S, "incoherent_one_phonon_mode_eigvecs_valid")
-    incoherent_one_phonon_mode_energies_mev = getattr(S, "incoherent_one_phonon_mode_energies_mev")
-    incoherent_one_phonon_mode_frequencies_thz = getattr(S, "incoherent_one_phonon_mode_frequencies_thz")
-    incoherent_one_phonon_mode_occupancies = getattr(S, "incoherent_one_phonon_mode_occupancies")
-    incoherent_one_phonon_mode_weights = getattr(S, "incoherent_one_phonon_mode_weights")
-    mesh = getattr(S, "mesh")
-    mev_to_joule = getattr(S, "mev_to_joule")
-    need_coherent_n1 = getattr(S, "need_coherent_n1")
-    num_jobs = getattr(S, "num_jobs")
-    phase_start = getattr(S, "phase_start")
-    primitive = getattr(S, "primitive")
-    group_coherent_weights = getattr(S, "group_coherent_weights")
-    principal_group_index = getattr(S, "principal_group_index")
-    q_cart_physical = getattr(S, "q_cart_physical")
-    q_grid_ang_inv = getattr(S, "q_grid_ang_inv")
-    q_mags_physical = getattr(S, "q_mags_physical")
-    q_red = getattr(S, "q_red")
-    q_shell_index = getattr(S, "q_shell_index")
-    rec_lat_no_2pi = getattr(S, "rec_lat_no_2pi")
-    represented_principal_site_count = getattr(S, "represented_principal_site_count")
-    sample_weights = getattr(S, "sample_weights")
-    site_groups = getattr(S, "site_groups")
-    thermal_mats = getattr(S, "thermal_mats")
-    unit_conversion = getattr(S, "unit_conversion")
-    unit_directions = getattr(S, "unit_directions")
-
-
-    # Keep the two one-phonon normalization pieces separate.
-    #
-    # Phonopy reports phonon frequencies in THz, but this standalone path bins
-    # the powder S(Q,E) kernel on an energy grid in meV. The THz->meV factor is
-    # therefore a real Jacobian in the one-phonon prefactor, not an empirical
-    # scale adjustment.
-    #
-    # The represented-site factor is different: the microscopic kernel sums
-    # over every represented primitive-cell site explicitly, while IRMA
-    # exports MT4 as a per-principal-scatterer law. Divide by the number of
-    # represented principal sites only after the full site sum has been formed.
-    # Standalone runs default to the full primitive-cell site count; engine.py
-    # passes the principal-site count explicitly for production MT4 generation.
-    one_phonon_energy_jacobian_mev_per_thz = THzToEv * 1000.0
-    one_phonon_principal_site_normalization = 1.0 / float(represented_principal_site_count)
-    one_phonon_creation_scale = (
-        one_phonon_energy_jacobian_mev_per_thz * one_phonon_principal_site_normalization
-    )
-    print(
-        "One-phonon normalization: "
-        f"THz->meV Jacobian={one_phonon_energy_jacobian_mev_per_thz:.12g}, "
-        f"represented principal sites={represented_principal_site_count}, "
-        f"combined scale={one_phonon_creation_scale:.12g}",
-        flush=True,
-    )
-    phase_start = time.time()
-    print("Preparing Bose factors and histogram lookups...", flush=True)
-    incoherent_one_phonon_q_weight_norm = float(np.sum(incoherent_one_phonon_mesh_weights))
-    incoherent_one_phonon_hist_lookup = precompute_histogram_lookup(
-        incoherent_one_phonon_mode_energies_mev,
-        e_edges_mev,
-        e_bin_widths_mev,
-    )
-    incoherent_one_phonon_mode_creation_prefactors = (
-        (incoherent_one_phonon_mode_occupancies + 1.0)
-        * unit_conversion
-        * mev_to_joule
-        * BARN_PER_M2
-        * one_phonon_creation_scale
-        * incoherent_one_phonon_mode_weights
-        / incoherent_one_phonon_q_weight_norm
-        / incoherent_one_phonon_mode_frequencies_thz
-    )
-    # Energy-gain (annihilation) one-phonon prefactor: the creation prefactor
-    # with (occ+1) -> occ; everything else identical. Built only when the gain
-    # side is requested; consumed by the incoherent worker at -energy.
-    emit_gain_side = bool(getattr(args, "emit_gain_side", False))
-    incoherent_one_phonon_mode_absorption_prefactors = (
-        (incoherent_one_phonon_mode_occupancies
-         * unit_conversion
-         * mev_to_joule
-         * BARN_PER_M2
-         * one_phonon_creation_scale
-         * incoherent_one_phonon_mode_weights
-         / incoherent_one_phonon_q_weight_norm
-         / incoherent_one_phonon_mode_frequencies_thz)
-        if emit_gain_side else None
-    )
-    # Shared energy-GAIN grids (functions of the output e-grid only), built once
-    # here and packed for the incoherent + multiphonon stages and the output
-    # assembly. The WORKER one-phonon gain grid is the FULL mirror -e_grid[::-1]
-    # (same length as the loss grid, so the 6-/2-stack returns are rectangular);
-    # the OUTPUT gain grid is the strictly-negative build_gain_output_grid, onto
-    # which the engine slices the one-phonon gain and rebins the multiphonon gain.
-    if emit_gain_side:
-        e_gain_grid_mev = -e_grid_mev[::-1]
-        e_gain_edges_mev = centers_to_edges(e_gain_grid_mev)
-        e_gain_bin_widths_mev = np.diff(e_gain_edges_mev)
-        gain_num_positive = int(np.count_nonzero(e_grid_mev > 0.0))
-        e_gain_out_mev, e_gain_out_edges_mev = build_gain_output_grid(e_grid_mev)
-        incoherent_one_phonon_gain_hist_lookup = precompute_histogram_lookup(
-            -incoherent_one_phonon_mode_energies_mev,
-            e_gain_edges_mev,
-            e_gain_bin_widths_mev,
-        )
-    else:
-        e_gain_grid_mev = None
-        e_gain_edges_mev = None
-        e_gain_bin_widths_mev = None
-        gain_num_positive = 0
-        e_gain_out_mev = None
-        e_gain_out_edges_mev = None
-        incoherent_one_phonon_gain_hist_lookup = None
-    multiphonon_mode_energies_mev = incoherent_one_phonon_mode_energies_mev
-    multiphonon_mode_frequencies_thz = incoherent_one_phonon_mode_frequencies_thz
-    multiphonon_mode_weights = incoherent_one_phonon_mode_weights
-    multiphonon_mode_occupancies = incoherent_one_phonon_mode_occupancies
-    multiphonon_mode_eigvecs_valid = incoherent_one_phonon_mode_eigvecs_valid
-
-    print(
-        f"Bose factors and histogram lookups ready in {time.time() - phase_start:.1f} s",
-        flush=True,
-    )
-
-    # One spawned pool serves every compute phase of this run: interpreter
-    # startup is paid once, not per phase. run_blocks creates it lazily on
-    # the first parallel phase; compute_from_args shuts it down (the holder
-    # travels on S). The pool carries no per-phase state of its own — each
-    # phase stages its state in shared memory and the tasks reference it by
-    # generation, so reuse cannot leak one phase's context into the next.
-    pool_holder: dict = {}
-
-    def run_blocks(worker, initial, block_list, label: str):
-        """Map ``worker`` over ``block_list`` and accumulate into ``initial``.
-
-        Serial when num_jobs == 1; otherwise dispatches through the shared
-        spawned pool (created lazily on first use, reused by every phase)
-        with the current WORKER_STATE staged in shared memory. Blocks are
-        accumulated in list order, so the floating-point sum — and any tape
-        derived from it — is identical for every worker count.
-        """
-        result = initial
-        phase_start = time.time()
-        print(
-            f"{label}: starting {len(block_list)} block(s) with {num_jobs} worker(s)...",
-            flush=True,
-        )
-        if num_jobs == 1:
-            for block_index, block in enumerate(block_list, start=1):
-                try:
-                    result = accumulate_block_result(result, worker(block))
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"{label}: worker failed on block "
-                        f"{block_index}/{len(block_list)}") from exc
-                print(
-                    f"{label}: block {block_index}/{len(block_list)} done "
-                    f"after {time.time() - phase_start:.1f} s",
-                    flush=True,
-                )
-        else:
-            # The pool uses the SPAWN start method — the one start method
-            # that exists on every platform (fork does not exist on
-            # Windows, and forking from a threaded process is hazardous on
-            # macOS). The large read-only state (mesh eigenvectors, grids,
-            # lookups) does NOT travel by pickle: share_worker_state stages
-            # every ndarray in multiprocessing.shared_memory once per
-            # phase, plus the pickled remainder (scalars, the phonopy
-            # dynamical matrix) in one more block, and every task carries
-            # only a tiny generation reference — _dispatch_block attaches
-            # zero-copy read-only views on the first task of a new
-            # generation and reuses them for the rest of the phase, so the
-            # state stays one-copy in RAM regardless of ncpu.
-            #
-            # ProcessPoolExecutor rather than multiprocessing.Pool: a worker
-            # killed by the OS (e.g. the out-of-memory killer) raises
-            # BrokenProcessPool here, where Pool.imap would wait on the dead
-            # worker's result forever. Ordered map keeps the accumulation in
-            # fixed block order, so the floating-point sum (and therefore
-            # the tape) stays bitwise-reproducible from run to run.
-            #
-            # Import BrokenProcessPool by name: referencing it through
-            # ``cf.process`` would rely on accessing ``cf.ProcessPoolExecutor``
-            # first to trigger the submodule import as a side effect, which is
-            # fragile if this block is ever reordered.
-            import concurrent.futures as cf
-            from concurrent.futures.process import BrokenProcessPool
-            from functools import partial as _partial
-            from irma.core import noncubic_workers as _ncw
-            pool = pool_holder.get("pool")
-            if pool is None:
-                ctx = mp.get_context("spawn")
-                pool = cf.ProcessPoolExecutor(
-                    max_workers=num_jobs,
-                    mp_context=ctx,
-                    initializer=_pool_worker_init,
-                    initargs=(_ncw._KERNEL_AREA_WARNED,))
-                pool_holder["pool"] = pool
-            state_ref, shm_handles = share_worker_state(_ncw.WORKER_STATE)
-            try:
-                results_iter = pool.map(
-                    _partial(_dispatch_block, state_ref, worker), block_list)
-                for block_index in range(1, len(block_list) + 1):
-                    try:
-                        block_partial = next(results_iter)
-                    except BrokenProcessPool as exc:
-                        raise RuntimeError(
-                            f"{label}: a worker process died on block "
-                            f"{block_index}/{len(block_list)}. Two usual "
-                            f"causes: (1) the out-of-memory killer — "
-                            f"reduce Card 6f ncpu or the mesh/direction "
-                            f"counts; (2) a driver script that calls IRMA "
-                            f"at module level — the spawn start method "
-                            f"re-imports the main module in every worker, "
-                            f"so the entry point must be wrapped in "
-                            f"'if __name__ == \"__main__\":'"
-                        ) from exc
-                    except Exception as exc:
-                        raise RuntimeError(
-                            f"{label}: worker failed on block "
-                            f"{block_index}/{len(block_list)}") from exc
-                    result = accumulate_block_result(result, block_partial)
-                    print(
-                        f"{label}: block {block_index}/{len(block_list)} done "
-                        f"after {time.time() - phase_start:.1f} s",
-                        flush=True,
-                    )
-            finally:
-                release_shared_state(shm_handles)
-        print(f"{label}: completed in {time.time() - phase_start:.1f} s", flush=True)
-        return result
-
-    if need_coherent_n1:
-        print("Accumulating coherent one-phonon contribution...", flush=True)
-        # The worker returns a 6-stack (loss total/diag/interf + their gain
-        # siblings) when the gain side is on; the accumulator must match.
-        n_coh_stack = 6 if emit_gain_side else 3
-        coherent_initial = np.zeros(
-            (n_coh_stack, len(q_grid_ang_inv), len(e_grid_mev)), dtype=float)
-        print(
-            "coherent n=1: preparing direction-quadrature worker state "
-            f"for {len(coherent_blocks)} block(s)...",
-            flush=True,
-        )
-        coherent_state = {
-            "num_q": len(q_grid_ang_inv),
-            "num_e": len(e_grid_mev),
-            "rec_lat_no_2pi": rec_lat_no_2pi,
-            "q_red": q_red,
-            "q_cart_physical": q_cart_physical,
-            "unit_directions": unit_directions,
-            "q_mags_physical": q_mags_physical,
-            "dynamical_matrix": mesh.dynamical_matrix,
-            "frequency_factor_to_thz": frequency_factor_to_thz,
-            "min_phonon_energy_mev": float(
-                getattr(args, "min_phonon_energy_mev", 0.0)),
-            "thermal_mats": thermal_mats,
-            "positions_t": primitive.scaled_positions.T,
-            "coherent_atom_prefactors": coherent_atom_prefactors,
-            "unit_conversion": unit_conversion,
-            "temperature": args.temperature,
-            "q_shell_index": q_shell_index,
-            "e_grid_mev": e_grid_mev,
-            "e_edges_mev": e_edges_mev,
-            "e_bin_widths_mev": e_bin_widths_mev,
-            "sigma_mev": args.sigma_mev,
-            "sample_weights": sample_weights,
-            "mev_to_joule": mev_to_joule,
-            "one_phonon_creation_scale": one_phonon_creation_scale,
-            "coherent_partition_mode": coherent_partition_mode,
-            "coherent_group_site_indices": site_groups,
-            "principal_group_index": principal_group_index,
-            "group_coherent_weights": group_coherent_weights,
-        }
-        if emit_gain_side:
-            coherent_state.update({
-                "emit_gain_side": True,
-                "e_gain_grid_mev": e_gain_grid_mev,
-                "e_gain_edges_mev": e_gain_edges_mev,
-                "e_gain_bin_widths_mev": e_gain_bin_widths_mev,
-            })
-        set_worker_state(coherent_state)
-        coherent_components = run_blocks(
-            accumulate_coherent_block,
-            coherent_initial,
-            coherent_blocks,
-            "coherent n=1",
-        )
-        sqe_coherent = coherent_components[0]
-        sqe_coherent_diagonal = coherent_components[1]
-        sqe_coherent_interference = coherent_components[2]
-        # Gain siblings (full mirror grid; sliced to the strictly-negative
-        # output grid in the SAB-conversion stage).
-        sqe_coherent_gain = coherent_components[3] if emit_gain_side else None
-    else:
-        print("Skipping coherent one-phonon contribution for inelastic_mode=1.", flush=True)
-        coherent_initial = None      # only the coherent branch allocates one
-        sqe_coherent = np.zeros((len(q_grid_ang_inv), len(e_grid_mev)), dtype=float)
-        sqe_coherent_diagonal = np.zeros_like(sqe_coherent)
-        sqe_coherent_interference = np.zeros_like(sqe_coherent)
-        sqe_coherent_gain = (np.zeros((len(q_grid_ang_inv), len(e_gain_grid_mev)),
-                                      dtype=float) if emit_gain_side else None)
-
-    _loc = locals()
-    for _n in ['coherent_initial', 'incoherent_one_phonon_hist_lookup', 'incoherent_one_phonon_mode_creation_prefactors', 'incoherent_one_phonon_mode_absorption_prefactors', 'incoherent_one_phonon_gain_hist_lookup', 'emit_gain_side', 'e_gain_grid_mev', 'e_gain_edges_mev', 'e_gain_bin_widths_mev', 'gain_num_positive', 'e_gain_out_mev', 'e_gain_out_edges_mev', 'sqe_coherent_gain', 'multiphonon_mode_eigvecs_valid', 'multiphonon_mode_energies_mev', 'multiphonon_mode_frequencies_thz', 'multiphonon_mode_occupancies', 'multiphonon_mode_weights', 'one_phonon_creation_scale', 'one_phonon_energy_jacobian_mev_per_thz', 'one_phonon_principal_site_normalization', 'phase_start', 'pool_holder', 'run_blocks', 'sqe_coherent', 'sqe_coherent_diagonal', 'sqe_coherent_interference']:
-        # STRICT lookup: a renamed/missing local must fail HERE with a
-        # KeyError naming it, not plant a silent None for a later phase
-        # (names that are legitimately branch-dependent are initialized
-        # to None in the non-computing branch above).
-        setattr(S, _n, _loc[_n])
-
-
-def _cfa_incoherent_and_multiphonon(S):
-    """Accumulate the incoherent one-phonon and incoherent-approximation
-    multiphonon terms.
-
-    One phase of compute_from_args; shared state travels in the
-    namespace S (unpacked to locals on entry, packed on exit).
-    """
-    args = getattr(S, "args")
-    coherent_blocks = getattr(S, "coherent_blocks")
-    coherent_initial = getattr(S, "coherent_initial")
-    directions = getattr(S, "directions")
-    e_bin_widths_mev = getattr(S, "e_bin_widths_mev")
-    e_edges_mev = getattr(S, "e_edges_mev")
-    e_grid_mev = getattr(S, "e_grid_mev")
-    export_incoherent_approx_prefactors = getattr(S, "export_incoherent_approx_prefactors")
-    export_incoherent_prefactors = getattr(S, "export_incoherent_prefactors")
-    export_multiphonon_sigma_total_scale = getattr(S, "export_multiphonon_sigma_total_scale")
-    incoherent_one_phonon_hist_lookup = getattr(S, "incoherent_one_phonon_hist_lookup")
-    incoherent_one_phonon_mode_creation_prefactors = getattr(S, "incoherent_one_phonon_mode_creation_prefactors")
-    incoherent_one_phonon_mode_eigvecs_valid = getattr(S, "incoherent_one_phonon_mode_eigvecs_valid")
-    incoherent_one_phonon_mode_energies_mev = getattr(S, "incoherent_one_phonon_mode_energies_mev")
-    multiphonon_dir_chunk_size = getattr(S, "multiphonon_dir_chunk_size")
-    multiphonon_mode_eigvecs_valid = getattr(S, "multiphonon_mode_eigvecs_valid")
-    multiphonon_mode_energies_mev = getattr(S, "multiphonon_mode_energies_mev")
-    multiphonon_mode_frequencies_thz = getattr(S, "multiphonon_mode_frequencies_thz")
-    multiphonon_mode_occupancies = getattr(S, "multiphonon_mode_occupancies")
-    multiphonon_mode_projection_components = getattr(S, "multiphonon_mode_projection_components")
-    multiphonon_mode_weights = getattr(S, "multiphonon_mode_weights")
-    multiphonon_num_directions = getattr(S, "multiphonon_num_directions")
-    multiphonon_q_weight_norm = getattr(S, "multiphonon_q_weight_norm")
-    need_coherent_n1 = getattr(S, "need_coherent_n1")
-    need_exact_incoherent_n1 = getattr(S, "need_exact_incoherent_n1")
-    need_incoherent_approx_n1 = getattr(S, "need_incoherent_approx_n1")
-    phase_start = getattr(S, "phase_start")
-    primitive = getattr(S, "primitive")
-    q_bin_sample_mags = getattr(S, "q_bin_sample_mags")
-    q_bin_sample_weights = getattr(S, "q_bin_sample_weights")
-    q_cart_physical = getattr(S, "q_cart_physical")
-    q_grid_ang_inv = getattr(S, "q_grid_ang_inv")
-    q_mags_physical = getattr(S, "q_mags_physical")
-    q_red = getattr(S, "q_red")
-    q_shell_index = getattr(S, "q_shell_index")
-    run_blocks = getattr(S, "run_blocks")
-    sample_weights = getattr(S, "sample_weights")
-    shell_blocks = getattr(S, "shell_blocks")
-    sqe_coherent = getattr(S, "sqe_coherent")
-    sqe_coherent_gain = getattr(S, "sqe_coherent_gain")
-    thermal_mats = getattr(S, "thermal_mats")
-    unit_directions = getattr(S, "unit_directions")
-    emit_gain_side = bool(getattr(S, "emit_gain_side", False))
-    e_gain_grid_mev = getattr(S, "e_gain_grid_mev", None)
-    e_gain_edges_mev = getattr(S, "e_gain_edges_mev", None)
-    e_gain_bin_widths_mev = getattr(S, "e_gain_bin_widths_mev", None)
-    gain_num_positive = getattr(S, "gain_num_positive", 0)
-    e_gain_out_mev = getattr(S, "e_gain_out_mev", None)
-    e_gain_out_edges_mev = getattr(S, "e_gain_out_edges_mev", None)
-    incoherent_one_phonon_mode_absorption_prefactors = getattr(
-        S, "incoherent_one_phonon_mode_absorption_prefactors", None)
-    incoherent_one_phonon_gain_hist_lookup = getattr(
-        S, "incoherent_one_phonon_gain_hist_lookup", None)
-
-
-    # Later phases stage fresh worker state into shared memory. Drop
-    # coherent-only sampling arrays now so nothing keeps them alive longer
-    # than the phase that needed them.
-    set_worker_state({})
-    if need_coherent_n1:
-        del coherent_initial
-    del coherent_blocks
-    del q_red
-    del q_cart_physical
-    del unit_directions
-    del q_mags_physical
-    del q_shell_index
-    del sample_weights
-    gc.collect()
-
-    # When the gain side is on the worker returns a (2, q, e) loss/gain stack,
-    # so the accumulator carries the extra leading slice.
-    if emit_gain_side:
-        incoherent_initial = np.zeros((2, len(q_grid_ang_inv), len(e_grid_mev)),
-                                      dtype=float)
-    else:
-        incoherent_initial = np.zeros((len(q_grid_ang_inv), len(e_grid_mev)),
-                                      dtype=float)
-
-    def _incoherent_worker_state(prefactors):
-        """Worker-state dict for an incoherent one-phonon pass.
-
-        The exact and incoherent-approximation passes use an identical
-        layout; only the prefactor table differs.
-        """
-        st = {
-            "num_q": len(q_grid_ang_inv),
-            "num_e": len(e_grid_mev),
-            "directions": directions,
-            "q_bin_sample_mags": q_bin_sample_mags,
-            "q_bin_sample_weights": q_bin_sample_weights,
-            "thermal_mats": thermal_mats,
-            "e_grid_mev": e_grid_mev,
-            "e_edges_mev": e_edges_mev,
-            "e_bin_widths_mev": e_bin_widths_mev,
-            "sigma_mev": args.sigma_mev,
-            "incoherent_prefactors": prefactors,
-            "mesh_mode_energies_mev": incoherent_one_phonon_mode_energies_mev,
-            "mesh_mode_bose_prefactors": incoherent_one_phonon_mode_creation_prefactors,
-            "mesh_mode_eigvecs": incoherent_one_phonon_mode_eigvecs_valid,
-            "hist_valid_indices": incoherent_one_phonon_hist_lookup[0],
-            "hist_bin_indices": incoherent_one_phonon_hist_lookup[1],
-            "hist_inv_bin_widths": incoherent_one_phonon_hist_lookup[2],
-        }
-        if emit_gain_side:
-            st.update({
-                "emit_gain_side": True,
-                "mesh_mode_absorption_prefactors": incoherent_one_phonon_mode_absorption_prefactors,
-                "e_gain_grid_mev": e_gain_grid_mev,
-                "e_gain_edges_mev": e_gain_edges_mev,
-                "e_gain_bin_widths_mev": e_gain_bin_widths_mev,
-                "hist_gain_valid_indices": incoherent_one_phonon_gain_hist_lookup[0],
-                "hist_gain_bin_indices": incoherent_one_phonon_gain_hist_lookup[1],
-                "hist_gain_inv_bin_widths": incoherent_one_phonon_gain_hist_lookup[2],
-            })
-        return st
-
-    if need_exact_incoherent_n1:
-        print("Accumulating incoherent one-phonon contribution...", flush=True)
-        incoherent_n1_worker = accumulate_incoherent_shell_block
-        print(
-            f"incoherent n=1: preparing worker state for {len(shell_blocks)} block(s)...",
-            flush=True,
-        )
-        worker_state = _incoherent_worker_state(export_incoherent_prefactors)
-        set_worker_state(worker_state)
-        _inc_res = run_blocks(
-            incoherent_n1_worker,
-            incoherent_initial,
-            shell_blocks,
-            "incoherent n=1",
-        )
-        if emit_gain_side:
-            sqe_incoherent, sqe_incoherent_gain = _inc_res[0], _inc_res[1]
-        else:
-            sqe_incoherent, sqe_incoherent_gain = _inc_res, None
-    else:
-        print("Skipping exact incoherent one-phonon contribution for inelastic_mode=1.", flush=True)
-        sqe_incoherent = np.zeros((len(q_grid_ang_inv), len(e_grid_mev)), dtype=float)
-        sqe_incoherent_gain = (np.zeros((len(q_grid_ang_inv), len(e_gain_grid_mev)),
-                                        dtype=float) if emit_gain_side else None)
-    if need_incoherent_approx_n1:
-        print("Accumulating incoherent-approximation one-phonon contribution...", flush=True)
-        incoherent_approx_n1_worker = accumulate_incoherent_shell_block
-        print(
-            f"incoherent-approx n=1: preparing worker state for {len(shell_blocks)} block(s)...",
-            flush=True,
-        )
-        worker_state = _incoherent_worker_state(export_incoherent_approx_prefactors)
-        set_worker_state(worker_state)
-        _inc_approx_res = run_blocks(
-            incoherent_approx_n1_worker,
-            incoherent_initial * 0.0,
-            shell_blocks,
-            "incoherent-approx n=1",
-        )
-        if emit_gain_side:
-            sqe_incoherent_approx_n1_term = _inc_approx_res[0]
-            sqe_incoherent_approx_n1_term_gain = _inc_approx_res[1]
-        else:
-            sqe_incoherent_approx_n1_term = _inc_approx_res
-            sqe_incoherent_approx_n1_term_gain = None
-    else:
-        print("Skipping incoherent-approximation one-phonon contribution for inelastic_mode=2.", flush=True)
-        sqe_incoherent_approx_n1_term = None
-        sqe_incoherent_approx_n1_term_gain = None
-    sqe_one_phonon_total = sqe_coherent + sqe_incoherent
-    # Gain one-phonon total (on the full mirror grid; sliced to the strictly-
-    # negative output grid in the SAB-conversion stage).
-    sqe_one_phonon_total_gain = (
-        sqe_coherent_gain + sqe_incoherent_gain if emit_gain_side else None)
-
-    sqe_multiphonon_incoherent_approx = None
-    sqe_one_phonon_total_plus_incoherent_approx_multiphonon = None
-    sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon = None
-    sqe_multiphonon_gain_work = None
-    sqe_multiphonon_gain = None
-    # Only the multiphonon branch builds these; initialized here so the strict
-    # phase-state pack at the end of this function never sees a missing name.
-    multiphonon_base_prefactors = None
-    multiphonon_directions = None
-
-    if args.multiphonon_max_order >= 2:
-        phase_start = time.time()
-        print(
-            f"Accumulating multiphonon background through order {args.multiphonon_max_order}...",
-            flush=True,
-        )
-        if np.size(multiphonon_mode_energies_mev) == 0:
-            raise ValueError(
-                "multiphonon: the model has no positive phonon modes to build "
-                "the seed from, so no work grid can be sized")
-        e_work_grid_mev, de_work_mev = build_uniform_positive_work_grid(
-            e_grid_mev,
-            phonon_max_energy_mev=float(np.max(multiphonon_mode_energies_mev)),
-        )
-        e_work_edges_mev = centers_to_edges(e_work_grid_mev, lower_bound=0.0)
-        e_signed_grid_mev, positive_slice = build_signed_energy_grid(e_work_grid_mev)
-        e_signed_edges_mev = centers_to_edges(e_signed_grid_mev)
-        e_signed_bin_widths_mev = np.diff(e_signed_edges_mev)
-        multiphonon_directions = fibonacci_sphere(max(1, multiphonon_num_directions))
-        signed_emission_lookup = precompute_histogram_lookup(
-            multiphonon_mode_energies_mev,
-            e_signed_edges_mev,
-            e_signed_bin_widths_mev,
-        )
-        signed_absorption_lookup = precompute_histogram_lookup(
-            -multiphonon_mode_energies_mev,
-            e_signed_edges_mev,
-            e_signed_bin_widths_mev,
-        )
-
-        # Build the signed unit-Q^2 self kernel from the displacement sum rule.
-        # The later sigma_total scaling is normalized per equivalent scatterer
-        # in the primitive cell, so this kernel remains a pure per-atom self
-        # object before cross-section factors are applied.
-        multiphonon_unit_conversion = (
-            Hbar * EV / Angstrom**2 / (2.0 * 1.0e12 * 2.0 * np.pi * AMU)
-        )
-        multiphonon_base_prefactors = np.array([1.0 / mass for mass in primitive.masses], dtype=float)
-        multiphonon_creation_prefactors = (
-            (multiphonon_mode_occupancies + 1.0)
-            * multiphonon_unit_conversion
-            * multiphonon_mode_weights
-            / multiphonon_q_weight_norm
-            / multiphonon_mode_frequencies_thz
-        )
-        multiphonon_absorption_prefactors = (
-            multiphonon_mode_occupancies
-            * multiphonon_unit_conversion
-            * multiphonon_mode_weights
-            / multiphonon_q_weight_norm
-            / multiphonon_mode_frequencies_thz
-        )
-
-        if emit_gain_side:
-            multiphonon_initial = np.zeros(
-                (2, len(q_grid_ang_inv), len(e_work_grid_mev)), dtype=float
-            )
-        else:
-            multiphonon_initial = np.zeros(
-                (len(q_grid_ang_inv), len(e_work_grid_mev)), dtype=float
-            )
-        print(
-            "Streaming per-direction multiphonon kernels for "
-            f"{len(multiphonon_directions)} directions "
-            f"(one-phonon directions: {args.num_directions})...",
-            flush=True,
-        )
-        # A worker's order_tables hold
-        # (block_dirs x n_atoms x (max_order+1) x n_signed_bins) doubles,
-        # so the context's directions/num_jobs block size can request
-        # tens of GB when num_jobs is small and the direction count or
-        # order is large. Cap the block by a fixed memory budget;
-        # smaller blocks only add streaming iterations. NOTE: when the
-        # cap binds, the partial-sum grouping (and therefore the output
-        # bit pattern) changes relative to an uncapped run — acceptable
-        # because an uncapped run of that size would reach the OOM killer
-        # anyway; the budget is sized so every validated configuration
-        # stays unbinding and bit-stable.
-        _n_atoms_mp = int(multiphonon_mode_eigvecs_valid.shape[1])
-        _per_dir_bytes = (_n_atoms_mp
-                          * (int(args.multiphonon_max_order) + 1)
-                          * len(e_signed_grid_mev) * 8)
-        _budget_bytes = 2 * 1024**3
-        _cap = max(1, _budget_bytes // max(1, _per_dir_bytes))
-        if _cap < multiphonon_dir_chunk_size:
-            print(
-                f"multiphonon: capping direction block size "
-                f"{multiphonon_dir_chunk_size} -> {_cap} to keep "
-                f"per-block kernel tables under "
-                f"{_budget_bytes / 1024**3:.0f} GiB "
-                f"({_per_dir_bytes / 1024**2:.1f} MiB per direction)",
-                flush=True,
-            )
-            multiphonon_dir_chunk_size = _cap
-        multiphonon_direction_blocks = [
-            np.arange(
-                start_index,
-                min(len(multiphonon_directions), start_index + multiphonon_dir_chunk_size),
-                dtype=int,
-            )
-            for start_index in range(0, len(multiphonon_directions), multiphonon_dir_chunk_size)
-        ]
-        print(
-            f"multiphonon: preparing worker state for {len(multiphonon_direction_blocks)} block(s)...",
-            flush=True,
-        )
-        set_worker_state(
-            {
-                "num_q": len(q_grid_ang_inv),
-                "num_e": len(e_work_grid_mev),
-                "directions": multiphonon_directions,
-                "base_prefactors": multiphonon_base_prefactors,
-                "mesh_mode_energies_mev": multiphonon_mode_energies_mev,
-                "mesh_mode_emission_prefactors": multiphonon_creation_prefactors,
-                "mesh_mode_absorption_prefactors": multiphonon_absorption_prefactors,
-                "mesh_mode_eigvecs": multiphonon_mode_eigvecs_valid,
-                "mesh_mode_projection_components": multiphonon_mode_projection_components,
-                "e_signed_grid_mev": e_signed_grid_mev,
-                "e_signed_edges_mev": e_signed_edges_mev,
-                "e_signed_bin_widths_mev": e_signed_bin_widths_mev,
-                "de_mev": de_work_mev,
-                "sigma_mev": args.sigma_mev,
-                "max_order": args.multiphonon_max_order,
-                "positive_slice": positive_slice,
-                "thermal_mats": thermal_mats,
-                "q_bin_sample_mags": q_bin_sample_mags,
-                "q_bin_sample_weights": q_bin_sample_weights,
-                "multiphonon_sigma_total_scale": export_multiphonon_sigma_total_scale,
-                "num_total_dirs": len(multiphonon_directions),
-                "sigma0_emission_lookup": signed_emission_lookup,
-                "sigma0_absorption_lookup": signed_absorption_lookup,
-                "collect_last_order": False,
-                "emit_gain_side": emit_gain_side,
-            }
-        )
-        multiphonon_results = run_blocks(
-            accumulate_incoherent_multiphonon_direction_block,
-            multiphonon_initial,
-            multiphonon_direction_blocks,
-            "multiphonon",
-        )
-        print(
-            f"multiphonon: post-processing and rebinning after {time.time() - phase_start:.1f} s",
-            flush=True,
-        )
-        if emit_gain_side:
-            sqe_multiphonon_work = multiphonon_results[0]
-            sqe_multiphonon_gain_work = multiphonon_results[1]
-        else:
-            sqe_multiphonon_work = multiphonon_results
-        sqe_multiphonon_incoherent_approx = rebin_energy_axis(
-            sqe_multiphonon_work,
-            e_work_edges_mev,
-            e_edges_mev,
-        )
-        sqe_one_phonon_total_plus_incoherent_approx_multiphonon = (
-            sqe_one_phonon_total + sqe_multiphonon_incoherent_approx
-        )
-        if sqe_incoherent_approx_n1_term is not None:
-            sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon = (
-                sqe_incoherent_approx_n1_term + sqe_multiphonon_incoherent_approx
-            )
-        # Energy-gain multiphonon: rebin the negative-slice convolution (on the
-        # mirror work grid -e_work[::-1]) to the strictly-negative OUTPUT grid.
-        if emit_gain_side and sqe_multiphonon_gain_work is not None:
-            gm_work_edges_mev = centers_to_edges(-e_work_grid_mev[::-1])
-            sqe_multiphonon_gain = rebin_energy_axis(
-                sqe_multiphonon_gain_work, gm_work_edges_mev, e_gain_out_edges_mev
-            )
-
-    # Energy-gain OUTPUT arrays: slice the one-phonon gain (built on the full
-    # mirror grid, num_e) to the strictly-negative output grid (gain_num_positive
-    # columns), and combine with the rebinned multiphonon gain. All land on
-    # e_gain_out_mev, mirroring the loss output keys.
-    sqe_coherent_gain_out = None
-    sqe_incoherent_gain_out = None
-    sqe_one_phonon_total_gain_out = None
-    sqe_incoherent_approx_n1_term_gain_out = None
-    sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain = None
-    sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain = None
-    if emit_gain_side:
-        npos = gain_num_positive
-        sqe_coherent_gain_out = sqe_coherent_gain[:, :npos]
-        sqe_incoherent_gain_out = sqe_incoherent_gain[:, :npos]
-        sqe_one_phonon_total_gain_out = sqe_one_phonon_total_gain[:, :npos]
-        if sqe_incoherent_approx_n1_term_gain is not None:
-            sqe_incoherent_approx_n1_term_gain_out = (
-                sqe_incoherent_approx_n1_term_gain[:, :npos])
-        if sqe_multiphonon_gain is not None:
-            sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain = (
-                sqe_one_phonon_total_gain_out + sqe_multiphonon_gain)
-            if sqe_incoherent_approx_n1_term_gain_out is not None:
-                sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain = (
-                    sqe_incoherent_approx_n1_term_gain_out + sqe_multiphonon_gain)
-
-    _loc = locals()
-    for _n in ['multiphonon_base_prefactors', 'multiphonon_directions', 'sqe_incoherent', 'sqe_incoherent_approx_n1_term', 'sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon', 'sqe_multiphonon_incoherent_approx', 'sqe_one_phonon_total', 'sqe_one_phonon_total_plus_incoherent_approx_multiphonon', 'emit_gain_side', 'e_gain_out_mev', 'sqe_coherent_gain_out', 'sqe_incoherent_gain_out', 'sqe_one_phonon_total_gain_out', 'sqe_incoherent_approx_n1_term_gain_out', 'sqe_multiphonon_gain', 'sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain', 'sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain']:
-        # STRICT lookup: a renamed/missing local must fail HERE with a
-        # KeyError naming it, not plant a silent None for a later phase
-        # (names that are legitimately branch-dependent are initialized
-        # to None in the non-computing branch above).
-        setattr(S, _n, _loc[_n])
-    for _n in ['coherent_blocks', 'coherent_initial', 'q_cart_physical', 'q_mags_physical', 'q_red', 'q_shell_index', 'sample_weights', 'unit_directions']:
-        if hasattr(S, _n):
-            delattr(S, _n)  # release the reference held by S as well
-
-
-def _cfa_convert_to_sab(S):
-    """Convert the accumulated S(Q,E) maps to asymmetric-downscatter
-    S(alpha,beta) on the requested grids.
-
-    One phase of compute_from_args; shared state travels in the
-    namespace S (unpacked to locals on entry, packed on exit).
-    """
-    args = getattr(S, "args")
-    directions = getattr(S, "directions")
-    e_edges_mev = getattr(S, "e_edges_mev")
-    e_grid_mev = getattr(S, "e_grid_mev")
-    multiphonon_q_weight_norm = getattr(S, "multiphonon_q_weight_norm")
-    primitive = getattr(S, "primitive")
-    principal_site_indices = getattr(S, "principal_site_indices")
-    represented_principal_site_count = getattr(S, "represented_principal_site_count")
-    q_bin_sample_mags = getattr(S, "q_bin_sample_mags")
-    q_bin_sample_weights = getattr(S, "q_bin_sample_weights")
-    q_center_mags = getattr(S, "q_center_mags")
-    q_center_weights = getattr(S, "q_center_weights")
-    q_edges_ang_inv = getattr(S, "q_edges_ang_inv")
-    q_grid_ang_inv = getattr(S, "q_grid_ang_inv")
-    scattering_lengths = getattr(S, "scattering_lengths")
-    sigma_coh_by_atom = getattr(S, "sigma_coh_by_atom")
-    sigma_inc = getattr(S, "sigma_inc")
-    sigma_inc_by_atom = getattr(S, "sigma_inc_by_atom")
-    sqe_coherent = getattr(S, "sqe_coherent")
-    sqe_coherent_diagonal = getattr(S, "sqe_coherent_diagonal")
-    sqe_coherent_interference = getattr(S, "sqe_coherent_interference")
-    sqe_incoherent = getattr(S, "sqe_incoherent")
-    sqe_incoherent_approx_n1_term = getattr(S, "sqe_incoherent_approx_n1_term")
-    sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon = getattr(S, "sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon")
-    sqe_multiphonon_incoherent_approx = getattr(S, "sqe_multiphonon_incoherent_approx")
-    sqe_one_phonon_total = getattr(S, "sqe_one_phonon_total")
-    sqe_one_phonon_total_plus_incoherent_approx_multiphonon = getattr(S, "sqe_one_phonon_total_plus_incoherent_approx_multiphonon")
-    # Energy-gain output arrays (NS-bridge-only; NOT converted to SAB / written
-    # to the ENDF tape -- the loss byte-exact references are unaffected).
-    emit_gain_side = bool(getattr(S, "emit_gain_side", False))
-    e_gain_out_mev = getattr(S, "e_gain_out_mev", None)
-    sqe_coherent_gain_out = getattr(S, "sqe_coherent_gain_out", None)
-    sqe_incoherent_gain_out = getattr(S, "sqe_incoherent_gain_out", None)
-    sqe_one_phonon_total_gain_out = getattr(S, "sqe_one_phonon_total_gain_out", None)
-    sqe_incoherent_approx_n1_term_gain_out = getattr(S, "sqe_incoherent_approx_n1_term_gain_out", None)
-    sqe_multiphonon_gain = getattr(S, "sqe_multiphonon_gain", None)
-    sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain = getattr(S, "sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain", None)
-    sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain = getattr(S, "sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain", None)
-
-    # Robustness gate: one non-finite worker block (numerical overflow,
-    # corrupted partial) must fail HERE with the array named — silently
-    # converting it would propagate NaN/Inf into the SAB tape.
-    for _name, _arr in (
-        ("sqe_coherent", sqe_coherent),
-        ("sqe_coherent_diagonal", sqe_coherent_diagonal),
-        ("sqe_coherent_interference", sqe_coherent_interference),
-        ("sqe_incoherent", sqe_incoherent),
-        ("sqe_incoherent_approx_n1_term", sqe_incoherent_approx_n1_term),
-        ("sqe_multiphonon_incoherent_approx", sqe_multiphonon_incoherent_approx),
-        ("sqe_one_phonon_total", sqe_one_phonon_total),
-    ):
-        if _arr is None:
-            continue
-        _bad = np.size(_arr) - int(np.count_nonzero(np.isfinite(_arr)))
-        if _bad:
-            raise RuntimeError(
-                f"{_name} contains {_bad} non-finite value(s) after the "
-                f"accumulation phase; refusing to convert to S(alpha,beta). "
-                f"This usually indicates numerical overflow inside a worker "
-                f"block (check the mode floor, the phonon model, and the "
-                f"temperature).")
-
-    sab_sigma_barn_override = getattr(args, "sab_sigma_barn", None)
-    if sab_sigma_barn_override is None:
-        if scattering_lengths is None or sigma_inc is None:
-            raise ValueError(
-                "sab_sigma_barn must be provided when site-specific scattering data "
-                "are used for SAB export."
-            )
-        sigma_coh_barn, sigma_inc_barn, sigma_total_barn = infer_sigma_barn(
-            list(primitive.symbols),
-            scattering_lengths,
-            sigma_inc,
-        )
-    else:
-        # PER-ATOM convention: the override is the per-atom principal-type
-        # sigma (engine.py passes sigma_coh + sigma_inc of the principal
-        # atom TYPE) and the sqe arrays already carry the
-        # 1/represented_principal_site_count normalization. The diagnostic
-        # coherent/incoherent channel sigmas must use the same per-atom
-        # convention — a raw site sum left the channel SAB arrays a factor
-        # N_sites below the per-atom production arrays and recorded
-        # coherent sigma > total sigma in the sab_output metadata.
-        sigma_coh_barn = float(
-            np.sum(sigma_coh_by_atom[principal_site_indices])
-        ) / float(represented_principal_site_count)
-        sigma_inc_barn = float(
-            np.sum(sigma_inc_by_atom[principal_site_indices])
-        ) / float(represented_principal_site_count)
-        sigma_total_barn = float(sab_sigma_barn_override)
-    mass_ratio = infer_mass_ratio(primitive.masses, args.sab_mass_ratio)
-    alpha, beta_downscatter_abs, sab_asym_downscatter_coherent = convert_sqe_to_asym_downscatter_sab(
-        sqe_coherent,
-        q_grid_ang_inv,
-        e_grid_mev,
-        args.temperature,
-        sigma_coh_barn,
-        mass_ratio,
-    )
-    _, _, sab_asym_downscatter_coherent_diagonal = convert_sqe_to_asym_downscatter_sab(
-        sqe_coherent_diagonal,
-        q_grid_ang_inv,
-        e_grid_mev,
-        args.temperature,
-        sigma_coh_barn,
-        mass_ratio,
-    )
-    _, _, sab_asym_downscatter_coherent_interference = convert_sqe_to_asym_downscatter_sab(
-        sqe_coherent_interference,
-        q_grid_ang_inv,
-        e_grid_mev,
-        args.temperature,
-        sigma_coh_barn,
-        mass_ratio,
-    )
-    _, _, sab_asym_downscatter_incoherent = convert_sqe_to_asym_downscatter_sab(
-        sqe_incoherent,
-        q_grid_ang_inv,
-        e_grid_mev,
-        args.temperature,
-        sigma_inc_barn,
-        mass_ratio,
-    )
-    if sqe_incoherent_approx_n1_term is not None:
-        _, _, sab_asym_downscatter_incoherent_approx_n1_term = convert_sqe_to_asym_downscatter_sab(
-            sqe_incoherent_approx_n1_term,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_total_barn,
-            mass_ratio,
-        )
-    else:
-        sab_asym_downscatter_incoherent_approx_n1_term = None
-    _, _, sab_asym_downscatter_one_phonon_total = convert_sqe_to_asym_downscatter_sab(
-        sqe_one_phonon_total,
-        q_grid_ang_inv,
-        e_grid_mev,
-        args.temperature,
-        sigma_total_barn,
-        mass_ratio,
-    )
-
-    output_arrays: dict[str, object] = {
-        "q_ang_inv": q_grid_ang_inv,
-        "q_bin_edges_ang_inv": q_edges_ang_inv,
-        "e_mev": e_grid_mev,
-        "e_bin_edges_mev": e_edges_mev,
-        "alpha": alpha,
-        "beta_downscatter_abs": beta_downscatter_abs,
-        "sampled_directions": directions,
-        "coherent_compute_q_ang_inv": q_grid_ang_inv,
-        "coherent_compute_q_bin_edges_ang_inv": q_edges_ang_inv,
-        "coherent_q_bin_sample_mags_ang_inv": q_center_mags,
-        "coherent_q_bin_sample_weights": q_center_weights,
-        "incoherent_q_bin_sample_mags_ang_inv": q_bin_sample_mags,
-        "incoherent_q_bin_sample_weights": q_bin_sample_weights,
-        "sqe_coherent_barn_per_meV": sqe_coherent,
-        "sqe_coherent_diagonal_barn_per_meV": sqe_coherent_diagonal,
-        "sqe_coherent_interference_barn_per_meV": sqe_coherent_interference,
-        "sqe_incoherent_barn_per_meV": sqe_incoherent,
-        "sqe_one_phonon_total_barn_per_meV": sqe_one_phonon_total,
-        "sab_asym_downscatter_coherent": sab_asym_downscatter_coherent,
-        "sab_asym_downscatter_coherent_diagonal": sab_asym_downscatter_coherent_diagonal,
-        "sab_asym_downscatter_coherent_interference": sab_asym_downscatter_coherent_interference,
-        "sab_asym_downscatter_incoherent": sab_asym_downscatter_incoherent,
-        "sab_asym_downscatter_one_phonon_total": sab_asym_downscatter_one_phonon_total,
-    }
-    if sqe_incoherent_approx_n1_term is not None:
-        output_arrays["sqe_incoherent_approx_n1_term_barn_per_meV"] = sqe_incoherent_approx_n1_term
-        output_arrays["sab_asym_downscatter_incoherent_approx_n1_term"] = sab_asym_downscatter_incoherent_approx_n1_term
-
-    if sqe_multiphonon_incoherent_approx is not None:
-        _, _, sab_asym_downscatter_multiphonon_incoherent_approx = convert_sqe_to_asym_downscatter_sab(
-            sqe_multiphonon_incoherent_approx,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_total_barn,
-            mass_ratio,
-        )
-        output_arrays["sqe_multiphonon_incoherent_approx_barn_per_meV"] = sqe_multiphonon_incoherent_approx
-        output_arrays["sab_asym_downscatter_multiphonon_incoherent_approx"] = sab_asym_downscatter_multiphonon_incoherent_approx
-    if sqe_one_phonon_total_plus_incoherent_approx_multiphonon is not None:
-        _, _, sab_asym_downscatter_total_plus_approx = convert_sqe_to_asym_downscatter_sab(
-            sqe_one_phonon_total_plus_incoherent_approx_multiphonon,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_total_barn,
-            mass_ratio,
-        )
-        output_arrays["sqe_one_phonon_total_plus_incoherent_approx_multiphonon_barn_per_meV"] = sqe_one_phonon_total_plus_incoherent_approx_multiphonon
-        output_arrays["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"] = sab_asym_downscatter_total_plus_approx
-    if sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon is not None:
-        _, _, sab_asym_downscatter_approx_n1_plus_approx_multi = convert_sqe_to_asym_downscatter_sab(
-            sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon,
-            q_grid_ang_inv,
-            e_grid_mev,
-            args.temperature,
-            sigma_total_barn,
-            mass_ratio,
-        )
-        output_arrays["sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_barn_per_meV"] = sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon
-        output_arrays["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"] = sab_asym_downscatter_approx_n1_plus_approx_multi
-
-    # Energy-gain (E<0) outputs: the directly-computed annihilation side, on the
-    # strictly-negative e_gain_mev grid. NS-bridge-only -- no SAB / tape
-    # conversion, so the loss-side ENDF outputs are byte-identical. Each key
-    # mirrors a loss `sqe_*_barn_per_meV` with `_gain` inserted; the spectra
-    # bridge derives the gain key from the loss key it selected.
-    if emit_gain_side:
-        for _gname, _garr in (
-            ("sqe_coherent_gain_barn_per_meV", sqe_coherent_gain_out),
-            ("sqe_incoherent_gain_barn_per_meV", sqe_incoherent_gain_out),
-            ("sqe_one_phonon_total_gain_barn_per_meV", sqe_one_phonon_total_gain_out),
-            ("sqe_incoherent_approx_n1_term_gain_barn_per_meV",
-             sqe_incoherent_approx_n1_term_gain_out),
-            ("sqe_multiphonon_incoherent_approx_gain_barn_per_meV", sqe_multiphonon_gain),
-            ("sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain_barn_per_meV",
-             sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain),
-            ("sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain_barn_per_meV",
-             sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain),
-        ):
-            if _garr is None:
-                continue
-            _bad = np.size(_garr) - int(np.count_nonzero(np.isfinite(_garr)))
-            if _bad:
-                raise RuntimeError(
-                    f"{_gname} contains {_bad} non-finite value(s) after the "
-                    "energy-gain accumulation phase.")
-            output_arrays[_gname] = _garr
-        if e_gain_out_mev is not None:
-            output_arrays["e_gain_mev"] = e_gain_out_mev
-
-    _loc = locals()
-    for _n in ['alpha', 'beta_downscatter_abs', 'output_arrays', 'sab_asym_downscatter_incoherent_approx_n1_term', 'sab_asym_downscatter_one_phonon_total', 'sigma_coh_barn', 'sigma_inc_barn', 'sigma_total_barn']:
-        # STRICT lookup: a renamed/missing local must fail HERE with a
-        # KeyError naming it, not plant a silent None for a later phase
-        # (names that are legitimately branch-dependent are initialized
-        # to None in the non-computing branch above).
-        setattr(S, _n, _loc[_n])
-
-
-def _cfa_assemble_outputs(S):
-    """Assemble the named output arrays/metadata dict returned to
-    run_noncubic_sab_inprocess / the CLI.
-
-    One phase of compute_from_args; shared state travels in the
-    namespace S (unpacked to locals on entry, packed on exit).
-    """
-    args = getattr(S, "args")
-    beta_downscatter_abs = getattr(S, "beta_downscatter_abs")
-    chunk_size = getattr(S, "chunk_size")
-    coherent_partition_mode = getattr(S, "coherent_partition_mode")
-    coverage_warning = getattr(S, "coverage_warning")
-    de_used = getattr(S, "de_used")
-    dq_used = getattr(S, "dq_used")
-    e_max_used = getattr(S, "e_max_used")
-    e_min_used = getattr(S, "e_min_used")
-    estimated_multiphonon_beta_support = getattr(S, "estimated_multiphonon_beta_support")
-    estimated_one_phonon_beta_support = getattr(S, "estimated_one_phonon_beta_support")
-    needed_multiphonon_beta_support = getattr(S, "needed_multiphonon_beta_support")
-    phonon_cutoff_summary = getattr(S, "phonon_cutoff_summary", None)
-    incoherent_one_phonon_mesh_qpoints = getattr(S, "incoherent_one_phonon_mesh_qpoints")
-    incoherent_one_phonon_mesh_weights = getattr(S, "incoherent_one_phonon_mesh_weights")
-    max_mode_energy_mev = getattr(S, "max_mode_energy_mev")
-    multiphonon_mode_projection_components = getattr(S, "multiphonon_mode_projection_components")
-    multiphonon_num_directions = getattr(S, "multiphonon_num_directions")
-    multiphonon_star_counts = getattr(S, "multiphonon_star_counts")
-    num_jobs = getattr(S, "num_jobs")
-    one_phonon_creation_scale = getattr(S, "one_phonon_creation_scale")
-    one_phonon_energy_jacobian_mev_per_thz = getattr(S, "one_phonon_energy_jacobian_mev_per_thz")
-    one_phonon_principal_site_normalization = getattr(S, "one_phonon_principal_site_normalization")
-    output_arrays = getattr(S, "output_arrays")
-    principal_cross_weight = getattr(S, "principal_cross_weight")
-    group_coherent_weights = getattr(S, "group_coherent_weights")
-    principal_group_index = getattr(S, "principal_group_index")
-    principal_site_indices = getattr(S, "principal_site_indices")
-    q_max_used = getattr(S, "q_max_used")
-    q_min_used = getattr(S, "q_min_used")
-    represented_principal_site_count = getattr(S, "represented_principal_site_count")
-    requested_beta_max = getattr(S, "requested_beta_max")
-    sab_asym_downscatter_incoherent_approx_n1_term = getattr(S, "sab_asym_downscatter_incoherent_approx_n1_term")
-    sab_asym_downscatter_one_phonon_total = getattr(S, "sab_asym_downscatter_one_phonon_total")
-    sigma_coh_barn = getattr(S, "sigma_coh_barn")
-    sigma_inc_barn = getattr(S, "sigma_inc_barn")
-    sigma_total_barn = getattr(S, "sigma_total_barn")
-    site_groups = getattr(S, "site_groups")
-    sqe_coherent = getattr(S, "sqe_coherent")
-    sqe_coherent_diagonal = getattr(S, "sqe_coherent_diagonal")
-    sqe_coherent_interference = getattr(S, "sqe_coherent_interference")
-    sqe_incoherent = getattr(S, "sqe_incoherent")
-    sqe_incoherent_approx_n1_term = getattr(S, "sqe_incoherent_approx_n1_term")
-    sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon = getattr(S, "sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon")
-    sqe_multiphonon_incoherent_approx = getattr(S, "sqe_multiphonon_incoherent_approx")
-    sqe_one_phonon_total_plus_incoherent_approx_multiphonon = getattr(S, "sqe_one_phonon_total_plus_incoherent_approx_multiphonon")
-    start = getattr(S, "start")
-
-
-    actual_beta_support = {
-        "sab_asym_downscatter_one_phonon_total": compute_last_nonzero_beta(
-            sab_asym_downscatter_one_phonon_total,
-            beta_downscatter_abs,
-        ),
-    }
-    if sab_asym_downscatter_incoherent_approx_n1_term is not None:
-        actual_beta_support["sab_asym_downscatter_incoherent_approx_n1_term"] = compute_last_nonzero_beta(
-            sab_asym_downscatter_incoherent_approx_n1_term,
-            beta_downscatter_abs,
-        )
-    if "sab_asym_downscatter_multiphonon_incoherent_approx" in output_arrays:
-        actual_beta_support["sab_asym_downscatter_multiphonon_incoherent_approx"] = compute_last_nonzero_beta(
-            output_arrays["sab_asym_downscatter_multiphonon_incoherent_approx"],
-            beta_downscatter_abs,
-        )
-    if "sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon" in output_arrays:
-        actual_beta_support["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"] = compute_last_nonzero_beta(
-            output_arrays["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"],
-            beta_downscatter_abs,
-        )
-    if "sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon" in output_arrays:
-        actual_beta_support["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"] = compute_last_nonzero_beta(
-            output_arrays["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"],
-            beta_downscatter_abs,
-        )
-
-    metadata = {
-        "material_name": args.material_name,
-        "phonopy_yaml": str(Path(args.phonopy_yaml).resolve()),
-        "force_constants": (
-            None if getattr(args, "force_constants", None) is None
-            else str(Path(args.force_constants).resolve())
-        ),
-        "force_sets": (
-            None if getattr(args, "force_sets", None) is None
-            else str(Path(args.force_sets).resolve())
-        ),
-        "temperature_K": args.temperature,
-        "mesh": list(args.mesh),
-        "incoherent_one_phonon_weighted_mesh_qpoints": int(len(incoherent_one_phonon_mesh_qpoints)),
-        "incoherent_one_phonon_weighted_mesh_weight_sum": int(np.sum(incoherent_one_phonon_mesh_weights)),
-        # Deliberate duplicates of the two keys above: the multiphonon stage
-        # reuses the incoherent one-phonon mesh by construction; both names
-        # are kept so a consumer reading either stage's bookkeeping finds it.
-        "multiphonon_weighted_mesh_qpoints": int(len(incoherent_one_phonon_mesh_qpoints)),
-        "multiphonon_weighted_mesh_weight_sum": int(np.sum(incoherent_one_phonon_mesh_weights)),
-        "multiphonon_star_averaged_projection_components": bool(
-            multiphonon_mode_projection_components is not None
-        ),
-        "q_min_A^-1": q_min_used,
-        "q_max_A^-1": q_max_used,
-        "dq_A^-1": dq_used,
-        "e_min_meV": e_min_used,
-        "e_max_meV": e_max_used,
-        "de_meV": de_used,
-        "grid_from_oclimax_csv": str(Path(args.grid_from_oclimax_csv).resolve()) if args.grid_from_oclimax_csv else None,
-        "q_grid_file": str(Path(args.q_grid_file).resolve()) if args.q_grid_file else None,
-        "e_grid_file": str(Path(args.e_grid_file).resolve()) if args.e_grid_file else None,
-        "sigma_meV": args.sigma_mev,
-        "jobs": num_jobs,
-        "q_chunk_size": chunk_size,
-        "num_directions": args.num_directions,
-        "coherent_powder_average": "directions",
-        "multiphonon_num_directions": multiphonon_num_directions,
-        "multiphonon_max_order": args.multiphonon_max_order,
-        # The user phonon-energy cutoff (0 = the automatic floors only) and,
-        # when active, what it removed: a truncated vibrational model must
-        # say so in its own metadata.
-        "min_phonon_energy_meV": float(getattr(args, "min_phonon_energy_mev", 0.0)),
-        "phonon_cutoff": phonon_cutoff_summary,
-        # The multiphonon tail (orders n>=2) is the incoherent-APPROXIMATION model
-        # (sigma_total-scaled per-atom self kernel), NOT exact coherent multiphonon
-        # scattering: even in inelastic_mode=2 only the ONE-phonon term carries
-        # coherent interference. Surfaced so downstream labels don't read the
-        # mode-2 product as fully coherent.
-        "multiphonon_model": "incoherent_approximation",
-        "max_mode_energy_meV": max_mode_energy_mev,
-        "estimated_one_phonon_beta_support": estimated_one_phonon_beta_support,
-        "estimated_multiphonon_beta_support": estimated_multiphonon_beta_support,
-        "needed_multiphonon_beta_support": needed_multiphonon_beta_support,
-        "requested_beta_max": requested_beta_max,
-        "actual_beta_support": actual_beta_support,
-        "coverage_warning": coverage_warning,
-        "one_phonon_energy_jacobian_meV_per_THz": one_phonon_energy_jacobian_mev_per_thz,
-        "represented_principal_site_count": represented_principal_site_count,
-        "one_phonon_principal_site_normalization": one_phonon_principal_site_normalization,
-        "one_phonon_creation_scale": one_phonon_creation_scale,
-        "coherent_partition_mode": coherent_partition_mode,
-        "principal_group_index": principal_group_index,
-        "principal_group_site_count": int(len(principal_site_indices)),
-        "site_group_sizes": [int(len(group)) for group in site_groups],
-        "principal_cross_weight": principal_cross_weight,
-        "group_coherent_weights": [float(w) for w in group_coherent_weights],
-        "coherent_interference_pair_weighting": "w_p/(w_p+w_o) per pair",
-        "output_units": "barn / sr / meV",
-        "sab_output": {
-            "kind": "asymmetric downscatter side on |beta| grid",
-            "formula": "sab_asym_downscatter(alpha,beta_downscatter_abs) = (4*pi*kT/sigma_b) * sqe_barn_per_meV(Q,E_tr)",
-            "sqe_input_interpretation": "d^2 sigma / (dOmega dE') in barn / sr / meV",
-            "coherent_sigma_b_barn": sigma_coh_barn,
-            "incoherent_sigma_b_barn": sigma_inc_barn,
-            "total_sigma_b_barn": sigma_total_barn,
-        },
-        "output_units_note": (
-            "The sqe_* arrays are powder-averaged differential intensities with "
-            "the physical interpretation d^2 sigma / (dOmega dE'); the "
-            "_barn_per_meV suffix names this per-energy normalization."
-        ),
-        "notes": (
-            "IRMA noncubic inelastic engine: exact coherent and incoherent n=1 terms, "
-            "the sigma_total-scaled Squires/OCLIMAX-style multiphonon approximation, and downscatter-side "
-            "asymmetric S(alpha,|beta|). The coherent diagonal/interference decomposition is preserved "
-            "in both S(Q,E) and SAB space using a common coherent sigma_b normalization. "
-            "For multi-group exports, coherent_partition_mode='principal-xs-weighted' stores the exact "
-            "principal-group self term plus a coherent-strength-weighted share of cross-group interference "
-            "instead of the full mixed-material coherent total. "
-            "The coherent n=1 powder average uses a single-radius golden-spiral "
-            "directional quadrature (equivalent to Euphonic's 'golden' method). "
-            "The S(Q,E) arrays are differential in solid angle; OCLIMAX INSTR=3 powder maps may use an "
-            "angle-integrated convention and should be compared with care. "
-            "If the requested output energy grid is non-uniform, the multiphonon recursion is evaluated "
-            "on an internal uniform work grid and conservatively rebinned to the requested output bins."
-        ),
-        "elapsed_seconds": time.time() - start,
-    }
-    if multiphonon_star_counts is not None:
-        metadata["multiphonon_star_count_min"] = int(np.min(multiphonon_star_counts))
-        metadata["multiphonon_star_count_max"] = int(np.max(multiphonon_star_counts))
-
-    print(f"Coherent S(Q,E) shape: {sqe_coherent.shape}")
-    print(f"Max coherent total intensity: {sqe_coherent.max():.6e} barn/meV")
-    print(f"Max coherent diagonal intensity: {sqe_coherent_diagonal.max():.6e} barn/meV")
-    print(f"Max coherent interference intensity: {sqe_coherent_interference.max():.6e} barn/meV")
-    print(f"Max incoherent intensity: {sqe_incoherent.max():.6e} barn/meV")
-    if sqe_incoherent_approx_n1_term is not None:
-        print(
-            "Max incoherent-approximation n=1 intensity: "
-            f"{sqe_incoherent_approx_n1_term.max():.6e} barn/meV"
-        )
-    if sqe_multiphonon_incoherent_approx is not None:
-        print(f"Max incoherent-approx multiphonon intensity: {sqe_multiphonon_incoherent_approx.max():.6e} barn/meV")
-    if sqe_one_phonon_total_plus_incoherent_approx_multiphonon is not None:
-        print(
-            "Max one-phonon total plus incoherent-approx multiphonon intensity: "
-            f"{sqe_one_phonon_total_plus_incoherent_approx_multiphonon.max():.6e} barn/meV"
-        )
-    if sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon is not None:
-        print(
-            "Max incoherent-approx n=1 plus incoherent-approx multiphonon intensity: "
-            f"{sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon.max():.6e} barn/meV"
-        )
-    print(f"Elapsed time: {time.time() - start:.2f} s")
-
-    # P5: surface the elastic state (anisotropic Debye-Waller + primitive
-    # geometry) so the forward model can build a tape-free MF7/MT2 elastic line
-    # from the SAME phonon calculation. Purely additive -- the ENDF/deck write
-    # path does not consume run_noncubic_sab_inprocess's return value. None when
-    # the thermal-displacement matrices were not built (e.g. no mesh context).
-    thermal_mats = getattr(S, "thermal_mats", None)
-    primitive = getattr(S, "primitive", None)
-    elastic_state = None
-    if thermal_mats is not None and primitive is not None:
-        elastic_state = {
-            "thermal_displacement_matrices_ang2": np.asarray(thermal_mats, dtype=float),
-            "primitive_lattice_ang": np.asarray(primitive.cell, dtype=float),
-            "primitive_scaled_positions": np.asarray(
-                primitive.scaled_positions, dtype=float),
-            "primitive_symbols": [str(s) for s in primitive.symbols],
-            "primitive_masses_amu": np.asarray(primitive.masses, dtype=float),
-            "temperature_k": float(args.temperature),
-        }
-    return output_arrays, metadata, elastic_state
 
 
 def compute_from_args(
@@ -2032,10 +389,10 @@ def compute_from_args(
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object] | None]:
     """Run the full noncubic S(Q,E) computation for one parsed argument set.
 
-    Executes the compute phases in order — mesh/grid setup, site grouping,
-    coherent one-phonon, incoherent one-phonon + multiphonon, S(alpha,beta)
-    conversion — sharing state through one namespace and one spawned worker
-    pool. ``q_grid_ang_inv``/``e_grid_mev`` override the grids parsed from
+    Runs the stages in order — mesh/grid setup, site grouping, coherent
+    one-phonon, incoherent one-phonon + multiphonon, S(alpha,beta)
+    conversion, metadata — with one spawned worker pool shared by all of
+    them. ``q_grid_ang_inv``/``e_grid_mev`` override the grids parsed from
     ``args``; ``context`` supplies a prebuilt (cached) compute context so
     repeated runs against the same phonon model skip the mesh eigensolve.
     Returns ``(output_arrays, metadata, elastic_state)``: the named S(Q,E)
@@ -2044,30 +401,1298 @@ def compute_from_args(
     mesh context provides no thermal-displacement data).
     """
     limit_native_threads_to_one()
-    # NOTE: the once-per-run kernel-area warning latch lives in
-    # noncubic_workers (_KERNEL_AREA_WARNED, a multiprocessing.Value handed
-    # to spawned workers through the pool initializer) and is re-armed by
-    # set_worker_state() before each compute phase. Do not add a
-    # ``global _KERNEL_AREA_WARNED`` reset here: it would only rebind a
-    # phantom name in THIS module's namespace and never touch the real latch.
-    S = SimpleNamespace()
-    S.args = args
-    S.q_grid_ang_inv = q_grid_ang_inv
-    S.e_grid_mev = e_grid_mev
-    S.context = context
+    # One spawned pool serves every compute phase of the run; run_blocks
+    # creates it on first use and the finally clause retires it.
+    pool_holder: dict = {}
     try:
-        _cfa_setup_mesh_and_grids(S)
-        _cfa_site_groups_and_multiphonon_policy(S)
-        _cfa_coherent_one_phonon(S)
-        _cfa_incoherent_and_multiphonon(S)
-        _cfa_convert_to_sab(S)
-        return _cfa_assemble_outputs(S)
+        # --- Mesh, Q/E grids, thermal displacements and the direction quadrature.
+        start = time.time()
+        multiphonon_num_directions = (
+            max(1, int(args.num_directions))
+            if args.multiphonon_num_directions is None
+            else max(1, int(args.multiphonon_num_directions))
+        )
+
+        if q_grid_ang_inv is None or e_grid_mev is None:
+            if args.grid_from_oclimax_csv:
+                q_grid_ang_inv, e_grid_mev = load_grid_from_oclimax_csv(Path(args.grid_from_oclimax_csv))
+            else:
+                if args.q_grid_file:
+                    q_grid_ang_inv = load_grid_from_text(Path(args.q_grid_file))
+                else:
+                    q_grid_ang_inv = np.arange(args.q_min, args.q_max + 0.5 * args.dq, args.dq, dtype=float)
+                if args.e_grid_file:
+                    e_grid_mev = load_grid_from_text(Path(args.e_grid_file))
+                else:
+                    e_grid_mev = np.arange(args.e_min, args.e_max + 0.5 * args.de, args.de, dtype=float)
+        else:
+            q_grid_ang_inv = np.asarray(q_grid_ang_inv, dtype=float)
+            e_grid_mev = np.asarray(e_grid_mev, dtype=float)
+
+        if context is None:
+            from irma.core.noncubic_inelastic_context import build_compute_context
+
+            context = build_compute_context(args, q_grid_ang_inv, e_grid_mev)
+
+        requested_inelastic_mode = int(getattr(args, "inelastic_mode", 0) or 0)
+        if requested_inelastic_mode not in (0, 1, 2):
+            raise ValueError("inelastic_mode must be 0, 1, or 2 in the noncubic inelastic driver.")
+        need_coherent_n1 = requested_inelastic_mode in (0, 2)
+        need_exact_incoherent_n1 = requested_inelastic_mode in (0, 2)
+        need_incoherent_approx_n1 = requested_inelastic_mode in (0, 1)
+
+        q_grid_ang_inv = context["q_grid_ang_inv"]
+        e_grid_mev = context["e_grid_mev"]
+        q_edges_ang_inv = context["q_edges_ang_inv"]
+        e_edges_mev = context["e_edges_mev"]
+        e_bin_widths_mev = context["e_bin_widths_mev"]
+        q_min_used = context["q_min_used"]
+        q_max_used = context["q_max_used"]
+        dq_used = context["dq_used"]
+        e_min_used = context["e_min_used"]
+        e_max_used = context["e_max_used"]
+        de_used = context["de_used"]
+        directions = context["directions"]
+        q_center_mags = context["q_center_mags"]
+        q_center_weights = context["q_center_weights"]
+        q_bin_sample_mags = context["q_bin_sample_mags"]
+        q_bin_sample_weights = context["q_bin_sample_weights"]
+        mesh = context["mesh"]
+        primitive = context["primitive"]
+        rec_lat_no_2pi = context["rec_lat_no_2pi"]
+        frequency_factor_to_thz = context["frequency_factor_to_thz"]
+        q_red = context["q_red"]
+        q_shell_index = context["q_shell_index"]
+        sample_weights = context["sample_weights"]
+        q_cart_physical = context["q_cart_physical"]
+        unit_directions = context["unit_directions"]
+        q_mags_physical = context["q_mags_physical"]
+        mev_to_joule = context["mev_to_joule"]
+        unit_conversion = context["unit_conversion"]
+        scattering_lengths = context["scattering_lengths"]
+        sigma_inc = context["sigma_inc"]
+        sigma_coh_by_atom = context["sigma_coh_by_atom"]
+        coherent_atom_prefactors = context["coherent_atom_prefactors"]
+        sigma_inc_by_atom = context["sigma_inc_by_atom"]
+        sigma_total_by_atom = context["sigma_total_by_atom"]
+        incoherent_prefactors = context["incoherent_prefactors"]
+        incoherent_approx_prefactors = context["incoherent_approx_prefactors"]
+        incoherent_one_phonon_mesh_qpoints = context["incoherent_one_phonon_mesh_qpoints"]
+        incoherent_one_phonon_mesh_weights = context["incoherent_one_phonon_mesh_weights"]
+        incoherent_one_phonon_mode_energies_mev = context["incoherent_one_phonon_mode_energies_mev"]
+        incoherent_one_phonon_mode_frequencies_thz = context["incoherent_one_phonon_mode_frequencies_thz"]
+        incoherent_one_phonon_mode_weights = context["incoherent_one_phonon_mode_weights"]
+        incoherent_one_phonon_mode_eigvecs_valid = context["incoherent_one_phonon_mode_eigvecs_valid"]
+        max_mode_energy_mev = context["max_mode_energy_mev"]
+        multiphonon_mode_energies_mev = context["multiphonon_mode_energies_mev"]
+        multiphonon_mode_frequencies_thz = context["multiphonon_mode_frequencies_thz"]
+        multiphonon_mode_weights = context["multiphonon_mode_weights"]
+        multiphonon_mode_eigvecs_valid = context["multiphonon_mode_eigvecs_valid"]
+        multiphonon_q_weight_norm = context["multiphonon_q_weight_norm"]
+        multiphonon_mode_projection_components = context["multiphonon_mode_projection_components"]
+        multiphonon_star_counts = context["multiphonon_star_counts"]
+        num_jobs = context["num_jobs"]
+        chunk_size = context["chunk_size"]
+        coherent_blocks = context["coherent_blocks"]
+        shell_blocks = context["shell_blocks"]
+        multiphonon_dir_chunk_size = context["multiphonon_dir_chunk_size"]
+
+        phase_start = time.time()
+        # Filled when a user phonon-energy cutoff is active; carried into the
+        # run metadata and printed once per temperature.
+        phonon_cutoff_summary = None
+        precomputed_tdm = getattr(args, "precomputed_thermal_mats", None)
+        if precomputed_tdm is not None:
+            # The engine's MT4 step already ran ThermalDisplacementMatrices on the
+            # SAME full mesh at the SAME temperature with the SAME mode floor
+            # (irma.core.phonopy_io.compute_thermal_displacement_matrices); reuse
+            # its arrays instead of repeating the run.
+            thermal_mats = np.asarray(precomputed_tdm, dtype=float)
+            print("Reusing the engine's thermal displacement matrices "
+                  "(same mesh, same temperature)...", flush=True)
+        else:
+            # The TDMs depend only on the mesh eigenvectors, temperature, and
+            # atomic masses — all species-independent — so they are cached in
+            # the reusable model context keyed by temperature: a multi-species
+            # pack bake computes the tensor once for all principals, and lat=0
+            # multi-temperature decks compute each temperature once.
+            _model_ctx = (context.get("_model_context")
+                          if isinstance(context, dict) else None)
+            _tdm_cache = (_model_ctx.setdefault("thermal_mats_by_temperature", {})
+                          if isinstance(_model_ctx, dict) else None)
+            _tdm_key = round(float(args.temperature), 9)
+            if _tdm_cache is not None and _tdm_key in _tdm_cache:
+                thermal_mats = _tdm_cache[_tdm_key]
+                print("Reusing cached thermal displacement matrices "
+                      "(same mesh, same temperature)...", flush=True)
+            else:
+                print("Precomputing anisotropic thermal displacement matrices...",
+                      flush=True)
+                # Same per-q two-tier Debye-Waller mode floor as the MT2/driver
+                # path (phonopy_io.compute_thermal_displacement_matrices): the
+                # per-q sum keeps the off-Gamma soft modes in
+                # [1 ueV, GAMMA_ACOUSTIC_FLOOR] that the one-phonon and
+                # multiphonon mode sums also keep, so the Poisson/DW 2W is built
+                # from the same mode set as the kernels.
+                from irma.core.phonopy_io import (
+                    PhonopyMeshData,
+                    compute_thermal_displacement_matrices,
+                )
+                _mesh_data = PhonopyMeshData(
+                    qpoints=np.asarray(mesh.qpoints, dtype=float),
+                    frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
+                    # Transient (N_q, N_branches, N_atoms, 3) layout copy,
+                    # consumed by the per-q sum.
+                    eigenvectors=reshape_mesh_eigenvectors(
+                        np.asarray(mesh.eigenvectors), len(primitive.masses)),
+                    weights=np.asarray(
+                        getattr(mesh, "weights", np.ones(len(mesh.qpoints))),
+                        dtype=float),
+                    masses_amu=np.asarray(primitive.masses, dtype=float),
+                    atom_symbols=[str(s) for s in primitive.symbols],
+                    atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
+                    min_phonon_energy_mev=float(
+                        getattr(args, "min_phonon_energy_mev", 0.0)),
+                    phonopy_mesh_object=mesh,
+                )
+                thermal_mats = compute_thermal_displacement_matrices(
+                    _mesh_data, args.temperature)
+                del _mesh_data
+                if _tdm_cache is not None:
+                    _tdm_cache[_tdm_key] = thermal_mats
+                print(
+                    f"Thermal displacement matrices ready in {time.time() - phase_start:.1f} s",
+                    flush=True,
+                )
+        _cutoff_mev = float(getattr(args, "min_phonon_energy_mev", 0.0))
+        if _cutoff_mev > 0.0:
+            # Report what the cutoff removed, whichever branch supplied the
+            # displacement matrices: the summary rebuilds both mode populations
+            # on the mesh at this temperature (two cheap per-mode sums), so a
+            # truncated model announces itself and records itself in the
+            # metadata. Cached per temperature with the model context.
+            from irma.core.phonopy_io import (
+                PhonopyMeshData, format_phonon_cutoff_summary,
+                phonon_cutoff_summary as _summary)
+            _summary_ctx = (context.get("_model_context")
+                            if isinstance(context, dict) else None)
+            _summary_cache = (_summary_ctx.setdefault("phonon_cutoff_summary_by_temperature", {})
+                              if isinstance(_summary_ctx, dict) else None)
+            _summary_key = round(float(args.temperature), 9)
+            if _summary_cache is not None and _summary_key in _summary_cache:
+                phonon_cutoff_summary = _summary_cache[_summary_key]
+            else:
+                phonon_cutoff_summary = _summary(PhonopyMeshData(
+                    qpoints=np.asarray(mesh.qpoints, dtype=float),
+                    frequencies_ev=np.asarray(mesh.frequencies, dtype=float) * THzToEv,
+                    eigenvectors=reshape_mesh_eigenvectors(
+                        np.asarray(mesh.eigenvectors), len(primitive.masses)),
+                    weights=np.asarray(
+                        getattr(mesh, "weights", np.ones(len(mesh.qpoints))), dtype=float),
+                    masses_amu=np.asarray(primitive.masses, dtype=float),
+                    atom_symbols=[str(s) for s in primitive.symbols],
+                    atom_positions=np.asarray(primitive.scaled_positions, dtype=float),
+                    min_phonon_energy_mev=_cutoff_mev,
+                    phonopy_mesh_object=mesh,
+                ), args.temperature)
+                if _summary_cache is not None:
+                    _summary_cache[_summary_key] = phonon_cutoff_summary
+            for _line in format_phonon_cutoff_summary(phonon_cutoff_summary):
+                print(_line, flush=True)
+        if args.temperature <= BOSE_T0_LIMIT_K:
+            incoherent_one_phonon_mode_occupancies = np.zeros_like(
+                incoherent_one_phonon_mode_frequencies_thz
+            )
+        else:
+            incoherent_one_phonon_exponent = np.clip(
+                incoherent_one_phonon_mode_frequencies_thz * THzToEv
+                / (_BK_EV_PER_K * args.temperature),
+                0.0,
+                700.0,
+            )
+            incoherent_one_phonon_mode_occupancies = 1.0 / np.expm1(
+                incoherent_one_phonon_exponent
+            )
+
+        # --- Site groups, principal-scatterer bookkeeping and the multiphonon order.
+        requested_order = args.multiphonon_max_order
+        max_q_for_order = float(np.max(q_bin_sample_mags)) if np.size(q_bin_sample_mags) else 0.0
+        _, required_order, two_w_max, u_max = derive_required_multiphonon_order(
+            max_q_for_order, thermal_mats, requested_order
+        )
+        auto_multiphonon_order = bool(getattr(args, "auto_multiphonon_order", False))
+        if auto_multiphonon_order:
+            # Auto-size UP to the requirement, capped at the 2000 safety limit, but NEVER below
+            # the deck nphon (a deliberately high deck order is still honored).
+            effective_order = max(requested_order, min(required_order, 2000))
+            if effective_order > requested_order:
+                print(
+                    f"multiphonon: auto-sizing order {requested_order} -> {effective_order} to "
+                    f"converge the incoherent Poisson(2W) sum for the anisotropic Debye-Waller "
+                    f"factor (2W_max = Q_max^2 U_max = {two_w_max:.0f} at Q_max={max_q_for_order:.1f} "
+                    f"1/Angstrom, U_max={u_max:.4f} Angstrom^2).",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"multiphonon: auto-sizing requested but deck order {requested_order} already "
+                    f">= the ~{required_order} required (2W_max={two_w_max:.0f} at "
+                    f"Q_max={max_q_for_order:.1f} 1/Angstrom); honoring {requested_order}.",
+                    flush=True,
+                )
+            if required_order > 2000 and effective_order < required_order:
+                print(
+                    "WARNING: required multiphonon order exceeds the safety cap (2000); the "
+                    "highest-Q rows may still fall short of the free-gas limit.",
+                    flush=True,
+                )
+            args.multiphonon_max_order = effective_order
+        elif requested_order < required_order:
+            print(
+                f"WARNING: Card 3 nphon = {requested_order} is BELOW the ~{required_order} needed to "
+                f"converge the incoherent Poisson(2W) multiphonon sum with the ANISOTROPIC "
+                f"Debye-Waller factor (2W_max = Q_max^2 U_max = {two_w_max:.0f} at "
+                f"Q_max={max_q_for_order:.1f} 1/Angstrom, U_max={u_max:.4f} Angstrom^2). The high-Q "
+                f"S(a,b) rows will be TRUNCATED short of the free-gas limit and the cross section "
+                f"will roll off at high Q. Set Card 3 nphon >= {required_order}, or enable auto-sizing "
+                f"(Card 6g 3rd field auto_order = 1, or the GUI 'Auto-size multiphonon order' "
+                f"checkbox).",
+                flush=True,
+            )
+        elif requested_order >= 2:
+            print(
+                f"multiphonon: Card 3 nphon = {requested_order} >= the ~{required_order} required to "
+                f"converge 2W_max={two_w_max:.0f} (Q_max={max_q_for_order:.1f} 1/Angstrom); "
+                f"honoring the deck value.",
+                flush=True,
+            )
+
+        kT_mev = KB_MEV_PER_K * args.temperature
+        requested_beta_max = float(np.max(e_grid_mev) / kT_mev) if kT_mev > 0.0 else 0.0
+        estimated_one_phonon_beta_support = max_mode_energy_mev / kT_mev if kT_mev > 0.0 else 0.0
+        estimated_multiphonon_beta_support = (
+            args.multiphonon_max_order * estimated_one_phonon_beta_support
+            if args.multiphonon_max_order >= 2
+            else estimated_one_phonon_beta_support
+        )
+        # Energy-reach guard. The law needs the sum to reach the recoil ridge at
+        # the largest Q plus a few thermal widths, not the top of the energy
+        # grid: for any atom heavier than a few mass units the grid top lies far
+        # out on a Gaussian tail. Any order meeting the Poisson rule above
+        # passes this check (see multiphonon_energy_reach), so it fires only for
+        # an order below that requirement, or if the rule itself is changed.
+        energy_reach = multiphonon_energy_reach(
+            args.multiphonon_max_order, max_mode_energy_mev, max_q_for_order,
+            primitive.masses, args.temperature, float(np.max(e_grid_mev)))
+        needed_multiphonon_beta_support = (
+            energy_reach.needed_mev / kT_mev if kT_mev > 0.0 else 0.0)
+        coverage_warning = None
+        if energy_reach.short:
+            symbol = str(primitive.symbols[energy_reach.atom_index])
+            suggested_order = max(
+                required_order,
+                int(math.ceil(energy_reach.needed_mev / max_mode_energy_mev)))
+            if energy_reach.capped:
+                need_text = (
+                    f"the recoil ridge of {symbol} at Q_max = {max_q_for_order:.1f} "
+                    f"1/Angstrom sits at {energy_reach.ridge_mev / 1e3:.2f} eV, at or "
+                    f"beyond the top of the energy grid, so the sum needs the grid "
+                    f"top, {energy_reach.needed_mev / 1e3:.2f} eV")
+            else:
+                need_text = (
+                    f"the recoil ridge of {symbol} at Q_max = {max_q_for_order:.1f} "
+                    f"1/Angstrom sits at {energy_reach.ridge_mev / 1e3:.2f} eV with a "
+                    f"thermal width of {energy_reach.width_mev / 1e3:.2f} eV, so the "
+                    f"sum needs {energy_reach.needed_mev / 1e3:.2f} eV (ridge plus "
+                    f"{MULTIPHONON_MARGIN_SIGMAS:g} widths)")
+            remedy = f"Raise Card 3 nphon to at least {suggested_order}"
+            if not auto_multiphonon_order:
+                remedy += ", or enable auto-sizing"
+            coverage_warning = (
+                f"multiphonon order {args.multiphonon_max_order} reaches "
+                f"{energy_reach.reach_mev / 1e3:.2f} eV of energy transfer; "
+                f"{need_text}. The law is truncated past the reach. {remedy}.")
+            print(f"WARNING: {coverage_warning}")
+        represented_principal_site_count = getattr(args, "represented_principal_site_count", None)
+        if represented_principal_site_count is None:
+            represented_principal_site_count = len(primitive.symbols)
+        represented_principal_site_count = int(represented_principal_site_count)
+        if represented_principal_site_count < 1:
+            raise ValueError("represented_principal_site_count must be a positive integer.")
+
+        site_groups = normalize_site_groups(
+            getattr(args, "site_groups", None),
+            len(primitive.symbols),
+        )
+        principal_group_index = int(getattr(args, "principal_group_index", 0) or 0)
+        if principal_group_index < 0 or principal_group_index >= len(site_groups):
+            raise ValueError("principal_group_index is out of range for the provided site groups.")
+        principal_site_indices = site_groups[principal_group_index]
+        principal_site_mask = np.zeros(len(primitive.symbols), dtype=bool)
+        principal_site_mask[principal_site_indices] = True
+        group_coherent_weights = np.array(
+            [float(np.sum(sigma_coh_by_atom[group])) for group in site_groups],
+            dtype=float,
+        )
+        coherent_partition_mode = str(getattr(args, "coherent_partition_mode", "auto") or "auto")
+        if coherent_partition_mode == "auto":
+            coherent_partition_mode = "exact-total" if len(site_groups) == 1 else "principal-xs-weighted"
+        if coherent_partition_mode not in ("exact-total", "principal-xs-weighted"):
+            raise ValueError("coherent_partition_mode must be 'auto', 'exact-total', or 'principal-xs-weighted'.")
+        group_weight_sum = float(np.sum(group_coherent_weights))
+        # Provenance-only field (kept in run metadata): the principal's share of
+        # the total coherent weight. The partition itself uses per-pair factors
+        # w_p/(w_p+w_o) inside principal_weighted_coherent_partition.
+        principal_cross_weight = (
+            float(group_coherent_weights[principal_group_index] / group_weight_sum)
+            if group_weight_sum > 0.0
+            else 1.0
+        )
+        export_incoherent_prefactors = incoherent_prefactors.copy()
+        export_incoherent_prefactors[~principal_site_mask] = 0.0
+        export_incoherent_approx_prefactors = incoherent_approx_prefactors.copy()
+        export_incoherent_approx_prefactors[~principal_site_mask] = 0.0
+        export_multiphonon_sigma_total_scale = np.zeros_like(sigma_total_by_atom, dtype=float)
+        for group_indices in site_groups:
+            group_scale = 1.0 / float(len(group_indices))
+            export_multiphonon_sigma_total_scale[group_indices] = (
+                sigma_total_by_atom[group_indices] / (4.0 * np.pi) * group_scale
+            )
+        export_multiphonon_sigma_total_scale[~principal_site_mask] = 0.0
+        print(
+            "Export grouping: "
+            f"{len(site_groups)} group(s), principal group={principal_group_index}, "
+            f"principal sites={len(principal_site_indices)}, "
+            f"coherent partition={coherent_partition_mode}",
+            flush=True,
+        )
+
+        # --- Coherent one-phonon S(Q,E) over the direction quadrature.
+        one_phonon_energy_jacobian_mev_per_thz = THzToEv * 1000.0
+        one_phonon_principal_site_normalization = 1.0 / float(represented_principal_site_count)
+        one_phonon_creation_scale = (
+            one_phonon_energy_jacobian_mev_per_thz * one_phonon_principal_site_normalization
+        )
+        print(
+            "One-phonon normalization: "
+            f"THz->meV Jacobian={one_phonon_energy_jacobian_mev_per_thz:.12g}, "
+            f"represented principal sites={represented_principal_site_count}, "
+            f"combined scale={one_phonon_creation_scale:.12g}",
+            flush=True,
+        )
+        phase_start = time.time()
+        print("Preparing Bose factors and histogram lookups...", flush=True)
+        incoherent_one_phonon_q_weight_norm = float(np.sum(incoherent_one_phonon_mesh_weights))
+        incoherent_one_phonon_hist_lookup = precompute_histogram_lookup(
+            incoherent_one_phonon_mode_energies_mev,
+            e_edges_mev,
+            e_bin_widths_mev,
+        )
+        incoherent_one_phonon_mode_creation_prefactors = (
+            (incoherent_one_phonon_mode_occupancies + 1.0)
+            * unit_conversion
+            * mev_to_joule
+            * BARN_PER_M2
+            * one_phonon_creation_scale
+            * incoherent_one_phonon_mode_weights
+            / incoherent_one_phonon_q_weight_norm
+            / incoherent_one_phonon_mode_frequencies_thz
+        )
+        # Energy-gain (annihilation) one-phonon prefactor: the creation prefactor
+        # with (occ+1) -> occ; everything else identical. Built only when the gain
+        # side is requested; consumed by the incoherent worker at -energy.
+        emit_gain_side = bool(getattr(args, "emit_gain_side", False))
+        incoherent_one_phonon_mode_absorption_prefactors = (
+            (incoherent_one_phonon_mode_occupancies
+             * unit_conversion
+             * mev_to_joule
+             * BARN_PER_M2
+             * one_phonon_creation_scale
+             * incoherent_one_phonon_mode_weights
+             / incoherent_one_phonon_q_weight_norm
+             / incoherent_one_phonon_mode_frequencies_thz)
+            if emit_gain_side else None
+        )
+        # Shared energy-GAIN grids (functions of the output e-grid only), built once
+        # here and packed for the incoherent + multiphonon stages and the output
+        # assembly. The WORKER one-phonon gain grid is the FULL mirror -e_grid[::-1]
+        # (same length as the loss grid, so the 6-/2-stack returns are rectangular);
+        # the OUTPUT gain grid is the strictly-negative build_gain_output_grid, onto
+        # which the engine slices the one-phonon gain and rebins the multiphonon gain.
+        if emit_gain_side:
+            e_gain_grid_mev = -e_grid_mev[::-1]
+            e_gain_edges_mev = centers_to_edges(e_gain_grid_mev)
+            e_gain_bin_widths_mev = np.diff(e_gain_edges_mev)
+            gain_num_positive = int(np.count_nonzero(e_grid_mev > 0.0))
+            e_gain_out_mev, e_gain_out_edges_mev = build_gain_output_grid(e_grid_mev)
+            incoherent_one_phonon_gain_hist_lookup = precompute_histogram_lookup(
+                -incoherent_one_phonon_mode_energies_mev,
+                e_gain_edges_mev,
+                e_gain_bin_widths_mev,
+            )
+        else:
+            e_gain_grid_mev = None
+            e_gain_edges_mev = None
+            e_gain_bin_widths_mev = None
+            gain_num_positive = 0
+            e_gain_out_mev = None
+            e_gain_out_edges_mev = None
+            incoherent_one_phonon_gain_hist_lookup = None
+        multiphonon_mode_energies_mev = incoherent_one_phonon_mode_energies_mev
+        multiphonon_mode_frequencies_thz = incoherent_one_phonon_mode_frequencies_thz
+        multiphonon_mode_weights = incoherent_one_phonon_mode_weights
+        multiphonon_mode_occupancies = incoherent_one_phonon_mode_occupancies
+        multiphonon_mode_eigvecs_valid = incoherent_one_phonon_mode_eigvecs_valid
+
+        print(
+            f"Bose factors and histogram lookups ready in {time.time() - phase_start:.1f} s",
+            flush=True,
+        )
+
+        # The pool (pool_holder, created lazily by run_blocks) carries no
+        # per-stage state of its own: each stage stages its state in shared
+        # memory and the tasks reference it by generation, so reuse cannot
+        # leak one stage's context into the next.
+        def run_blocks(worker, initial, block_list, label: str):
+            """Map ``worker`` over ``block_list`` and accumulate into ``initial``.
+
+            Serial when num_jobs == 1; otherwise dispatches through the shared
+            spawned pool (created lazily on first use, reused by every phase)
+            with the current WORKER_STATE staged in shared memory. Blocks are
+            accumulated in list order, so the floating-point sum — and any tape
+            derived from it — is identical for every worker count.
+            """
+            result = initial
+            phase_start = time.time()
+            print(
+                f"{label}: starting {len(block_list)} block(s) with {num_jobs} worker(s)...",
+                flush=True,
+            )
+            if num_jobs == 1:
+                for block_index, block in enumerate(block_list, start=1):
+                    try:
+                        result = accumulate_block_result(result, worker(block))
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"{label}: worker failed on block "
+                            f"{block_index}/{len(block_list)}") from exc
+                    print(
+                        f"{label}: block {block_index}/{len(block_list)} done "
+                        f"after {time.time() - phase_start:.1f} s",
+                        flush=True,
+                    )
+            else:
+                # The pool uses the SPAWN start method — the one start method
+                # that exists on every platform (fork does not exist on
+                # Windows, and forking from a threaded process is hazardous on
+                # macOS). The large read-only state (mesh eigenvectors, grids,
+                # lookups) does NOT travel by pickle: share_worker_state stages
+                # every ndarray in multiprocessing.shared_memory once per
+                # phase, plus the pickled remainder (scalars, the phonopy
+                # dynamical matrix) in one more block, and every task carries
+                # only a tiny generation reference — _dispatch_block attaches
+                # zero-copy read-only views on the first task of a new
+                # generation and reuses them for the rest of the phase, so the
+                # state stays one-copy in RAM regardless of ncpu.
+                #
+                # ProcessPoolExecutor rather than multiprocessing.Pool: a worker
+                # killed by the OS (e.g. the out-of-memory killer) raises
+                # BrokenProcessPool here, where Pool.imap would wait on the dead
+                # worker's result forever. Ordered map keeps the accumulation in
+                # fixed block order, so the floating-point sum (and therefore
+                # the tape) stays bitwise-reproducible from run to run.
+                #
+                # Import BrokenProcessPool by name: referencing it through
+                # ``cf.process`` would rely on accessing ``cf.ProcessPoolExecutor``
+                # first to trigger the submodule import as a side effect, which is
+                # fragile if this block is ever reordered.
+                import concurrent.futures as cf
+                from concurrent.futures.process import BrokenProcessPool
+                from functools import partial as _partial
+                from irma.core import noncubic_workers as _ncw
+                pool = pool_holder.get("pool")
+                if pool is None:
+                    ctx = mp.get_context("spawn")
+                    pool = cf.ProcessPoolExecutor(
+                        max_workers=num_jobs,
+                        mp_context=ctx,
+                        initializer=_pool_worker_init,
+                        initargs=(_ncw._KERNEL_AREA_WARNED,))
+                    pool_holder["pool"] = pool
+                state_ref, shm_handles = share_worker_state(_ncw.WORKER_STATE)
+                try:
+                    results_iter = pool.map(
+                        _partial(_dispatch_block, state_ref, worker), block_list)
+                    for block_index in range(1, len(block_list) + 1):
+                        try:
+                            block_partial = next(results_iter)
+                        except BrokenProcessPool as exc:
+                            raise RuntimeError(
+                                f"{label}: a worker process died on block "
+                                f"{block_index}/{len(block_list)}. Two usual "
+                                f"causes: (1) the out-of-memory killer — "
+                                f"reduce Card 6f ncpu or the mesh/direction "
+                                f"counts; (2) a driver script that calls IRMA "
+                                f"at module level — the spawn start method "
+                                f"re-imports the main module in every worker, "
+                                f"so the entry point must be wrapped in "
+                                f"'if __name__ == \"__main__\":'"
+                            ) from exc
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"{label}: worker failed on block "
+                                f"{block_index}/{len(block_list)}") from exc
+                        result = accumulate_block_result(result, block_partial)
+                        print(
+                            f"{label}: block {block_index}/{len(block_list)} done "
+                            f"after {time.time() - phase_start:.1f} s",
+                            flush=True,
+                        )
+                finally:
+                    release_shared_state(shm_handles)
+            print(f"{label}: completed in {time.time() - phase_start:.1f} s", flush=True)
+            return result
+
+        if need_coherent_n1:
+            print("Accumulating coherent one-phonon contribution...", flush=True)
+            # The worker returns a 6-stack (loss total/diag/interf + their gain
+            # siblings) when the gain side is on; the accumulator must match.
+            n_coh_stack = 6 if emit_gain_side else 3
+            coherent_initial = np.zeros(
+                (n_coh_stack, len(q_grid_ang_inv), len(e_grid_mev)), dtype=float)
+            print(
+                "coherent n=1: preparing direction-quadrature worker state "
+                f"for {len(coherent_blocks)} block(s)...",
+                flush=True,
+            )
+            coherent_state = {
+                "num_q": len(q_grid_ang_inv),
+                "num_e": len(e_grid_mev),
+                "rec_lat_no_2pi": rec_lat_no_2pi,
+                "q_red": q_red,
+                "q_cart_physical": q_cart_physical,
+                "unit_directions": unit_directions,
+                "q_mags_physical": q_mags_physical,
+                "dynamical_matrix": mesh.dynamical_matrix,
+                "frequency_factor_to_thz": frequency_factor_to_thz,
+                "min_phonon_energy_mev": float(
+                    getattr(args, "min_phonon_energy_mev", 0.0)),
+                "thermal_mats": thermal_mats,
+                "positions_t": primitive.scaled_positions.T,
+                "coherent_atom_prefactors": coherent_atom_prefactors,
+                "unit_conversion": unit_conversion,
+                "temperature": args.temperature,
+                "q_shell_index": q_shell_index,
+                "e_grid_mev": e_grid_mev,
+                "e_edges_mev": e_edges_mev,
+                "e_bin_widths_mev": e_bin_widths_mev,
+                "sigma_mev": args.sigma_mev,
+                "sample_weights": sample_weights,
+                "mev_to_joule": mev_to_joule,
+                "one_phonon_creation_scale": one_phonon_creation_scale,
+                "coherent_partition_mode": coherent_partition_mode,
+                "coherent_group_site_indices": site_groups,
+                "principal_group_index": principal_group_index,
+                "group_coherent_weights": group_coherent_weights,
+            }
+            if emit_gain_side:
+                coherent_state.update({
+                    "emit_gain_side": True,
+                    "e_gain_grid_mev": e_gain_grid_mev,
+                    "e_gain_edges_mev": e_gain_edges_mev,
+                    "e_gain_bin_widths_mev": e_gain_bin_widths_mev,
+                })
+            set_worker_state(coherent_state)
+            coherent_components = run_blocks(
+                accumulate_coherent_block,
+                coherent_initial,
+                coherent_blocks,
+                "coherent n=1",
+            )
+            sqe_coherent = coherent_components[0]
+            sqe_coherent_diagonal = coherent_components[1]
+            sqe_coherent_interference = coherent_components[2]
+            # Gain siblings (full mirror grid; sliced to the strictly-negative
+            # output grid in the SAB-conversion stage).
+            sqe_coherent_gain = coherent_components[3] if emit_gain_side else None
+        else:
+            print("Skipping coherent one-phonon contribution for inelastic_mode=1.", flush=True)
+            coherent_initial = None      # only the coherent branch allocates one
+            sqe_coherent = np.zeros((len(q_grid_ang_inv), len(e_grid_mev)), dtype=float)
+            sqe_coherent_diagonal = np.zeros_like(sqe_coherent)
+            sqe_coherent_interference = np.zeros_like(sqe_coherent)
+            sqe_coherent_gain = (np.zeros((len(q_grid_ang_inv), len(e_gain_grid_mev)),
+                                          dtype=float) if emit_gain_side else None)
+
+        # --- Incoherent one-phonon and incoherent-approximation multiphonon terms.
+        # When the gain side is on the worker returns a (2, q, e) loss/gain stack,
+        # so the accumulator carries the extra leading slice.
+        if emit_gain_side:
+            incoherent_initial = np.zeros((2, len(q_grid_ang_inv), len(e_grid_mev)),
+                                          dtype=float)
+        else:
+            incoherent_initial = np.zeros((len(q_grid_ang_inv), len(e_grid_mev)),
+                                          dtype=float)
+
+        def _incoherent_worker_state(prefactors):
+            """Worker-state dict for an incoherent one-phonon pass.
+
+            The exact and incoherent-approximation passes use an identical
+            layout; only the prefactor table differs.
+            """
+            st = {
+                "num_q": len(q_grid_ang_inv),
+                "num_e": len(e_grid_mev),
+                "directions": directions,
+                "q_bin_sample_mags": q_bin_sample_mags,
+                "q_bin_sample_weights": q_bin_sample_weights,
+                "thermal_mats": thermal_mats,
+                "e_grid_mev": e_grid_mev,
+                "e_edges_mev": e_edges_mev,
+                "e_bin_widths_mev": e_bin_widths_mev,
+                "sigma_mev": args.sigma_mev,
+                "incoherent_prefactors": prefactors,
+                "mesh_mode_energies_mev": incoherent_one_phonon_mode_energies_mev,
+                "mesh_mode_bose_prefactors": incoherent_one_phonon_mode_creation_prefactors,
+                "mesh_mode_eigvecs": incoherent_one_phonon_mode_eigvecs_valid,
+                "hist_valid_indices": incoherent_one_phonon_hist_lookup[0],
+                "hist_bin_indices": incoherent_one_phonon_hist_lookup[1],
+                "hist_inv_bin_widths": incoherent_one_phonon_hist_lookup[2],
+            }
+            if emit_gain_side:
+                st.update({
+                    "emit_gain_side": True,
+                    "mesh_mode_absorption_prefactors": incoherent_one_phonon_mode_absorption_prefactors,
+                    "e_gain_grid_mev": e_gain_grid_mev,
+                    "e_gain_edges_mev": e_gain_edges_mev,
+                    "e_gain_bin_widths_mev": e_gain_bin_widths_mev,
+                    "hist_gain_valid_indices": incoherent_one_phonon_gain_hist_lookup[0],
+                    "hist_gain_bin_indices": incoherent_one_phonon_gain_hist_lookup[1],
+                    "hist_gain_inv_bin_widths": incoherent_one_phonon_gain_hist_lookup[2],
+                })
+            return st
+
+        if need_exact_incoherent_n1:
+            print("Accumulating incoherent one-phonon contribution...", flush=True)
+            incoherent_n1_worker = accumulate_incoherent_shell_block
+            print(
+                f"incoherent n=1: preparing worker state for {len(shell_blocks)} block(s)...",
+                flush=True,
+            )
+            worker_state = _incoherent_worker_state(export_incoherent_prefactors)
+            set_worker_state(worker_state)
+            _inc_res = run_blocks(
+                incoherent_n1_worker,
+                incoherent_initial,
+                shell_blocks,
+                "incoherent n=1",
+            )
+            if emit_gain_side:
+                sqe_incoherent, sqe_incoherent_gain = _inc_res[0], _inc_res[1]
+            else:
+                sqe_incoherent, sqe_incoherent_gain = _inc_res, None
+        else:
+            print("Skipping exact incoherent one-phonon contribution for inelastic_mode=1.", flush=True)
+            sqe_incoherent = np.zeros((len(q_grid_ang_inv), len(e_grid_mev)), dtype=float)
+            sqe_incoherent_gain = (np.zeros((len(q_grid_ang_inv), len(e_gain_grid_mev)),
+                                            dtype=float) if emit_gain_side else None)
+        if need_incoherent_approx_n1:
+            print("Accumulating incoherent-approximation one-phonon contribution...", flush=True)
+            incoherent_approx_n1_worker = accumulate_incoherent_shell_block
+            print(
+                f"incoherent-approx n=1: preparing worker state for {len(shell_blocks)} block(s)...",
+                flush=True,
+            )
+            worker_state = _incoherent_worker_state(export_incoherent_approx_prefactors)
+            set_worker_state(worker_state)
+            _inc_approx_res = run_blocks(
+                incoherent_approx_n1_worker,
+                incoherent_initial * 0.0,
+                shell_blocks,
+                "incoherent-approx n=1",
+            )
+            if emit_gain_side:
+                sqe_incoherent_approx_n1_term = _inc_approx_res[0]
+                sqe_incoherent_approx_n1_term_gain = _inc_approx_res[1]
+            else:
+                sqe_incoherent_approx_n1_term = _inc_approx_res
+                sqe_incoherent_approx_n1_term_gain = None
+        else:
+            print("Skipping incoherent-approximation one-phonon contribution for inelastic_mode=2.", flush=True)
+            sqe_incoherent_approx_n1_term = None
+            sqe_incoherent_approx_n1_term_gain = None
+        sqe_one_phonon_total = sqe_coherent + sqe_incoherent
+        # Gain one-phonon total (on the full mirror grid; sliced to the strictly-
+        # negative output grid in the SAB-conversion stage).
+        sqe_one_phonon_total_gain = (
+            sqe_coherent_gain + sqe_incoherent_gain if emit_gain_side else None)
+
+        sqe_multiphonon_incoherent_approx = None
+        sqe_one_phonon_total_plus_incoherent_approx_multiphonon = None
+        sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon = None
+        sqe_multiphonon_gain_work = None
+        sqe_multiphonon_gain = None
+
+        if args.multiphonon_max_order >= 2:
+            phase_start = time.time()
+            print(
+                f"Accumulating multiphonon background through order {args.multiphonon_max_order}...",
+                flush=True,
+            )
+            if np.size(multiphonon_mode_energies_mev) == 0:
+                raise ValueError(
+                    "multiphonon: the model has no positive phonon modes to build "
+                    "the seed from, so no work grid can be sized")
+            e_work_grid_mev, de_work_mev = build_uniform_positive_work_grid(
+                e_grid_mev,
+                phonon_max_energy_mev=float(np.max(multiphonon_mode_energies_mev)),
+            )
+            e_work_edges_mev = centers_to_edges(e_work_grid_mev, lower_bound=0.0)
+            e_signed_grid_mev, positive_slice = build_signed_energy_grid(e_work_grid_mev)
+            e_signed_edges_mev = centers_to_edges(e_signed_grid_mev)
+            e_signed_bin_widths_mev = np.diff(e_signed_edges_mev)
+            multiphonon_directions = fibonacci_sphere(max(1, multiphonon_num_directions))
+            signed_emission_lookup = precompute_histogram_lookup(
+                multiphonon_mode_energies_mev,
+                e_signed_edges_mev,
+                e_signed_bin_widths_mev,
+            )
+            signed_absorption_lookup = precompute_histogram_lookup(
+                -multiphonon_mode_energies_mev,
+                e_signed_edges_mev,
+                e_signed_bin_widths_mev,
+            )
+
+            # Build the signed unit-Q^2 self kernel from the displacement sum rule.
+            # The later sigma_total scaling is normalized per equivalent scatterer
+            # in the primitive cell, so this kernel remains a pure per-atom self
+            # object before cross-section factors are applied.
+            multiphonon_unit_conversion = (
+                Hbar * EV / Angstrom**2 / (2.0 * 1.0e12 * 2.0 * np.pi * AMU)
+            )
+            multiphonon_base_prefactors = np.array([1.0 / mass for mass in primitive.masses], dtype=float)
+            multiphonon_creation_prefactors = (
+                (multiphonon_mode_occupancies + 1.0)
+                * multiphonon_unit_conversion
+                * multiphonon_mode_weights
+                / multiphonon_q_weight_norm
+                / multiphonon_mode_frequencies_thz
+            )
+            multiphonon_absorption_prefactors = (
+                multiphonon_mode_occupancies
+                * multiphonon_unit_conversion
+                * multiphonon_mode_weights
+                / multiphonon_q_weight_norm
+                / multiphonon_mode_frequencies_thz
+            )
+
+            if emit_gain_side:
+                multiphonon_initial = np.zeros(
+                    (2, len(q_grid_ang_inv), len(e_work_grid_mev)), dtype=float
+                )
+            else:
+                multiphonon_initial = np.zeros(
+                    (len(q_grid_ang_inv), len(e_work_grid_mev)), dtype=float
+                )
+            print(
+                "Streaming per-direction multiphonon kernels for "
+                f"{len(multiphonon_directions)} directions "
+                f"(one-phonon directions: {args.num_directions})...",
+                flush=True,
+            )
+            # A worker's order_tables hold
+            # (block_dirs x n_atoms x (max_order+1) x n_signed_bins) doubles,
+            # so the context's directions/num_jobs block size can request
+            # tens of GB when num_jobs is small and the direction count or
+            # order is large. Cap the block by a fixed memory budget;
+            # smaller blocks only add streaming iterations. NOTE: when the
+            # cap binds, the partial-sum grouping (and therefore the output
+            # bit pattern) changes relative to an uncapped run — acceptable
+            # because an uncapped run of that size would reach the OOM killer
+            # anyway; the budget is sized so every validated configuration
+            # stays unbinding and bit-stable.
+            _n_atoms_mp = int(multiphonon_mode_eigvecs_valid.shape[1])
+            _per_dir_bytes = (_n_atoms_mp
+                              * (int(args.multiphonon_max_order) + 1)
+                              * len(e_signed_grid_mev) * 8)
+            _budget_bytes = 2 * 1024**3
+            _cap = max(1, _budget_bytes // max(1, _per_dir_bytes))
+            if _cap < multiphonon_dir_chunk_size:
+                print(
+                    f"multiphonon: capping direction block size "
+                    f"{multiphonon_dir_chunk_size} -> {_cap} to keep "
+                    f"per-block kernel tables under "
+                    f"{_budget_bytes / 1024**3:.0f} GiB "
+                    f"({_per_dir_bytes / 1024**2:.1f} MiB per direction)",
+                    flush=True,
+                )
+                multiphonon_dir_chunk_size = _cap
+            multiphonon_direction_blocks = [
+                np.arange(
+                    start_index,
+                    min(len(multiphonon_directions), start_index + multiphonon_dir_chunk_size),
+                    dtype=int,
+                )
+                for start_index in range(0, len(multiphonon_directions), multiphonon_dir_chunk_size)
+            ]
+            print(
+                f"multiphonon: preparing worker state for {len(multiphonon_direction_blocks)} block(s)...",
+                flush=True,
+            )
+            set_worker_state(
+                {
+                    "num_q": len(q_grid_ang_inv),
+                    "num_e": len(e_work_grid_mev),
+                    "directions": multiphonon_directions,
+                    "base_prefactors": multiphonon_base_prefactors,
+                    "mesh_mode_energies_mev": multiphonon_mode_energies_mev,
+                    "mesh_mode_emission_prefactors": multiphonon_creation_prefactors,
+                    "mesh_mode_absorption_prefactors": multiphonon_absorption_prefactors,
+                    "mesh_mode_eigvecs": multiphonon_mode_eigvecs_valid,
+                    "mesh_mode_projection_components": multiphonon_mode_projection_components,
+                    "e_signed_grid_mev": e_signed_grid_mev,
+                    "e_signed_edges_mev": e_signed_edges_mev,
+                    "e_signed_bin_widths_mev": e_signed_bin_widths_mev,
+                    "de_mev": de_work_mev,
+                    "sigma_mev": args.sigma_mev,
+                    "max_order": args.multiphonon_max_order,
+                    "positive_slice": positive_slice,
+                    "thermal_mats": thermal_mats,
+                    "q_bin_sample_mags": q_bin_sample_mags,
+                    "q_bin_sample_weights": q_bin_sample_weights,
+                    "multiphonon_sigma_total_scale": export_multiphonon_sigma_total_scale,
+                    "num_total_dirs": len(multiphonon_directions),
+                    "sigma0_emission_lookup": signed_emission_lookup,
+                    "sigma0_absorption_lookup": signed_absorption_lookup,
+                    "collect_last_order": False,
+                    "emit_gain_side": emit_gain_side,
+                }
+            )
+            multiphonon_results = run_blocks(
+                accumulate_incoherent_multiphonon_direction_block,
+                multiphonon_initial,
+                multiphonon_direction_blocks,
+                "multiphonon",
+            )
+            print(
+                f"multiphonon: post-processing and rebinning after {time.time() - phase_start:.1f} s",
+                flush=True,
+            )
+            if emit_gain_side:
+                sqe_multiphonon_work = multiphonon_results[0]
+                sqe_multiphonon_gain_work = multiphonon_results[1]
+            else:
+                sqe_multiphonon_work = multiphonon_results
+            sqe_multiphonon_incoherent_approx = rebin_energy_axis(
+                sqe_multiphonon_work,
+                e_work_edges_mev,
+                e_edges_mev,
+            )
+            sqe_one_phonon_total_plus_incoherent_approx_multiphonon = (
+                sqe_one_phonon_total + sqe_multiphonon_incoherent_approx
+            )
+            if sqe_incoherent_approx_n1_term is not None:
+                sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon = (
+                    sqe_incoherent_approx_n1_term + sqe_multiphonon_incoherent_approx
+                )
+            # Energy-gain multiphonon: rebin the negative-slice convolution (on the
+            # mirror work grid -e_work[::-1]) to the strictly-negative OUTPUT grid.
+            if emit_gain_side and sqe_multiphonon_gain_work is not None:
+                gm_work_edges_mev = centers_to_edges(-e_work_grid_mev[::-1])
+                sqe_multiphonon_gain = rebin_energy_axis(
+                    sqe_multiphonon_gain_work, gm_work_edges_mev, e_gain_out_edges_mev
+                )
+
+        # Energy-gain OUTPUT arrays: slice the one-phonon gain (built on the full
+        # mirror grid, num_e) to the strictly-negative output grid (gain_num_positive
+        # columns), and combine with the rebinned multiphonon gain. All land on
+        # e_gain_out_mev, mirroring the loss output keys.
+        sqe_coherent_gain_out = None
+        sqe_incoherent_gain_out = None
+        sqe_one_phonon_total_gain_out = None
+        sqe_incoherent_approx_n1_term_gain_out = None
+        sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain = None
+        sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain = None
+        if emit_gain_side:
+            npos = gain_num_positive
+            sqe_coherent_gain_out = sqe_coherent_gain[:, :npos]
+            sqe_incoherent_gain_out = sqe_incoherent_gain[:, :npos]
+            sqe_one_phonon_total_gain_out = sqe_one_phonon_total_gain[:, :npos]
+            if sqe_incoherent_approx_n1_term_gain is not None:
+                sqe_incoherent_approx_n1_term_gain_out = (
+                    sqe_incoherent_approx_n1_term_gain[:, :npos])
+            if sqe_multiphonon_gain is not None:
+                sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain = (
+                    sqe_one_phonon_total_gain_out + sqe_multiphonon_gain)
+                if sqe_incoherent_approx_n1_term_gain_out is not None:
+                    sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain = (
+                        sqe_incoherent_approx_n1_term_gain_out + sqe_multiphonon_gain)
+
+        # --- Conversion of the S(Q,E) maps to asymmetric downscatter S(alpha,beta).
+        for _name, _arr in (
+            ("sqe_coherent", sqe_coherent),
+            ("sqe_coherent_diagonal", sqe_coherent_diagonal),
+            ("sqe_coherent_interference", sqe_coherent_interference),
+            ("sqe_incoherent", sqe_incoherent),
+            ("sqe_incoherent_approx_n1_term", sqe_incoherent_approx_n1_term),
+            ("sqe_multiphonon_incoherent_approx", sqe_multiphonon_incoherent_approx),
+            ("sqe_one_phonon_total", sqe_one_phonon_total),
+        ):
+            if _arr is None:
+                continue
+            _bad = np.size(_arr) - int(np.count_nonzero(np.isfinite(_arr)))
+            if _bad:
+                raise RuntimeError(
+                    f"{_name} contains {_bad} non-finite value(s) after the "
+                    f"accumulation phase; refusing to convert to S(alpha,beta). "
+                    f"This usually indicates numerical overflow inside a worker "
+                    f"block (check the mode floor, the phonon model, and the "
+                    f"temperature).")
+
+        sab_sigma_barn_override = getattr(args, "sab_sigma_barn", None)
+        if sab_sigma_barn_override is None:
+            if scattering_lengths is None or sigma_inc is None:
+                raise ValueError(
+                    "sab_sigma_barn must be provided when site-specific scattering data "
+                    "are used for SAB export."
+                )
+            sigma_coh_barn, sigma_inc_barn, sigma_total_barn = infer_sigma_barn(
+                list(primitive.symbols),
+                scattering_lengths,
+                sigma_inc,
+            )
+        else:
+            # PER-ATOM convention: the override is the per-atom principal-type
+            # sigma (engine.py passes sigma_coh + sigma_inc of the principal
+            # atom TYPE) and the sqe arrays already carry the
+            # 1/represented_principal_site_count normalization. The diagnostic
+            # coherent/incoherent channel sigmas must use the same per-atom
+            # convention — a raw site sum left the channel SAB arrays a factor
+            # N_sites below the per-atom production arrays and recorded
+            # coherent sigma > total sigma in the sab_output metadata.
+            sigma_coh_barn = float(
+                np.sum(sigma_coh_by_atom[principal_site_indices])
+            ) / float(represented_principal_site_count)
+            sigma_inc_barn = float(
+                np.sum(sigma_inc_by_atom[principal_site_indices])
+            ) / float(represented_principal_site_count)
+            sigma_total_barn = float(sab_sigma_barn_override)
+        mass_ratio = infer_mass_ratio(primitive.masses, args.sab_mass_ratio)
+        alpha, beta_downscatter_abs, sab_asym_downscatter_coherent = convert_sqe_to_asym_downscatter_sab(
+            sqe_coherent,
+            q_grid_ang_inv,
+            e_grid_mev,
+            args.temperature,
+            sigma_coh_barn,
+            mass_ratio,
+        )
+        _, _, sab_asym_downscatter_coherent_diagonal = convert_sqe_to_asym_downscatter_sab(
+            sqe_coherent_diagonal,
+            q_grid_ang_inv,
+            e_grid_mev,
+            args.temperature,
+            sigma_coh_barn,
+            mass_ratio,
+        )
+        _, _, sab_asym_downscatter_coherent_interference = convert_sqe_to_asym_downscatter_sab(
+            sqe_coherent_interference,
+            q_grid_ang_inv,
+            e_grid_mev,
+            args.temperature,
+            sigma_coh_barn,
+            mass_ratio,
+        )
+        _, _, sab_asym_downscatter_incoherent = convert_sqe_to_asym_downscatter_sab(
+            sqe_incoherent,
+            q_grid_ang_inv,
+            e_grid_mev,
+            args.temperature,
+            sigma_inc_barn,
+            mass_ratio,
+        )
+        if sqe_incoherent_approx_n1_term is not None:
+            _, _, sab_asym_downscatter_incoherent_approx_n1_term = convert_sqe_to_asym_downscatter_sab(
+                sqe_incoherent_approx_n1_term,
+                q_grid_ang_inv,
+                e_grid_mev,
+                args.temperature,
+                sigma_total_barn,
+                mass_ratio,
+            )
+        else:
+            sab_asym_downscatter_incoherent_approx_n1_term = None
+        _, _, sab_asym_downscatter_one_phonon_total = convert_sqe_to_asym_downscatter_sab(
+            sqe_one_phonon_total,
+            q_grid_ang_inv,
+            e_grid_mev,
+            args.temperature,
+            sigma_total_barn,
+            mass_ratio,
+        )
+
+        output_arrays: dict[str, object] = {
+            "q_ang_inv": q_grid_ang_inv,
+            "q_bin_edges_ang_inv": q_edges_ang_inv,
+            "e_mev": e_grid_mev,
+            "e_bin_edges_mev": e_edges_mev,
+            "alpha": alpha,
+            "beta_downscatter_abs": beta_downscatter_abs,
+            "sampled_directions": directions,
+            "coherent_compute_q_ang_inv": q_grid_ang_inv,
+            "coherent_compute_q_bin_edges_ang_inv": q_edges_ang_inv,
+            "coherent_q_bin_sample_mags_ang_inv": q_center_mags,
+            "coherent_q_bin_sample_weights": q_center_weights,
+            "incoherent_q_bin_sample_mags_ang_inv": q_bin_sample_mags,
+            "incoherent_q_bin_sample_weights": q_bin_sample_weights,
+            "sqe_coherent_barn_per_meV": sqe_coherent,
+            "sqe_coherent_diagonal_barn_per_meV": sqe_coherent_diagonal,
+            "sqe_coherent_interference_barn_per_meV": sqe_coherent_interference,
+            "sqe_incoherent_barn_per_meV": sqe_incoherent,
+            "sqe_one_phonon_total_barn_per_meV": sqe_one_phonon_total,
+            "sab_asym_downscatter_coherent": sab_asym_downscatter_coherent,
+            "sab_asym_downscatter_coherent_diagonal": sab_asym_downscatter_coherent_diagonal,
+            "sab_asym_downscatter_coherent_interference": sab_asym_downscatter_coherent_interference,
+            "sab_asym_downscatter_incoherent": sab_asym_downscatter_incoherent,
+            "sab_asym_downscatter_one_phonon_total": sab_asym_downscatter_one_phonon_total,
+        }
+        if sqe_incoherent_approx_n1_term is not None:
+            output_arrays["sqe_incoherent_approx_n1_term_barn_per_meV"] = sqe_incoherent_approx_n1_term
+            output_arrays["sab_asym_downscatter_incoherent_approx_n1_term"] = sab_asym_downscatter_incoherent_approx_n1_term
+
+        if sqe_multiphonon_incoherent_approx is not None:
+            _, _, sab_asym_downscatter_multiphonon_incoherent_approx = convert_sqe_to_asym_downscatter_sab(
+                sqe_multiphonon_incoherent_approx,
+                q_grid_ang_inv,
+                e_grid_mev,
+                args.temperature,
+                sigma_total_barn,
+                mass_ratio,
+            )
+            output_arrays["sqe_multiphonon_incoherent_approx_barn_per_meV"] = sqe_multiphonon_incoherent_approx
+            output_arrays["sab_asym_downscatter_multiphonon_incoherent_approx"] = sab_asym_downscatter_multiphonon_incoherent_approx
+        if sqe_one_phonon_total_plus_incoherent_approx_multiphonon is not None:
+            _, _, sab_asym_downscatter_total_plus_approx = convert_sqe_to_asym_downscatter_sab(
+                sqe_one_phonon_total_plus_incoherent_approx_multiphonon,
+                q_grid_ang_inv,
+                e_grid_mev,
+                args.temperature,
+                sigma_total_barn,
+                mass_ratio,
+            )
+            output_arrays["sqe_one_phonon_total_plus_incoherent_approx_multiphonon_barn_per_meV"] = sqe_one_phonon_total_plus_incoherent_approx_multiphonon
+            output_arrays["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"] = sab_asym_downscatter_total_plus_approx
+        if sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon is not None:
+            _, _, sab_asym_downscatter_approx_n1_plus_approx_multi = convert_sqe_to_asym_downscatter_sab(
+                sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon,
+                q_grid_ang_inv,
+                e_grid_mev,
+                args.temperature,
+                sigma_total_barn,
+                mass_ratio,
+            )
+            output_arrays["sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_barn_per_meV"] = sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon
+            output_arrays["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"] = sab_asym_downscatter_approx_n1_plus_approx_multi
+
+        # Energy-gain (E<0) outputs: the directly-computed annihilation side, on the
+        # strictly-negative e_gain_mev grid. NS-bridge-only -- no SAB / tape
+        # conversion, so the loss-side ENDF outputs are byte-identical. Each key
+        # mirrors a loss `sqe_*_barn_per_meV` with `_gain` inserted; the spectra
+        # bridge derives the gain key from the loss key it selected.
+        if emit_gain_side:
+            for _gname, _garr in (
+                ("sqe_coherent_gain_barn_per_meV", sqe_coherent_gain_out),
+                ("sqe_incoherent_gain_barn_per_meV", sqe_incoherent_gain_out),
+                ("sqe_one_phonon_total_gain_barn_per_meV", sqe_one_phonon_total_gain_out),
+                ("sqe_incoherent_approx_n1_term_gain_barn_per_meV",
+                 sqe_incoherent_approx_n1_term_gain_out),
+                ("sqe_multiphonon_incoherent_approx_gain_barn_per_meV", sqe_multiphonon_gain),
+                ("sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain_barn_per_meV",
+                 sqe_one_phonon_total_plus_incoherent_approx_multiphonon_gain),
+                ("sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain_barn_per_meV",
+                 sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon_gain),
+            ):
+                if _garr is None:
+                    continue
+                _bad = np.size(_garr) - int(np.count_nonzero(np.isfinite(_garr)))
+                if _bad:
+                    raise RuntimeError(
+                        f"{_gname} contains {_bad} non-finite value(s) after the "
+                        "energy-gain accumulation phase.")
+                output_arrays[_gname] = _garr
+            if e_gain_out_mev is not None:
+                output_arrays["e_gain_mev"] = e_gain_out_mev
+
+        # --- Run metadata and the elastic state.
+        actual_beta_support = {
+            "sab_asym_downscatter_one_phonon_total": compute_last_nonzero_beta(
+                sab_asym_downscatter_one_phonon_total,
+                beta_downscatter_abs,
+            ),
+        }
+        if sab_asym_downscatter_incoherent_approx_n1_term is not None:
+            actual_beta_support["sab_asym_downscatter_incoherent_approx_n1_term"] = compute_last_nonzero_beta(
+                sab_asym_downscatter_incoherent_approx_n1_term,
+                beta_downscatter_abs,
+            )
+        if "sab_asym_downscatter_multiphonon_incoherent_approx" in output_arrays:
+            actual_beta_support["sab_asym_downscatter_multiphonon_incoherent_approx"] = compute_last_nonzero_beta(
+                output_arrays["sab_asym_downscatter_multiphonon_incoherent_approx"],
+                beta_downscatter_abs,
+            )
+        if "sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon" in output_arrays:
+            actual_beta_support["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"] = compute_last_nonzero_beta(
+                output_arrays["sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"],
+                beta_downscatter_abs,
+            )
+        if "sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon" in output_arrays:
+            actual_beta_support["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"] = compute_last_nonzero_beta(
+                output_arrays["sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"],
+                beta_downscatter_abs,
+            )
+
+        metadata = {
+            "material_name": args.material_name,
+            "phonopy_yaml": str(Path(args.phonopy_yaml).resolve()),
+            "force_constants": (
+                None if getattr(args, "force_constants", None) is None
+                else str(Path(args.force_constants).resolve())
+            ),
+            "force_sets": (
+                None if getattr(args, "force_sets", None) is None
+                else str(Path(args.force_sets).resolve())
+            ),
+            "temperature_K": args.temperature,
+            "mesh": list(args.mesh),
+            "incoherent_one_phonon_weighted_mesh_qpoints": int(len(incoherent_one_phonon_mesh_qpoints)),
+            "incoherent_one_phonon_weighted_mesh_weight_sum": int(np.sum(incoherent_one_phonon_mesh_weights)),
+            # Deliberate duplicates of the two keys above: the multiphonon stage
+            # reuses the incoherent one-phonon mesh by construction; both names
+            # are kept so a consumer reading either stage's bookkeeping finds it.
+            "multiphonon_weighted_mesh_qpoints": int(len(incoherent_one_phonon_mesh_qpoints)),
+            "multiphonon_weighted_mesh_weight_sum": int(np.sum(incoherent_one_phonon_mesh_weights)),
+            "multiphonon_star_averaged_projection_components": bool(
+                multiphonon_mode_projection_components is not None
+            ),
+            "q_min_A^-1": q_min_used,
+            "q_max_A^-1": q_max_used,
+            "dq_A^-1": dq_used,
+            "e_min_meV": e_min_used,
+            "e_max_meV": e_max_used,
+            "de_meV": de_used,
+            "grid_from_oclimax_csv": str(Path(args.grid_from_oclimax_csv).resolve()) if args.grid_from_oclimax_csv else None,
+            "q_grid_file": str(Path(args.q_grid_file).resolve()) if args.q_grid_file else None,
+            "e_grid_file": str(Path(args.e_grid_file).resolve()) if args.e_grid_file else None,
+            "sigma_meV": args.sigma_mev,
+            "jobs": num_jobs,
+            "q_chunk_size": chunk_size,
+            "num_directions": args.num_directions,
+            "coherent_powder_average": "directions",
+            "multiphonon_num_directions": multiphonon_num_directions,
+            "multiphonon_max_order": args.multiphonon_max_order,
+            # The user phonon-energy cutoff (0 = the automatic floors only) and,
+            # when active, what it removed: a truncated vibrational model must
+            # say so in its own metadata.
+            "min_phonon_energy_meV": float(getattr(args, "min_phonon_energy_mev", 0.0)),
+            "phonon_cutoff": phonon_cutoff_summary,
+            # The multiphonon tail (orders n>=2) is the incoherent-APPROXIMATION model
+            # (sigma_total-scaled per-atom self kernel), NOT exact coherent multiphonon
+            # scattering: even in inelastic_mode=2 only the ONE-phonon term carries
+            # coherent interference. Surfaced so downstream labels don't read the
+            # mode-2 product as fully coherent.
+            "multiphonon_model": "incoherent_approximation",
+            "max_mode_energy_meV": max_mode_energy_mev,
+            "estimated_one_phonon_beta_support": estimated_one_phonon_beta_support,
+            "estimated_multiphonon_beta_support": estimated_multiphonon_beta_support,
+            "needed_multiphonon_beta_support": needed_multiphonon_beta_support,
+            "requested_beta_max": requested_beta_max,
+            "actual_beta_support": actual_beta_support,
+            "coverage_warning": coverage_warning,
+            "one_phonon_energy_jacobian_meV_per_THz": one_phonon_energy_jacobian_mev_per_thz,
+            "represented_principal_site_count": represented_principal_site_count,
+            "one_phonon_principal_site_normalization": one_phonon_principal_site_normalization,
+            "one_phonon_creation_scale": one_phonon_creation_scale,
+            "coherent_partition_mode": coherent_partition_mode,
+            "principal_group_index": principal_group_index,
+            "principal_group_site_count": int(len(principal_site_indices)),
+            "site_group_sizes": [int(len(group)) for group in site_groups],
+            "principal_cross_weight": principal_cross_weight,
+            "group_coherent_weights": [float(w) for w in group_coherent_weights],
+            "coherent_interference_pair_weighting": "w_p/(w_p+w_o) per pair",
+            "output_units": "barn / sr / meV",
+            "sab_output": {
+                "kind": "asymmetric downscatter side on |beta| grid",
+                "formula": "sab_asym_downscatter(alpha,beta_downscatter_abs) = (4*pi*kT/sigma_b) * sqe_barn_per_meV(Q,E_tr)",
+                "sqe_input_interpretation": "d^2 sigma / (dOmega dE') in barn / sr / meV",
+                "coherent_sigma_b_barn": sigma_coh_barn,
+                "incoherent_sigma_b_barn": sigma_inc_barn,
+                "total_sigma_b_barn": sigma_total_barn,
+            },
+            "output_units_note": (
+                "The sqe_* arrays are powder-averaged differential intensities with "
+                "the physical interpretation d^2 sigma / (dOmega dE'); the "
+                "_barn_per_meV suffix names this per-energy normalization."
+            ),
+            "notes": (
+                "IRMA noncubic inelastic engine: exact coherent and incoherent n=1 terms, "
+                "the sigma_total-scaled Squires/OCLIMAX-style multiphonon approximation, and downscatter-side "
+                "asymmetric S(alpha,|beta|). The coherent diagonal/interference decomposition is preserved "
+                "in both S(Q,E) and SAB space using a common coherent sigma_b normalization. "
+                "For multi-group exports, coherent_partition_mode='principal-xs-weighted' stores the exact "
+                "principal-group self term plus a coherent-strength-weighted share of cross-group interference "
+                "instead of the full mixed-material coherent total. "
+                "The coherent n=1 powder average uses a single-radius golden-spiral "
+                "directional quadrature (equivalent to Euphonic's 'golden' method). "
+                "The S(Q,E) arrays are differential in solid angle; OCLIMAX INSTR=3 powder maps may use an "
+                "angle-integrated convention and should be compared with care. "
+                "If the requested output energy grid is non-uniform, the multiphonon recursion is evaluated "
+                "on an internal uniform work grid and conservatively rebinned to the requested output bins."
+            ),
+            "elapsed_seconds": time.time() - start,
+        }
+        if multiphonon_star_counts is not None:
+            metadata["multiphonon_star_count_min"] = int(np.min(multiphonon_star_counts))
+            metadata["multiphonon_star_count_max"] = int(np.max(multiphonon_star_counts))
+
+        print(f"Coherent S(Q,E) shape: {sqe_coherent.shape}")
+        print(f"Max coherent total intensity: {sqe_coherent.max():.6e} barn/meV")
+        print(f"Max coherent diagonal intensity: {sqe_coherent_diagonal.max():.6e} barn/meV")
+        print(f"Max coherent interference intensity: {sqe_coherent_interference.max():.6e} barn/meV")
+        print(f"Max incoherent intensity: {sqe_incoherent.max():.6e} barn/meV")
+        if sqe_incoherent_approx_n1_term is not None:
+            print(
+                "Max incoherent-approximation n=1 intensity: "
+                f"{sqe_incoherent_approx_n1_term.max():.6e} barn/meV"
+            )
+        if sqe_multiphonon_incoherent_approx is not None:
+            print(f"Max incoherent-approx multiphonon intensity: {sqe_multiphonon_incoherent_approx.max():.6e} barn/meV")
+        if sqe_one_phonon_total_plus_incoherent_approx_multiphonon is not None:
+            print(
+                "Max one-phonon total plus incoherent-approx multiphonon intensity: "
+                f"{sqe_one_phonon_total_plus_incoherent_approx_multiphonon.max():.6e} barn/meV"
+            )
+        if sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon is not None:
+            print(
+                "Max incoherent-approx n=1 plus incoherent-approx multiphonon intensity: "
+                f"{sqe_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon.max():.6e} barn/meV"
+            )
+        print(f"Elapsed time: {time.time() - start:.2f} s")
+
+        # The elastic state (anisotropic Debye-Waller tensors and primitive
+        # geometry) lets the spectra and NCrystal paths build the elastic line
+        # from the same phonon calculation.
+        elastic_state = {
+            "thermal_displacement_matrices_ang2": np.asarray(thermal_mats, dtype=float),
+            "primitive_lattice_ang": np.asarray(primitive.cell, dtype=float),
+            "primitive_scaled_positions": np.asarray(
+                primitive.scaled_positions, dtype=float),
+            "primitive_symbols": [str(s) for s in primitive.symbols],
+            "primitive_masses_amu": np.asarray(primitive.masses, dtype=float),
+            "temperature_k": float(args.temperature),
+        }
+        return output_arrays, metadata, elastic_state
     finally:
-        # The compute phases share one spawned worker pool (created lazily
-        # by run_blocks, carried on S); retire it with the run.
-        _pool = getattr(S, "pool_holder", {}).get("pool")
-        if _pool is not None:
-            _pool.shutdown()
+        if pool_holder.get("pool") is not None:
+            pool_holder["pool"].shutdown()
 
 
 def write_results(

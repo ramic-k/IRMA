@@ -18,7 +18,7 @@ module owns, and MUST keep co-located:
   * the sparse-block result compression / accumulation IPC, and
   * the three accumulate_*_block kernels the engine maps over the pool.
 
-noncubic_engine re-imports these names, so its _cfa_* phases and existing
+noncubic_engine re-imports these names, so compute_from_args and existing
 ``from irma.core.noncubic_engine import ...`` callers are unaffected. Dependency
 direction is one-way (workers -> constants / numerics leaf modules); there is no
 import cycle with the engine.
