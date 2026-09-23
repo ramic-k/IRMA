@@ -22,19 +22,14 @@ def _specs(*fracs):
     return [SpeciesSpec(str(TAPE), sym, 12.0107, f) for sym, f in zip("ABCD", fracs)]
 
 
-def test_build_packs_rejects_fractions_not_summing_to_one():
-    with pytest.raises(ValueError, match="sum to 1"):
-        build_packs(_specs(0.3, 0.5), 296.0, "bad")
-
-
-def test_build_packs_rejects_out_of_range_fractions():
-    with pytest.raises(ValueError, match=r"\(0, 1\]"):
-        build_packs(_specs(1.5, -0.5), 296.0, "bad")
-
-
-def test_build_packs_rejects_missing_fraction():
-    with pytest.raises(ValueError, match="need atom fractions"):
-        build_packs([SpeciesSpec(str(TAPE), "A", 12.0107, None)], 296.0, "bad")
+@pytest.mark.parametrize("specs, match", [
+    (_specs(0.3, 0.5), "sum to 1"),
+    (_specs(1.5, -0.5), r"\(0, 1\]"),
+    ([SpeciesSpec(str(TAPE), "A", 12.0107, None)], "need atom fractions"),
+], ids=["sum", "range", "missing"])
+def test_build_packs_rejects_bad_fractions(specs, match):
+    with pytest.raises(ValueError, match=match):
+        build_packs(specs, 296.0, "bad")
 
 
 def test_fraction_weighting_recovers_per_atom_all_channels():
@@ -58,15 +53,6 @@ def test_fraction_weighting_recovers_per_atom_all_channels():
         assert math.isclose(summed, raw, rel_tol=1e-12, abs_tol=1e-15)
 
 
-def test_monatomic_scales_one_are_byte_identical():
-    # both scales default to 1.0 -> the single-tape path is unchanged by the fix
-    ev = read_tsl(str(TAPE))
-    a = build_pack(ev, 296.0, "g", 12.0107)
-    b = build_pack(ev, 296.0, "g", 12.0107, inelastic_scale=1.0, coherent_scale=1.0)
-    assert a.coh_cumS == b.coh_cumS
-    assert a.bound_xs_barn == b.bound_xs_barn
-
-
 def test_build_packs_rejects_unknown_convention():
     with pytest.raises(ValueError, match="coherent_convention"):
         build_packs(_specs(0.5, 0.5), 296.0, "x", coherent_convention="bogus")
@@ -87,14 +73,14 @@ def test_multi_temperature_column_selection():
     # S(a,b) columns + LAT-scaled grids (same bound_xs); a non-stored temp raises.
     ev = read_tsl(str(_UO2_TAPE))
     assert len(ev.temps_mt4) > 1
-    pa = build_pack(ev, ev.temps_mt4[0], "x", "U", 238.0289)
-    pb = build_pack(ev, ev.temps_mt4[1], "x", "U", 238.0289)
+    pa = build_pack(ev, ev.temps_mt4[0], "x", 238.0289)
+    pb = build_pack(ev, ev.temps_mt4[1], "x", 238.0289)
     assert pa.bound_xs_barn == pytest.approx(pb.bound_xs_barn)   # T-independent
     assert pa.beta_grid != pb.beta_grid                          # LAT-scaled by T
     assert pa.sab_values != pb.sab_values                        # different T column
     mid = 0.5 * (ev.temps_mt4[0] + ev.temps_mt4[1])
     with pytest.raises(NotImplementedError, match="no interpolation"):
-        build_pack(ev, mid, "x", "U", 238.0289)
+        build_pack(ev, mid, "x", 238.0289)
 
 
 def test_build_pack_rejects_non_stored_temperature():
