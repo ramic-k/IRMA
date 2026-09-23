@@ -38,6 +38,7 @@ class TSLEvaluation:
     alpha: list
     sab: list
     b_array: list
+    beta_int: list          # ENDF interpolation code of each beta interval
     coh_temps: list | None
     coh_edges_ev: list | None
     coh_cumS: list | None
@@ -79,6 +80,12 @@ def read_tsl(path) -> TSLEvaluation:
     lasym = int(mt4["LASYM"])
     lln = int(mt4["LLN"])
     beta = _as_list(mt4["beta"])
+    # MF7/MT4 TAB2 regions: interval (j, j+1) uses the first region whose last
+    # point NBT (1-based) is >= j + 2
+    nbt = [int(n) for n in _as_list(mt4["beta_interp"]["NBT"])]
+    codes = [int(c) for c in _as_list(mt4["beta_interp"]["INT"])]
+    beta_int = [next(c for n, c in zip(nbt, codes) if j + 2 <= n)
+                for j in range(len(beta) - 1)]
     # T0 is the PRINCIPAL temperature (the column parsed into `sab` below);
     # mt4["T"] holds only the LT EXTRA temperatures. Prepend T0 so
     # temps_mt4[0] is the actual temperature of the parsed S(alpha,beta)
@@ -112,6 +119,6 @@ def read_tsl(path) -> TSLEvaluation:
         za=float(mt4["ZA"]), awr=float(mt4["AWR"]),
         lthr=lthr, lat=lat, lasym=lasym, lln=lln,
         temps_mt4=temps_mt4, beta=[float(b) for b in beta], alpha=alpha, sab=sab,
-        b_array=[float(b) for b in b_array],
+        b_array=[float(b) for b in b_array], beta_int=beta_int,
         coh_temps=coh_temps, coh_edges_ev=coh_edges, coh_cumS=coh_cumS,
         incoh_sb_barn=incoh_sb, incoh_temps=incoh_temps, incoh_Wp=incoh_Wp)

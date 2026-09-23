@@ -2,9 +2,12 @@
 
 A standalone NCrystal plugin that reads a complete **ENDF/TSL** thermal-scattering
 evaluation — MF7/MT2 coherent **and** incoherent elastic **and** MF7/MT4 inelastic
-S(α,β) — and reproduces that evaluation inside NCrystal, **verbatim**. It goes
-beyond NCrystal's built-in `ncrystal_endf2ncmat`, which imports only the inelastic
-S(α,β) and drops the ENDF elastic.
+S(α,β) — and reproduces that evaluation inside NCrystal. The elastic channels are
+used verbatim; the inelastic table goes through NCrystal's `SABScatter` (see
+Physics below: the tape's effective temperature is not used, and NCrystal falls
+back to a free gas beyond the table). It goes beyond NCrystal's built-in
+`ncrystal_endf2ncmat`, which imports only the inelastic S(α,β) and drops the
+ENDF elastic.
 
 Self-contained: nothing here imports `irma`. (It lives in the IRMA repo for now;
 IRMA is used only as a dev tool to generate the test tapes.)
@@ -68,8 +71,14 @@ for a compiled-C host such as a McStas instrument).
   This reproduces what NJOY→ACE→MCNP/SCALE sample — the point of the plugin.
 - **Incoherent elastic (MF7/MT2 LTHR=2/3):** `MSD = W'·ħ²/2mₙ`, `xs = σ_b` → NCrystal
   `ElIncScatter` reproduces the ENDF `(σ_b/2)(1−e⁻⁴ᴱᵂ')/(2EW')` exactly.
-- **Inelastic (MF7/MT4):** physical S(α,β) (un-`LAT`'d, de-scaled) → scaled-symmetric
-  half-table → NCrystal `SABScatter`.
+- **Inelastic (MF7/MT4):** the tape's stored symmetric S(α,β) on physical
+  (un-`LAT`'d) grids is the scaled-symmetric half-table → NCrystal `SABScatter`.
+  NCrystal interpolates S linearly in β, so every β interval the tape declares
+  log-linear (`INT=4`) is subdivided until linear interpolation follows the tape
+  to 1e-3 relative; `INT=2` intervals and intervals with a zero cell stay as they
+  are. The tape's effective temperature (Teff) is not used: beyond the table
+  NCrystal uses a free gas at the material temperature, where THERMR would use
+  the short-collision-time approximation with Teff.
 - A missing elastic block (LTHR=1-only or 2-only tape) → that channel is cleanly absent.
 
 ## Tests

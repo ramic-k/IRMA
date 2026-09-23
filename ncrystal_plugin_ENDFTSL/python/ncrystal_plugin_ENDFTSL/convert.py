@@ -1,10 +1,43 @@
 """Assemble an ENDFTSLPack from a parsed evaluation (ports irma.ncrystal.convert math)."""
 from __future__ import annotations
 import bisect
+import math
 from dataclasses import dataclass
 from .reader import TSLEvaluation, read_tsl
 from . import physics
 from .pack import ENDFTSLPack
+
+
+def _refine_log_linear_beta(beta, sab, beta_int, tol=1e-3):
+    """Insert beta points in the intervals the tape interpolates log-linearly
+    (ENDF INT=4), so NCrystal's linear-in-beta interpolation of the pack follows
+    the tape's law to a relative error ``tol``.
+
+    Linear interpolation of an exponential over a sub-interval with log-ratio x
+    errs by about x^2/8, so n = ceil(max_alpha |ln(S_j+1 / S_j)| / sqrt(8 tol))
+    sub-intervals meet ``tol``. Lin-lin intervals, and intervals with a zero
+    cell (treated as linear), are left as they are. ``sab`` is [alpha][beta];
+    returns the new beta grid and table.
+    """
+    step = math.sqrt(8.0 * tol)
+    new_beta = [beta[0]]
+    new_sab = [[row[0]] for row in sab]
+    for j in range(len(beta) - 1):
+        lo = [row[j] for row in sab]
+        hi = [row[j + 1] for row in sab]
+        n = 1
+        if beta_int[j] == 4 and all(a > 0.0 and b > 0.0 for a, b in zip(lo, hi)):
+            n = max(1, math.ceil(max(abs(math.log(b / a))
+                                     for a, b in zip(lo, hi)) / step))
+        for k in range(1, n):
+            t = k / n
+            new_beta.append(beta[j] + t * (beta[j + 1] - beta[j]))
+            for row, a, b in zip(new_sab, lo, hi):
+                row.append(a * (b / a) ** t)
+        new_beta.append(beta[j + 1])
+        for row, b in zip(new_sab, hi):
+            row.append(b)
+    return new_beta, new_sab
 
 
 def build_pack(ev: TSLEvaluation, T: float, material_id: str,
@@ -13,9 +46,12 @@ def build_pack(ev: TSLEvaluation, T: float, material_id: str,
     law = physics.physical_inelastic(ev, T)
     awr = law.awr
     alpha_nc = [a * awr for a in law.alpha_phys]            # α_ncrystal = α_phys · AWR
+    # NCrystal interpolates S linearly in beta; the tape's INT=4 intervals are
+    # refined so that follows the tape's log-linear law
+    beta, sab = _refine_log_linear_beta(law.beta_phys, law.sab_scaled_sym,
+                                        ev.beta_int)
     # scaled-sym, beta-major (loop β outer, α inner) — matches NC SCALED_SYM_SAB / irma pack
-    sab_values = [law.sab_scaled_sym[ai][bi]
-                  for bi in range(len(law.beta_phys)) for ai in range(len(alpha_nc))]
+    sab_values = [sab[ai][bi] for bi in range(len(beta)) for ai in range(len(alpha_nc))]
     # NCrystal cross sections are PER ATOM, but the C++ plugin sums every pack's
     # channels at weight 1.0, so a naive multi-species pack yields per-FORMULA-unit
     # cross sections (~N_atoms x too high). The converter restores the per-atom
@@ -42,7 +78,7 @@ def build_pack(ev: TSLEvaluation, T: float, material_id: str,
         bound_xs_barn=law.bound_xs_barn * inelastic_scale,
         element_mass_amu=float(element_mass_amu),
         sab_representation="scaled_sym_sab",
-        alpha_grid=alpha_nc, beta_grid=list(law.beta_phys), sab_values=sab_values,
+        alpha_grid=alpha_nc, beta_grid=beta, sab_values=sab_values,
         coh_edges_ev=list(coh[0]) if coh else [], coh_cumS=coh_cumS,
         elastic_msd_a2=inc[0] if inc else None,
         elastic_incoherent_xs_barn=inc_xs,
