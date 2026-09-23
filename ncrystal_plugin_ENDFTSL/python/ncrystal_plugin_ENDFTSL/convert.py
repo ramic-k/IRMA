@@ -1,7 +1,6 @@
 """Assemble an ENDFTSLPack from a parsed evaluation (ports irma.ncrystal.convert math)."""
 from __future__ import annotations
 import bisect
-import math
 from dataclasses import dataclass
 from .reader import TSLEvaluation, read_tsl
 from . import physics
@@ -15,16 +14,8 @@ def build_pack(ev: TSLEvaluation, T: float, material_id: str,
     awr = law.awr
     alpha_nc = [a * awr for a in law.alpha_phys]            # α_ncrystal = α_phys · AWR
     # scaled-sym, beta-major (loop β outer, α inner) — matches NC SCALED_SYM_SAB / irma pack
-    max_sab = max((v for row in law.sab_asym_downscatter for v in row), default=0.0)
-    tol = max(1e-15, 1e-2 * max_sab)
-    sab_values = []
-    for bi, b in enumerate(law.beta_phys):
-        scale = math.exp(-0.5 * b)
-        for ai in range(len(alpha_nc)):
-            v = law.sab_asym_downscatter[ai][bi]
-            if v < -tol:
-                raise ValueError("S has a large negative value; check conventions")
-            sab_values.append(max(0.0, v) * scale)
+    sab_values = [law.sab_scaled_sym[ai][bi]
+                  for bi in range(len(law.beta_phys)) for ai in range(len(alpha_nc))]
     # NCrystal cross sections are PER ATOM, but the C++ plugin sums every pack's
     # channels at weight 1.0, so a naive multi-species pack yields per-FORMULA-unit
     # cross sections (~N_atoms x too high). The converter restores the per-atom
