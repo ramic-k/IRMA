@@ -166,7 +166,7 @@ def test_hydrogen_to_deuterium_names_the_model_caveat(app):
     assert "H masses" in app.za_status_var.get()
 
 
-def test_deck_generation_offers_the_relabel_and_aborts_on_no(app, monkeypatch):
+def test_deck_generation_names_the_mismatch_and_changes_no_row(app):
     import pathlib
     app.nc_phonopy_yaml.set(str(pathlib.Path(__file__).resolve().parent
                                 / "mode2_euphonic_n1_validation" / "graphite"
@@ -183,12 +183,6 @@ def test_deck_generation_offers_the_relabel_and_aborts_on_no(app, monkeypatch):
     app.awr.set("11.8969")
     app.spr.set("4.7338")
     app.mat.set("28")
-    monkeypatch.setattr(app, "_ask_yes_no", lambda *a, **k: False)
     with pytest.raises(ValueError, match="requires a Card 6d atom row"):
         app._generate_input_text()
-    assert _rows(app)[0]["A"] == 0                          # aborted, unchanged
-    monkeypatch.setattr(app, "_ask_yes_no", lambda *a, **k: True)
-    text = app._generate_input_text()
-    assert _rows(app)[0]["A"] == 12
-    import re
-    assert re.search(r"\n6\s+12\s+11\.8969", text)          # the deck's Card 6d row
+    assert _rows(app)[0]["A"] == 0                          # no row changed
