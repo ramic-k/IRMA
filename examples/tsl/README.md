@@ -64,7 +64,8 @@ S(α,β) (`pip install -e ".[phonopy]"` first). The committed deck is a
 production direction counts, matching the GUI form and `irma mlip emit`
 defaults and the validation-campaign sampling, with `auto_order=1` so the
 multiphonon order is auto-sized to converge the high-Q rows to the free-gas
-limit):
+limit), Card 4 `iint=1` (lin-lin, the mode-2 production form), and Cards 7-9
+on the automatic grids that `irma mlip emit` writes for that `iint`:
 
 ```bash
 python -m irma examples/tsl/graphite_mode2.input graphite_mode2.endf   # repo root
