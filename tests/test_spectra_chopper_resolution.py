@@ -112,13 +112,13 @@ def test_chopper_sigma_is_fwhm_over_2355():
     assert np.all(sig > 0.0)
 
 
-def test_chopper_sigma_gain_side_falls_back_to_elastic():
-    """E<0 (energy gain) clips to the elastic width, never NaN."""
+def test_chopper_sigma_grows_on_the_gain_side():
+    """E<0 (energy gain): Ef > Ei, so the width grows with |E|; never NaN."""
     sig = cr.chopper_sigma_of_E(np.array([-50.0, -10.0, 0.0]), Ei=300.0,
                                 instrument="ARCS", package="ARCS-700-1.5-AST",
                                 frequency=600.0)
     assert np.all(np.isfinite(sig)) and np.all(sig > 0.0)
-    assert sig[0] == pytest.approx(sig[2], rel=1e-9)   # gain clamps to elastic
+    assert sig[0] > sig[1] > sig[2]
 
 
 def test_chopper_raises_when_not_transmitting():
