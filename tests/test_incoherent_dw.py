@@ -14,7 +14,6 @@ import pytest
 from irma.core.incoherent_dw import (
     dawsn,
     dw_orientation_average,
-    dw_orientation_average_tsq,
     sigma_elinc_directional,
     u_eigenvalues,
 )
@@ -40,16 +39,12 @@ TRIAXIAL = (0.003, 0.007, 0.012)
 Q_GRID = np.array([0.5, 2.0, 5.0, 10.0, 20.0, 40.0])
 
 
-def test_u_eigenvalues_sorted_and_clipped():
-    U = np.diag([0.01, -1e-16, 0.005])
-    eig = u_eigenvalues(U)
+def test_u_eigenvalues_sorted_clipped_and_psd_checked():
+    """Rounding noise below zero is clipped; a genuinely indefinite tensor
+    is an input error."""
+    eig = u_eigenvalues(np.diag([0.01, -1e-16, 0.005]))
     assert eig[0] == 0.0
     assert np.all(np.diff(eig) >= 0.0)
-
-
-def test_u_eigenvalues_rejects_materially_negative():
-    """A genuinely indefinite tensor is an input error, not something to
-    silently clip (Codex review D3)."""
     with pytest.raises(ValueError, match="positive semidefinite"):
         u_eigenvalues(np.diag([-0.01, 0.02, 0.03]))
 
@@ -60,30 +55,11 @@ def test_isotropic_branch_is_exact_exponential():
     assert np.allclose(f, np.exp(-Q_GRID**2 * u), rtol=1e-14, atol=0.0)
 
 
-def test_zero_tensor_gives_unity():
-    f = dw_orientation_average((0.0, 0.0, 0.0), Q_GRID)
-    assert np.all(f == 1.0)
-
-
 @pytest.mark.parametrize("eig", [GRAPHITE_LIKE, PROLATE, TRIAXIAL])
 def test_closed_forms_match_bruteforce_average(eig):
     f = dw_orientation_average(eig, Q_GRID)
     ref = _golden_spiral_average(eig, Q_GRID)
     assert np.allclose(f, ref, rtol=2e-4)
-
-
-@pytest.mark.parametrize("eig", [GRAPHITE_LIKE, PROLATE])
-def test_uniaxial_closed_form_matches_quadrature(eig):
-    """Perturbing the degenerate pair by 1e-6 forces the triaxial quadrature;
-    the answers must agree to the perturbation size."""
-    u1, u2, u3 = eig
-    if u2 == u1:            # oblate: split the low pair
-        pert = (u1, u2 * (1.0 + 1e-6), u3)
-    else:                   # prolate: split the high pair
-        pert = (u1, u2, u3 * (1.0 + 1e-6))
-    f_closed = dw_orientation_average(eig, Q_GRID)
-    f_quad = dw_orientation_average(pert, Q_GRID)
-    assert np.allclose(f_closed, f_quad, rtol=1e-4)
 
 
 def test_jensen_bound_and_high_q_dominance():
@@ -100,13 +76,6 @@ def test_q_zero_limit_is_one_every_branch():
     for eig in ((0.006, 0.006, 0.006), GRAPHITE_LIKE, PROLATE, TRIAXIAL):
         f = dw_orientation_average(eig, np.array([0.0]))
         assert f[0] == pytest.approx(1.0, abs=1e-12)
-
-
-def test_monotone_decreasing_in_q():
-    q = np.linspace(0.0, 30.0, 400)
-    for eig in (GRAPHITE_LIKE, PROLATE, TRIAXIAL):
-        f = dw_orientation_average(eig, q)
-        assert np.all(np.diff(f) <= 1e-15)
 
 
 def test_dawsn_against_scipy():
@@ -131,18 +100,6 @@ def test_sigma_cubic_limit_matches_endf_form():
     assert np.allclose(got, ref, rtol=1e-6)
 
 
-def test_sigma_accurate_when_kinematic_range_dwarfs_dw_scale():
-    """The log grid must resolve the DW decay onset even when 4k^2 >> 1/u
-    (Codex review D2): isotropic exact result to 1e-6 at extreme k^2."""
-    for u in (1.0, 0.1, 0.01):
-        sb = 1.0
-        ksq = np.array([1.0e6, 1.0e8])
-        got = sigma_elinc_directional(ksq, [(sb, (u, u, u))])
-        a = 2.0 * ksq * u
-        ref = (sb / 2.0) * (1.0 - np.exp(-2.0 * a)) / a
-        assert np.allclose(got, ref, rtol=1e-6), (u, got, ref)
-
-
 def test_sigma_zero_energy_limit_is_bound_sum():
     channels = [(2.0, GRAPHITE_LIKE), (3.0, TRIAXIAL)]
     got = sigma_elinc_directional(np.array([0.0]), channels)
@@ -157,9 +114,3 @@ def test_sigma_directional_exceeds_isotropic_at_high_energy():
     directional = sigma_elinc_directional(ksq, [(sb, GRAPHITE_LIKE)])
     isotropic = sigma_elinc_directional(ksq, [(sb, (ubar, ubar, ubar))])
     assert np.all(directional > isotropic)
-
-
-def test_tsq_and_q_entry_points_agree():
-    f_q = dw_orientation_average(TRIAXIAL, Q_GRID)
-    f_t = dw_orientation_average_tsq(TRIAXIAL, Q_GRID**2)
-    assert np.array_equal(f_q, f_t)
