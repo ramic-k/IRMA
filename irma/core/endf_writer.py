@@ -327,7 +327,7 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
         lines = [' ' * 66 + ln[66:] if ln[72:75] == '  0' else ln for ln in f]
     lines = _patch_mf1_directory_counts(lines, mf1['NWD'], sections)
     # newline='\n' keeps the tapes LF-only on every platform.
-    with open(filename, 'w', newline='\n') as f:
+    with open(filename, 'w', newline='\n', encoding='ascii') as f:
         f.writelines(lines)
         # endf-parserpy does not end the file with a newline; NJOY does.
         if lines and not lines[-1].endswith('\n'):

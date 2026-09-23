@@ -397,6 +397,11 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
             reader.require(temp != 0.0,
                            "temperature must be nonzero (negative reuses the "
                            "previous temperature's spectrum)")
+            # The coherent-elastic edge thinning uses the first (coldest)
+            # temperature, and THERMR reads the MT4 temperatures in order.
+            reader.require(itemp == 0 or abs(temp) > tempr_arr[itemp - 1],
+                           f"temperatures must increase: {abs(temp):g} K follows "
+                           f"{tempr_arr[itemp - 1]:g} K")
             tempr_arr[itemp] = abs(temp)
             tev = BK * abs(temp)
             print(f"  Temperature {itemp+1}: {abs(temp):.2f} K")
@@ -511,6 +516,12 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
 
     # Read comment cards for MF1/MT451
     comments = reader.read_comment_strings()
+    for n, text in enumerate(comments, 1):
+        bad = next((ch for ch in text if ord(ch) > 127), None)
+        # ENDF-6 is fixed-column ASCII: one wider character shifts MAT/MF/MT
+        reader.require(bad is None,
+                       f"comment card {n} contains the non-ASCII character "
+                       f"{bad!r}; ENDF-6 tapes are ASCII")
     # Stamp the extinction provenance into the MF1/MT451 free-text description so
     # the tape records that it is a sample-specific, extinction-corrected
     # evaluation. Append only when a comment block is present (>=5 header records),

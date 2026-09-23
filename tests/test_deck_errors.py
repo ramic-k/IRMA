@@ -53,6 +53,17 @@ def test_good_deck_runs():
     _run(GOOD)   # sanity: the template itself is valid
 
 
+def test_temperatures_must_increase():
+    # the edge thinning uses the first temperature; THERMR reads them in order
+    deck = GOOD.replace("1 1 4/", "2 1 4/").replace("0/\n/\n", "0/\n-200/\n/\n")
+    _expect(deck, "temperatures must increase")
+
+
+def test_non_ascii_comment_rejected():
+    # a wider character shifts the fixed MAT/MF/MT columns of the MF1 record
+    _expect(GOOD.replace("0/\n/\n", "0/\n'M\u00e1rquez'/\n/\n"), "non-ASCII")
+
+
 def test_empty_file():
     _expect("", "no LEAPR cards found")
 
