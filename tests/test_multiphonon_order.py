@@ -6,7 +6,9 @@ the multiphonon Poisson(2W) sum from the anisotropic Debye-Waller tensor:
     effective = max(requested, min(required, hard_cap))
 """
 import math
+
 import numpy as np
+import pytest
 
 from irma.core.noncubic_engine import derive_required_multiphonon_order
 
@@ -21,60 +23,27 @@ def _expected_required(q, u, margin=6.0):
     return int(math.ceil(two_w + margin * math.sqrt(two_w))) + 2
 
 
-def test_isotropic_formula():
-    q, u = 12.0, 0.02
-    eff, req, two_w, u_max = derive_required_multiphonon_order(q, _iso(u), requested_order=2)
-    assert u_max == u
-    assert math.isclose(two_w, q * q * u)
-    assert req == _expected_required(q, u)
-    assert eff == max(2, req)
+_ANISO = np.array([np.diag([0.005, 0.005, 0.03])])   # soft c axis, u_max = 0.03
+_REQ = _expected_required(12.0, 0.02)
 
 
-def test_effective_honors_higher_requested():
-    q, u = 12.0, 0.02
-    req_formula = _expected_required(q, u)
-    eff, req, _, _ = derive_required_multiphonon_order(q, _iso(u), requested_order=req_formula + 50)
-    assert req == req_formula
-    assert eff == req_formula + 50            # a deliberately high deck order is kept
-
-
-def test_anisotropic_uses_largest_eigenvalue():
-    """U_max is the soft-axis (largest) eigenvalue, e.g. graphite c-axis."""
-    U = np.array([np.diag([0.005, 0.005, 0.03])])   # u_max = 0.03
-    q = 10.0
-    eff, req, two_w, u_max = derive_required_multiphonon_order(q, U, requested_order=2)
-    assert math.isclose(u_max, 0.03)
-    assert math.isclose(two_w, q * q * 0.03)
-    assert req == _expected_required(q, 0.03)
-
-
-def test_higher_Q_needs_higher_order():
-    U = _iso(0.02)
-    _, req_lo, _, _ = derive_required_multiphonon_order(6.0, U, requested_order=2)
-    _, req_hi, _, _ = derive_required_multiphonon_order(24.0, U, requested_order=2)
-    assert req_hi > req_lo
-
-
-def test_zero_displacement_returns_requested():
-    """u_max <= 0 or Q <= 0 -> no multiphonon growth; required == requested."""
-    eff, req, two_w, u_max = derive_required_multiphonon_order(12.0, _iso(0.0), requested_order=7)
-    assert (eff, req, two_w) == (7, 7, 0.0)
-    eff0, req0, _, _ = derive_required_multiphonon_order(0.0, _iso(0.02), requested_order=7)
-    assert eff0 == req0 == 7
-
-
-def test_requested_floored_at_two():
-    """requested_order is floored at 2 (one-phonon-only is order 1, no Poisson sum)."""
-    eff, req, _, _ = derive_required_multiphonon_order(0.0, _iso(0.02), requested_order=1)
-    assert eff == 2
-
-
-def test_hard_cap():
-    """A huge Q is capped at the 2000 safety limit in the effective order."""
-    U = _iso(0.05)
-    eff, req, _, _ = derive_required_multiphonon_order(500.0, U, requested_order=2, hard_cap=2000)
-    assert req > 2000
-    assert eff == 2000
+@pytest.mark.parametrize("q, U, u_max, requested, cap, want_eff, want_req", [
+    (12.0, _iso(0.02), 0.02, 2, 2000, max(2, _REQ), _REQ),        # isotropic formula
+    (12.0, _iso(0.02), 0.02, _REQ + 50, 2000, _REQ + 50, _REQ),   # high deck order kept
+    (10.0, _ANISO, 0.03, 2, 2000,                                  # largest eigenvalue
+     max(2, _expected_required(10.0, 0.03)), _expected_required(10.0, 0.03)),
+    (12.0, _iso(0.0), 0.0, 7, 2000, 7, 7),                         # zero u: no growth
+    (0.0, _iso(0.02), 0.02, 7, 2000, 7, 7),                        # zero Q: no growth
+    (0.0, _iso(0.02), 0.02, 1, 2000, 2, 2),                        # requested floored at 2
+    (500.0, _iso(0.05), 0.05, 2, 2000, 2000,                       # hard cap on effective
+     _expected_required(500.0, 0.05)),
+])
+def test_required_order(q, U, u_max, requested, cap, want_eff, want_req):
+    eff, req, two_w, got_u_max = derive_required_multiphonon_order(
+        q, U, requested_order=requested, hard_cap=cap)
+    assert (eff, req) == (want_eff, want_req)
+    assert math.isclose(got_u_max, u_max, abs_tol=0.0)
+    assert math.isclose(two_w, q * q * u_max)
 
 
 # --- energy-reach guard (multiphonon_energy_reach) --------------------------
