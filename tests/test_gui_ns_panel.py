@@ -201,6 +201,17 @@ def test_load_then_build_is_identity(panel, case):
     assert panel.build_config() == cfg
 
 
+def test_map_run_writes_the_full_map(panel, monkeypatch):
+    # the Plot tab masks at view and export time, so the cached map is unmasked
+    panel.load_config(IDENTITY_CASES["direct_map"]())
+    sent = {}
+    monkeypatch.setattr(panel.runner, "run_command",
+                        lambda argv, **kw: sent.update(argv=argv))
+    panel._run_map()
+    panel.cleanup_temp_files()
+    assert "--no-mask" in sent["argv"]
+
+
 def test_loading_a_config_clears_what_the_previous_one_set(panel):
     """Values a previously loaded config set (coverage band, q cuts, width
     polynomial, breakdown, cutoff) must not carry into the next config, where
