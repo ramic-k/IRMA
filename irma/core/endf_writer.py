@@ -81,6 +81,7 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
         if nss == 0 or b7 > 0.0:
             dwpix_out[i] = dwpix[i] / (awr * tempr[i] * BK)
         else:
+            # bound two-pass secondary: W' is the secondary's, as NJOY's endout writes it
             dwpix_out[i] = dwpix[i] / (aws * tempr[i] * BK)
             dwp1_out[i] = dwp1[i] / (awr * tempr[i] * BK)
 

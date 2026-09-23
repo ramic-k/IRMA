@@ -635,15 +635,15 @@ def discre(ssm_slice, alpha, beta, nalpha, nbeta, lat, arat, tev,
     tsave = 0.0
     dw0 = dwpix_val
 
-    # errstate: in the cryogenic regime (bdeln/2 clamped at the exp ceiling by
-    # _safe_exp) the product sn*bdeln can overflow to inf, and ar = adel/inf
-    # = 0.0 is exactly the cold limit -- the values are correct, only the
-    # RuntimeWarning is noise. Suppressing warnings changes no bits.
+    # errstate: when bdeln/2 is clamped at the exp ceiling by _safe_exp, the
+    # product sn*bdeln can overflow to inf; only the RuntimeWarning is
+    # silenced, which changes no bits.
     with np.errstate(over="ignore"):
         for i in range(nd):
-            # A high-energy oscillator at cryogenic T gives bdeln/2 > 709; clamp so
-            # the cold limit is reproduced (cn/sn = coth(bdeln/2) -> 1) instead of
-            # raising OverflowError (bare exp) or yielding 0*Inf = NaN (Fortran Inf).
+            # Above E/kT ~ 1418 (bdeln/2 > 709) the clamp avoids OverflowError
+            # (bare exp) and 0*Inf = NaN, but then ar = adel/inf = 0, so the
+            # oscillator's Debye-Waller term dbw (about adel/bdeln, below
+            # 7e-4 * adel there) is dropped.
             eb[i] = _safe_exp(bdeln[i] / 2.0)
             sn = (eb[i] - 1.0 / eb[i]) / 2.0
             cn = (eb[i] + 1.0 / eb[i]) / 2.0
