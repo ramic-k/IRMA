@@ -24,7 +24,8 @@ from irma.gui.element_table import (
     NUCLIDE_EDITOR_COLS)
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    form_section, init_form_styles, parse_float, parse_int)
+    check_with_help, form_section, init_form_styles, scrolled_columns,
+    parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.mlip.calculators import POTENTIALS
 
@@ -380,54 +381,13 @@ class MlipPanel(ttk.Frame):
     def _build(self):
         """Build the panel widgets (scrolling form column + log column)."""
         self.pack(fill=tk.BOTH, expand=True)
-        top = ttk.Frame(self)
-        top.pack(fill=tk.BOTH, expand=True)
-
-        left_outer = ttk.Frame(top)
-        left_outer.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-        bg = ttk.Style().lookup("TFrame", "background")
-        canvas = tk.Canvas(left_outer, highlightthickness=0, borderwidth=0,
-                           background=bg or None)
-        vsb = ttk.Scrollbar(left_outer, orient=tk.VERTICAL,
-                            command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        left = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=left, anchor="nw")
-
-        def _sync(_e):
-            """Keep the canvas scroll region matched to the inner frame."""
-            canvas.configure(scrollregion=canvas.bbox("all"),
-                             width=left.winfo_reqwidth())
-        left.bind("<Configure>", _sync)
-
-        def _wheel(event):
-            """Scroll the canvas on mouse wheel (platform-normalized)."""
-            delta = event.delta
-            step = delta // 120 if abs(delta) >= 120 else delta
-            canvas.yview_scroll(-int(step), "units")
-        canvas.bind("<Enter>",
-                    lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-
-        right = ttk.Frame(top)
-        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        left, right, _ = scrolled_columns(self)
 
         self._build_build(left)
         self._build_bundle(left)
         self._build_emit(left)
         self._build_envs(left)
         self._build_output(right)
-
-    def _check_with_help(self, parent, text, var, help_text):
-        """Checkbox with an attached help glyph; returns the row frame so
-        callers can show/hide it."""
-        row = ttk.Frame(parent)
-        row.pack(anchor=tk.W, fill=tk.X, pady=2)
-        ttk.Checkbutton(row, text=text, variable=var).pack(side=tk.LEFT)
-        InfoLabel(row, text, help_text).pack(side=tk.LEFT, padx=(4, 0))
-        return row
 
     def _build_build(self, parent):
         """Build the bundle-build section."""
@@ -481,19 +441,19 @@ class MlipPanel(ttk.Frame):
         self.born.pack(fill=tk.X, pady=2)
 
         self.relax_cell = tk.BooleanVar(value=False)
-        self._check_with_help(g, "relax the cell too", self.relax_cell,
+        check_with_help(g, "relax the cell too", self.relax_cell,
                               HELP["relax_cell"])
         self.disordered = tk.BooleanVar(value=False)
-        self._check_with_help(g, "disordered / amorphous", self.disordered,
+        check_with_help(g, "disordered / amorphous", self.disordered,
                               HELP["disordered"])
         self.snap_symmetry = tk.BooleanVar(value=False)
-        self._check_with_help(g, "snap to symmetry after relaxation",
+        check_with_help(g, "snap to symmetry after relaxation",
                               self.snap_symmetry, HELP["snap_symmetry"])
         self.force = tk.BooleanVar(value=False)
-        self._check_with_help(g, "proceed past unconverged relaxation",
+        check_with_help(g, "proceed past unconverged relaxation",
                               self.force, HELP["force"])
         self.overwrite = tk.BooleanVar(value=False)
-        self._check_with_help(g, "overwrite existing bundle", self.overwrite,
+        check_with_help(g, "overwrite existing bundle", self.overwrite,
                               HELP["overwrite"])
 
         self.jobs = LabeledEntry(g, "jobs:", default="1", width=6,
@@ -622,13 +582,13 @@ class MlipPanel(ttk.Frame):
         self.allow_unstable = tk.BooleanVar(value=False)
         # --allow-unstable is read by the endf and spectra emitters only
         # (never by ncrystal), so _sync_emit_rows shows/hides this row.
-        self._allow_unstable_row = self._check_with_help(
+        self._allow_unstable_row = check_with_help(
             g, "allow unstable (imaginary modes)", self.allow_unstable,
             "ENDF and spectra targets only. Proceed with DOS-driven "
             "emission even though the bundle records imaginary modes; the "
             "CLI refuses by default.")
         self.emit_overwrite = tk.BooleanVar(value=False)
-        self._overwrite_row = self._check_with_help(
+        self._overwrite_row = check_with_help(
             g, "overwrite emitted files", self.emit_overwrite,
             "Replace previously emitted inputs in the output directory.")
         row = ttk.Frame(g)

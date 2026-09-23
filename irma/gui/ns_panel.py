@@ -19,7 +19,8 @@ from tkinter import ttk, filedialog, messagebox
 
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    form_section, init_form_styles, parse_float, parse_int)
+    check_with_help, form_section, init_form_styles, scrolled_columns,
+    parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.element_table import ElementTable
 from irma.spectra.config import SpectraConfig, SpectraConfigError, dump, load
@@ -564,42 +565,8 @@ class NSPanel(ttk.Frame):
     def _build(self):
         """Build the panel widgets."""
         self.pack(fill=tk.BOTH, expand=True)
-        top = ttk.Frame(self)
-        top.pack(fill=tk.BOTH, expand=True)
-
-        # The form column is taller than common windows, so it lives in a
-        # vertically-scrolling canvas (mouse-wheel + scrollbar); the log/plot
-        # column fills the rest. The canvas requests the form's natural width
-        # so nothing is clipped horizontally.
-        left_outer = ttk.Frame(top)
-        left_outer.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-        bg = ttk.Style().lookup("TFrame", "background")
-        canvas = tk.Canvas(left_outer, highlightthickness=0, borderwidth=0,
-                           background=bg or None)
-        vsb = ttk.Scrollbar(left_outer, orient=tk.VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self._form_canvas = canvas      # exposed for tooling (screenshot scroll)
-        left = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=left, anchor="nw")
-
-        def _sync(_e):
-            """Keep the canvas scroll region matched to the inner frame."""
-            canvas.configure(scrollregion=canvas.bbox("all"),
-                             width=left.winfo_reqwidth())
-        left.bind("<Configure>", _sync)
-
-        def _wheel(event):
-            """Scroll the canvas on mouse wheel (platform-normalized delta)."""
-            delta = event.delta
-            step = delta // 120 if abs(delta) >= 120 else delta
-            canvas.yview_scroll(-int(step), "units")
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-
-        right = ttk.Frame(top)
-        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # the canvas is exposed for tooling (screenshot scroll)
+        left, right, self._form_canvas = scrolled_columns(self)
 
         self._build_material(left)
         self._build_physics(left)
@@ -608,16 +575,6 @@ class NSPanel(ttk.Frame):
         self._build_actions(left)
         self._build_output(right)
         self._sync_ns_context()          # set initial field/column visibility
-
-    @staticmethod
-    def _check_with_help(parent, text, var, help_text):
-        """Checkbox with an attached ⓘ help glyph; returns the row frame
-        so callers can show/hide it."""
-        row = ttk.Frame(parent)
-        row.pack(anchor=tk.W, fill=tk.X, pady=2)
-        ttk.Checkbutton(row, text=text, variable=var).pack(side=tk.LEFT)
-        InfoLabel(row, text, help_text).pack(side=tk.LEFT, padx=(4, 0))
-        return row
 
     # mode-dropdown labels (the digit-0 of each is parsed back to the int mode)
     _MODE_LABELS = ["1 (incoherent approx)", "2 (coherent 1ph+multi)",
@@ -767,7 +724,7 @@ class NSPanel(ttk.Frame):
             default="isotropic", help_text=HELP["incoherent_elastic_mode"])
         self.incoherent_elastic_dw.pack(fill=tk.X, pady=2)
         self.include_gain = tk.BooleanVar(value=True)
-        self._gain_row = self._check_with_help(
+        self._gain_row = check_with_help(
             g, "include energy-gain side", self.include_gain,
             HELP["include_gain"])
         self.gain_side = LabeledCombobox(
@@ -779,7 +736,7 @@ class NSPanel(ttk.Frame):
         self.include_gain.trace_add(
             "write", lambda *a: self._sync_gain_side())
         self.kinematic = tk.BooleanVar(value=False)
-        self._check_with_help(g, "kinematic kf/ki (count rate)", self.kinematic,
+        check_with_help(g, "kinematic kf/ki (count rate)", self.kinematic,
                               HELP["kinematic"])
 
     # ------------------------------------------------------------ context ---
@@ -1076,7 +1033,7 @@ class NSPanel(ttk.Frame):
             width=18, help_text=HELP["map_coverage"])
         self.map_coverage.pack(fill=tk.X, pady=2)
         self.dir_map_mask = tk.BooleanVar(value=True)
-        self._check_with_help(self._mapcfg_frame, "mask map to detector coverage",
+        check_with_help(self._mapcfg_frame, "mask map to detector coverage",
                               self.dir_map_mask, HELP["map_mask"])
         ttk.Label(self._mapcfg_frame,
                   text="Tip: for an arbitrary angle/Q integration, export the full "
@@ -1161,7 +1118,7 @@ class NSPanel(ttk.Frame):
         # Lean default: export/plot only the TOTAL of each cut. Tick to keep the
         # inelastic + elastic breakdown in the saved file and the 1-D plot.
         self.export_components = tk.BooleanVar(value=False)
-        self._export_row = self._check_with_help(
+        self._export_row = check_with_help(
             g, "inelastic / elastic breakdown (plot + saved file)",
             self.export_components, HELP["export_components"])
         self.export_components.trace_add("write", lambda *a: self._replot())

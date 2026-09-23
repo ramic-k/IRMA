@@ -26,7 +26,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    form_section, init_form_styles,
+    form_section, init_form_styles, scrolled_columns,
     parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.grid_form import SabGridForm, GRID_EXPORT_KEYS
@@ -218,54 +218,12 @@ class NCrystalPanel(ttk.Frame):
     def _build(self):
         """Build the panel widgets."""
         self.pack(fill=tk.BOTH, expand=True)
-        top = ttk.Frame(self)
-        top.pack(fill=tk.BOTH, expand=True)
-
-        # The form column is taller than common windows, so it lives in a
-        # vertically-scrolling canvas (mouse-wheel + scrollbar); the log column
-        # fills the rest. The canvas requests the form's natural width so
-        # nothing is clipped horizontally. (Mirrors NSPanel._build.)
-        left_outer = ttk.Frame(top)
-        left_outer.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-        bg = ttk.Style().lookup("TFrame", "background")
-        canvas = tk.Canvas(left_outer, highlightthickness=0, borderwidth=0,
-                           background=bg or None)
-        vsb = ttk.Scrollbar(left_outer, orient=tk.VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        left = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=left, anchor="nw")
-
-        def _sync(_e):
-            """Keep the canvas scroll region matched to the inner frame."""
-            canvas.configure(scrollregion=canvas.bbox("all"),
-                             width=left.winfo_reqwidth())
-        left.bind("<Configure>", _sync)
-
-        def _wheel(event):
-            """Scroll the canvas on mouse wheel (platform-normalized delta)."""
-            delta = event.delta
-            step = delta // 120 if abs(delta) >= 120 else delta
-            canvas.yview_scroll(-int(step), "units")
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-
-        right = ttk.Frame(top)
-        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        left, right, _ = scrolled_columns(self)
 
         self._build_material(left)
         self._build_export(left)
         self._build_actions(left)
         self._build_output(right)
-
-    @staticmethod
-    def _check_with_help(parent, text, var, help_text):
-        """Checkbox with an attached ⓘ help glyph."""
-        row = ttk.Frame(parent)
-        row.pack(anchor=tk.W, fill=tk.X, pady=2)
-        ttk.Checkbutton(row, text=text, variable=var).pack(side=tk.LEFT)
-        InfoLabel(row, text, help_text).pack(side=tk.LEFT, padx=(4, 0))
 
     def _build_material(self, parent):
         """Build the material/model section."""
