@@ -212,6 +212,48 @@ def test_principal_split_with_mismatched_data_rejected():
     _expect(deck, "differ in awr/b_coh/sigma_inc", "merged into one group")
 
 
+_BE_SEF_DECK = """20 /
+'be sef'/
+1 1 4/
+26 4009./
+8.93478 6.153875 1 10 0/
+0/
+1 {nat} 0 0/
+2.2866 2.2866 3.5833 90.0 90.0 120.0/
+{rows}
+3 4 1/
+0.05 1.0 8.0/
+0.0 0.6 2.0 6.0/
+296/
+0.005 6/
+0.0 0.20 0.45 0.55 0.30 0.0/
+0. 0. 1./
+0/
+/
+"""
+
+
+def test_mode0_sef_split_principal_writes_the_same_comb():
+    """A principal split over two Card 6d rows is merged in mode 0 too, so
+    the SEF coherent comb matches the one-row deck (it used to double)."""
+    one = _BE_SEF_DECK.format(nat=1, rows="4 9 8.93478 7.79 0.0018 2/\n"
+                              "0.33333333 0.66666667 0.75  0.66666667 0.33333333 0.25/")
+    split = _BE_SEF_DECK.format(nat=2, rows="4 9 8.93478 7.79 0.0018 1/\n"
+                                "0.33333333 0.66666667 0.75/\n"
+                                "4 9 8.93478 7.79 0.0018 1/\n"
+                                "0.66666667 0.33333333 0.25/")
+    mt2 = []
+    for deck in (one, split):
+        d = tempfile.mkdtemp()
+        inp, out = os.path.join(d, "be.input"), os.path.join(d, "be.endf")
+        with open(inp, "w") as f:
+            f.write(deck)
+        run_leapr(inp, out)
+        with open(out) as f:
+            mt2.append([ln[:66] for ln in f if ln[70:75] == " 7  2"])
+    assert len(mt2[0]) > 10 and mt2[1] == mt2[0]
+
+
 # An iel=10 mode-1 deck that reaches Card 6g without needing phonopy
 # (the 6g check fires before the phonopy mesh load is attempted).
 _MODE1_HEAD = """20 /

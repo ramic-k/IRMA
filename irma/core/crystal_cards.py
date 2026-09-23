@@ -271,39 +271,36 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
               f"sigma_coh={sigma_coh:.4f} b, npos={at_npos}")
 
     za_Z, za_A = int(za) // 1000, int(za) % 1000
-    # Modes 1/2: merge Card 6d rows of the principal (Z, A) into one group,
-    # since the MT4 law is accumulated over one principal group.
-    if inelastic_mode in (1, 2):
-        _matches = [i for i, at in enumerate(atom_types)
-                    if at['Z'] == za_Z and at['A'] == za_A]
-        if len(_matches) > 1:
-            _first = atom_types[_matches[0]]
-            for i in _matches[1:]:
-                at = atom_types[i]
-                reader.require(
-                    at['awr'] == _first['awr']
-                    and at['b_coh'] == _first['b_coh']
-                    and at['sigma_inc'] == _first['sigma_inc'],
-                    f"Card 6d atom types {_matches[0] + 1} and {i + 1} both "
-                    f"carry the principal nuclide Z={za_Z} A={za_A} but "
-                    f"differ in awr/b_coh/sigma_inc; with inelastic_mode=1/2 "
-                    f"the principal's entries are merged into one group and "
-                    f"must be identical")
-            _merged_positions = []
-            for i in _matches:
-                _merged_positions.extend(atom_types[i]['positions'])
-            _first['positions'] = _merged_positions
-            _first['npos'] = len(_merged_positions)
-            for i in reversed(_matches[1:]):
-                del atom_types[i]
-                del sites[i]
-            sites[_matches[0]] = AtomSite(b_coh_fm=_first['b_coh'],
-                                          positions=_merged_positions)
-            print(f"    inelastic_mode={inelastic_mode}: merged "
-                  f"{len(_matches)} Card 6d entries of the principal nuclide "
-                  f"(Z={za_Z}, A={za_A}) into one group with "
-                  f"{_first['npos']} positions (the MT4 law accumulates over "
-                  f"every represented site)")
+    # Merge Card 6d rows of the principal (Z, A) into one group: the MT4 law
+    # accumulates over one principal group, and the SEF coherent comb counts
+    # the principal once (a split principal doubled it in mode 0).
+    _matches = [i for i, at in enumerate(atom_types)
+                if at['Z'] == za_Z and at['A'] == za_A]
+    if len(_matches) > 1:
+        _first = atom_types[_matches[0]]
+        for i in _matches[1:]:
+            at = atom_types[i]
+            reader.require(
+                at['awr'] == _first['awr']
+                and at['b_coh'] == _first['b_coh']
+                and at['sigma_inc'] == _first['sigma_inc'],
+                f"Card 6d atom types {_matches[0] + 1} and {i + 1} both "
+                f"carry the principal nuclide Z={za_Z} A={za_A} but "
+                f"differ in awr/b_coh/sigma_inc; the principal's entries "
+                f"are merged into one group and must be identical")
+        _merged_positions = []
+        for i in _matches:
+            _merged_positions.extend(atom_types[i]['positions'])
+        _first['positions'] = _merged_positions
+        _first['npos'] = len(_merged_positions)
+        for i in reversed(_matches[1:]):
+            del atom_types[i]
+            del sites[i]
+        sites[_matches[0]] = AtomSite(b_coh_fm=_first['b_coh'],
+                                      positions=_merged_positions)
+        print(f"    merged {len(_matches)} Card 6d entries of the principal "
+              f"nuclide (Z={za_Z}, A={za_A}) into one group with "
+              f"{_first['npos']} positions")
 
     # Compute fractions
     for at in atom_types:
