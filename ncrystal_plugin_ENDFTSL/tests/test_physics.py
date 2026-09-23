@@ -25,6 +25,14 @@ def test_incoherent_msd_positive_and_sigma_matches_sb():
     assert msd == pytest.approx(Wp * HBAR2_OVER_2MN_EV_A2, rel=1e-12)
 
 
+def test_lasym1_tape_is_refused():
+    # LEAPR's cold H2/D2 tapes store S for -beta..+beta (LASYM=1)
+    ev = read_tsl(TAPE)
+    ev.lasym = 1
+    with pytest.raises(NotImplementedError, match="LASYM=1"):
+        physics.physical_inelastic(ev, 296.0)
+
+
 def test_inelastic_grids_physical_and_lat_unscaled():
     ev = read_tsl(TAPE)
     law = physics.physical_inelastic(ev, 296.0)

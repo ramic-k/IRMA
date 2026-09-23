@@ -126,9 +126,11 @@ def main(argv=None) -> int:
     ap.add_argument("--config", type=Path, help="polyatomic YAML (one tape per principal scatterer)")
     ap.add_argument("--temperature", type=float, default=296.0)
     ap.add_argument("--material-id", default="material")
-    ap.add_argument("--symbol", default="C")
-    ap.add_argument("--mass", type=float, default=12.0107)
-    ap.add_argument("--density", type=float, default=1.0)
+    # single-tape identity: the tape does not name its element, so there is
+    # no safe default (a missing value would silently describe carbon)
+    ap.add_argument("--symbol", help="element symbol (required for a single tape)")
+    ap.add_argument("--mass", type=float, help="atomic mass in amu (required for a single tape)")
+    ap.add_argument("--density", type=float, help="density in g/cm3 (required for a single tape)")
     a = ap.parse_args(argv)
 
     # Input/config problems exit 2, tape/runtime/I-O failures exit 3. The
@@ -138,6 +140,9 @@ def main(argv=None) -> int:
             return _run_config(a.config, a.outdir)
         if a.tape is None:
             ap.error("provide a single-species tape positional, or --config for polyatomic")
+        missing = [f"--{k}" for k in ("symbol", "mass", "density") if getattr(a, k) is None]
+        if missing:
+            ap.error(f"a single-tape conversion needs {', '.join(missing)}")
         if not (math.isfinite(a.density) and a.density > 0.0):
             raise ValueError(f"--density must be finite and positive, got {a.density!r}")
         return _run_single(a)
