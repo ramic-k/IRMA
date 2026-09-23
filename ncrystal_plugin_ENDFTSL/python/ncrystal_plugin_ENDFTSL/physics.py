@@ -1,4 +1,5 @@
-"""Invert ENDF storage conventions to physical quantities at one temperature.
+"""Read one temperature of an ENDF/TSL tape in the pack's conventions: physical
+alpha/beta grids, the stored symmetric S(alpha,beta), and the elastic data.
 
 The inverse of irma.core.endf_writer (ported, not imported).
 """
@@ -12,7 +13,7 @@ from .constants import T_LAT_K, HBAR2_OVER_2MN_EV_A2
 class InelasticLaw:
     alpha_phys: list
     beta_phys: list
-    sab_asym_downscatter: list   # [alpha][beta]
+    sab_scaled_sym: list   # [alpha][beta]: the stored symmetric S, the pack's values
     bound_xs_barn: float
     awr: float
 
@@ -67,13 +68,10 @@ def physical_inelastic(ev, T) -> InelasticLaw:
     if ev.lasym in (2, 3):
         raise NotImplementedError(
             "LASYM=2/3 (asymmetric SS, stored with NO e^{±β/2} factor) is deferred (spec §11)")
-    if ev.lln != 0:
-        # S stored as ln(S)-β/2 (LLN=1); exp() before the e^{+β/2} below.
-        def unpack(s, b):
-            return math.exp(s) * math.exp(0.5 * b)
-    else:
-        def unpack(s, b):
-            return s * math.exp(0.5 * b)   # physical S = stored · e^{+β/2}
+    # The stored symmetric S (LASYM=0) IS the pack's scaled-symmetric value:
+    # the stored number for LLN=0, exp(stored) for LLN=1. No exp(+-beta/2)
+    # round trip, which overflows for LAT=1 tapes below ~41 K.
+    unpack = math.exp if ev.lln != 0 else float
     # The tape stores S(alpha,beta) at one or more discrete temperatures (temps_mt4).
     # Select the column whose temperature EXACTLY matches the request (no interpolation
     # between columns), and LAT-un-scale the grids by THAT column's temperature, not the
@@ -104,12 +102,13 @@ def physical_inelastic(ev, T) -> InelasticLaw:
                 "shared alpha grid).")
     alpha_phys = [float(a) * lat_scale for a in a0]
     na, nb = len(alpha_phys), len(beta_phys)
-    sab = [[0.0] * nb for _ in range(na)]
-    for bi in range(nb):
-        bp = beta_phys[bi]
-        for ai in range(na):
-            stored = ev.sab[bi][ai][tindex]
-            sab[ai][bi] = max(0.0, unpack(stored, bp))
+    sab = [[unpack(ev.sab[bi][ai][tindex]) for bi in range(nb)] for ai in range(na)]
+    # a cell below -1% of the table maximum is a convention problem, not noise
+    max_s = max((v for row in sab for v in row), default=0.0)
+    tol = max(1e-15, 1e-2 * max_s)
+    if any(v < -tol for row in sab for v in row):
+        raise ValueError("S has a large negative value; check conventions")
+    sab = [[max(0.0, v) for v in row] for row in sab]
     # ENDF MF7/MT4 B(1) = npr * sigma_FREE of the principal scatterer (NOT bound).
     # NCrystal's SABScatter normalizes to the per-atom BOUND cross section, so
     # convert free -> bound: sigma_bound = sigma_free * ((A+1)/A)^2  (A = AWR).
