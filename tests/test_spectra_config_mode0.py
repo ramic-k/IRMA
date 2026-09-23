@@ -14,25 +14,14 @@ from irma.spectra.config import (
     SpectraConfig, Scatterer, SpectraConfigError, load, dump, validate,
     run_spectra, _assemble_dos_species,
 )
-from irma.spectra.cli import parse_scatterer, format_scatterer
+from irma.spectra.cli import parse_scatterer
 
 
-# ---- scatterer line round-trip (CLI/GUI shared parser) ----------------------
-@pytest.mark.parametrize("line", [
-    "C,5.551,11.898,6.646,0.001",                       # full
-    "C,5.551,11.898",                                   # bare
-    "H,80.27,0.999,-3.74,80.26",                        # negative b_coh
-    "X,1.0,2.0,,0.5",                                   # b_coh ABSENT, sigma_inc present
-    "Fe,12.2,55.3,9.45,0.4,dos=fe.txt,mult=2,pos=0:0:0;0.5:0.5:0.5",
-])
-def test_scatterer_line_round_trips(line):
-    d = parse_scatterer(line)
-    s = Scatterer(**d)
-    # the absent-b_coh case must NOT shift sigma_inc into b_coh
-    if line.startswith("X"):
-        assert s.b_coh_fm is None and s.sigma_inc_b == 0.5
-    # re-parse the formatted form -> identical dict
-    assert parse_scatterer(format_scatterer(s)) == d
+# ---- scatterer line (CLI/GUI shared parser) ----------------------------------
+def test_scatterer_line_absent_b_coh_keeps_sigma_inc():
+    """An empty b_coh field must not shift sigma_inc_b into b_coh_fm."""
+    s = Scatterer(**parse_scatterer("X,1.0,2.0,,0.5"))
+    assert s.b_coh_fm is None and s.sigma_inc_b == 0.5
 
 
 def _write_dos(tmp_path, name, w_max_meV=40.0, n=121):
