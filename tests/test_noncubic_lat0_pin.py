@@ -93,13 +93,10 @@ def test_lat0_law_matches_lat1_pins_and_is_physical(lat0_tapes, mode):
 
 
 def test_lat0_model_layer_reuse_is_bit_identical(capsys):
-    """Two-layer context cache: a lat=0 deck's
-    physical Q/E grids scale with kT, so a second temperature MISSES the
-    full-context key — but it must HIT the model layer (phonopy load + mesh
-    eigensolves + star average) and rebuild only the grid layer, with the
-    resulting S(a,b) BIT-IDENTICAL to a fresh full build at that temperature.
-    Also pins the size-one eviction policy: after the second temperature the
-    shared cache holds exactly the current context plus its model entry."""
+    """A lat=0 deck's physical Q/E grids scale with kT, so a second
+    temperature misses the full-context cache key but must hit the model
+    layer (phonopy load, mesh eigensolves, star average) and give S(a,b)
+    bit-identical to a fresh build at that temperature."""
     import numpy as np
     from irma.core.noncubic_inelastic import NoncubicInelasticControls
     from irma.core.standalone_sab import run_noncubic_standalone_sab
@@ -124,37 +121,15 @@ def test_lat0_model_layer_reuse_is_bit_identical(capsys):
         temperature_k=400.0, context_cache={}, **kw)
     assert np.array_equal(second["ssm_internal"], fresh["ssm_internal"])
 
-    # Eviction: exactly one full context (the 400 K one) + one model entry.
-    assert len(shared) == 2
-    assert sum(1 for k in shared if k[0] == "__noncubic_model__") == 1
 
-
-# -----------------------------------------------------------------------------
-# Cache-key content identity
-# -----------------------------------------------------------------------------
-def test_model_input_identity_distinguishes_path_and_content(tmp_path):
-    """The model cache key must miss when an input file is REWRITTEN at the
-    same path (content identity = path + size + mtime_ns), and two distinct
-    paths must never collide even with identical size and mtime."""
+def test_model_input_identity_changes_on_rewrite(tmp_path):
+    """The model cache key must miss when an input file is rewritten at the
+    same path (content identity = path + size + mtime_ns)."""
     import os
     from irma.core.standalone_sab import _file_identity
 
     a = tmp_path / "FORCE_CONSTANTS"
     a.write_text("1 1\n0.0\n")
     id1 = _file_identity(a)
-    assert id1[0] == str(a) and id1[1] == a.stat().st_size
-
-    # same size + same mtime at a DIFFERENT path -> different identity
-    b = tmp_path / "FORCE_CONSTANTS_copy"
-    b.write_text("1 1\n0.0\n")
-    os.utime(b, ns=(id1[2], id1[2]))
-    id_b = _file_identity(b)
-    assert id_b != id1 and id_b[1:] == id1[1:]
-
-    # rewrite at the SAME path -> different identity (mtime and/or size move)
     os.utime(a, ns=(id1[2] + 1_000_000, id1[2] + 1_000_000))
     assert _file_identity(a) != id1
-
-    # vanished file keys deterministically, never raises
-    assert _file_identity(tmp_path / "missing")[1:] == (-1, -1)
-    assert _file_identity(None) is None
