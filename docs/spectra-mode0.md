@@ -44,8 +44,7 @@ per represented atom (per atom of the cell included in the calculation),
 the same normalization as `inelastic_mode` 1 and 2 (the
 eigenvector engine also normalizes per represented atom), so a mode-0 and a
 mode-1/2 spectrum are directly comparable. Hydrogen is never blended away
-into a single effective spectrum, and a neutron-weighted generalized DOS
-(GDOS) is also produced as a 1-D summary.
+into a single effective spectrum.
 
 ## Where the DOS comes from (`dos_source`)
 

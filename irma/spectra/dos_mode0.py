@@ -56,8 +56,7 @@ def _validate_dos(omega_ev, rho, symbol):
     return omega, rho, delta1
 
 
-def derive_mode0_phonon_order(*, species, temperature_k, q_max_ang_inv,
-                              tbeta=1.0):
+def derive_mode0_phonon_order(*, species, temperature_k, q_max_ang_inv):
     """Required mode-0 phonon-expansion order (the engine auto-order analogue).
 
     The ``contin`` ladder's order-``n`` weight is Poisson with mean
@@ -73,24 +72,17 @@ def derive_mode0_phonon_order(*, species, temperature_k, q_max_ang_inv,
     ``effective_order = min(required_order, 2000)`` (the engine safety cap;
     ``required > 2000`` means even the capped ladder truncates -- warn).
     """
-    if not species:
-        raise ValueError("derive_mode0_phonon_order: at least one species is "
-                         "required")
     T_K = float(temperature_k)
-    if not T_K > 0.0:
-        raise ValueError(f"temperature_k must be > 0, got {T_K}")
     tev = BK * T_K
     kT = KB * T_K
     u_eq = []
     for sp in species:
-        symbol = sp.get("symbol", "?")
-        omega, rho, delta1 = _validate_dos(sp["omega_ev"], sp["rho"], symbol)
+        omega, rho, delta1 = _validate_dos(sp["omega_ev"], sp["rho"],
+                                           sp.get("symbol", "?"))
         awr = float(sp["awr"])
-        if not awr > 0.0:
-            raise ValueError(f"species {symbol!r}: need awr>0")
         rho = rho.copy()
         rho[0] = 0.0                                # start() reconstructs p[0]
-        _, f0, _, _ = start(rho, omega.size, delta1, tev, float(tbeta))
+        _, f0, _, _ = start(rho, omega.size, delta1, tev, 1.0)
         # isotropic thermal-displacement analogue: 2W = Q^2 U_eq = f0*alpha
         u_eq.append(float(f0) * C_E / (awr * kT))
     mats = np.array([u * np.eye(3) for u in u_eq])
@@ -100,8 +92,7 @@ def derive_mode0_phonon_order(*, species, temperature_k, q_max_ang_inv,
     return effective, required, lam_alpha_max
 
 
-def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
-                      nphon=100, tbeta=1.0):
+def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev, nphon=100):
     """Total powder ``S(Q,E)`` from per-species phonon DOS (mode 0).
 
     Parameters
@@ -124,15 +115,15 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
         (thermal Q ranges typically converge by ~10-20 orders; the ladder
         cost is ~quadratic in the order) and grows it for high-alpha cases
         (H at high Q) where a fixed 100 truncates.
-    tbeta : continuous-spectrum weight (1.0 = full vibrational weight; the
-        Card-6e convention).
+
+    The DOS carries the full vibrational weight (tbeta = 1): this path models
+    solids only, with no diffusive or free-gas translational channel.
 
     Returns a dict with ``q_ang_inv``, ``e_mev``, ``sqe_barn_per_meV`` (nq, nE)
     = the PER-ATOM physical d2sigma/dOmega/dE' (the cross-section/multiplicity-
     weighted cell sum divided by the atoms per cell, matching mode 1/2), the
     per-species Debye-Waller and effective-temperature factors, the atom-averaged
-    bound cross section, the neutron-weighted GDOS (a 1-D summary), and
-    ``nphon_effective`` / ``nphon_required`` (the order the ladder actually ran
+    bound cross section, and ``nphon_effective`` / ``nphon_required`` (the order the ladder actually ran
     / the derived convergence requirement; ``required > effective`` only when
     the 2000 safety cap truncated an ``"auto"`` request).
     """
@@ -141,23 +132,10 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
     T_K = float(temperature_k)
     if not T_K > 0.0:
         raise ValueError(f"temperature_k must be > 0, got {T_K}")
-    if float(tbeta) < 1.0:
-        # tbeta<1 splits off a diffusive / free-gas translational channel (weight
-        # 1-tbeta) that this DOS-based, solid-state-only path does NOT model. Left
-        # unguarded the remainder is silently dropped and S(Q,E) comes out
-        # under-normalized. Full twt/diffusion threading is a separate feature;
-        # until then reject it loudly. Use inelastic_mode 1/2 or a LEAPR deck with
-        # translational cards for diffusive moderators.
-        raise ValueError(
-            f"compute_mode0_sqe is solid-state only: tbeta must be >= 1.0 (full "
-            f"vibrational weight), got {tbeta}. A tbeta<1 diffusive/translational "
-            "remainder is not modelled here and would under-normalize S(Q,E).")
     tev = BK * T_K                                  # kT in eV (kernel units)
     kT = KB * T_K                                   # kT in meV
     Q = np.asarray(q_ang_inv, float)
     E = np.asarray(e_mev, float)
-    if Q.ndim != 1 or E.ndim != 1 or Q.size < 1 or E.size < 1:
-        raise ValueError("q_ang_inv and e_mev must be 1-D non-empty grids")
     beta = E / kT                                   # dimensionless, >= 0
     nQ, nE = Q.size, E.size
 
@@ -166,7 +144,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
             raise ValueError(f"nphon must be an int or 'auto', got {nphon!r}")
         nphon_eff, nphon_req, _lam = derive_mode0_phonon_order(
             species=species, temperature_k=T_K,
-            q_max_ang_inv=float(Q.max()), tbeta=float(tbeta))
+            q_max_ang_inv=float(Q.max()))
     else:
         nphon_eff = int(nphon)                      # explicit order: honored verbatim
         if nphon_eff < 1:
@@ -177,17 +155,12 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
     sigma_b_cell = 0.0
     n_atoms = 0.0
     per_species = []
-    gdos_weight_sum = 0.0
-    gdos_num = None
     for sp in species:
         symbol = sp.get("symbol", "?")
         omega, rho, delta1 = _validate_dos(sp["omega_ev"], sp["rho"], symbol)
         awr = float(sp["awr"])
         sigma_d = float(sp["sigma_bound_b"])
         mult = float(sp.get("multiplicity", 1))
-        if not (awr > 0.0 and sigma_d >= 0.0 and mult > 0.0):
-            raise ValueError(f"species {symbol!r}: need awr>0, sigma_bound_b>=0, "
-                             f"multiplicity>0")
         rho = rho.copy()
         rho[0] = 0.0                                # start() reconstructs p[0]
         np1 = omega.size
@@ -196,7 +169,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
         alpha_d = C_E * Q ** 2 / (awr * kT)
         ssm = np.zeros((nE, nQ))                    # [nbeta, nalpha], filled in place
         f0, tbar, _deltab = contin(ssm, alpha_d, beta, nQ, nE, 0, 1.0, tev,
-                                   rho, np1, delta1, float(tbeta), nphon_eff)
+                                   rho, np1, delta1, 1.0, nphon_eff)
         # asym_downscatter (the P0-validated convention): S = sigma_d/(4pi kT) * ssm
         S_d = _law_to_sqe(ssm, T_K, sigma_d)
         S_cell += mult * S_d
@@ -206,23 +179,9 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
                             "multiplicity": mult, "dw_lambda": float(f0),
                             "teff_ratio": float(tbar)})
 
-        # neutron-weighted GDOS accumulation: weight m_d * sigma_d / M_d. Each
-        # partial DOS is normalized to unit area first -- input files carry
-        # arbitrary intensity units (dos_io) and the S(Q,E) kernel renormalizes
-        # internally, so the GDOS must not inherit the files' relative scales.
-        wdos = mult * sigma_d / awr
-        gdos_weight_sum += wdos
-        area = float(np.trapezoid(rho, omega * 1000.0))     # [intensity * meV]
-        g_on_E = np.interp(E, omega * 1000.0, rho, left=0.0, right=0.0)  # rho on E grid
-        if area > 0.0:
-            g_on_E = g_on_E / area
-        gdos_num = wdos * g_on_E if gdos_num is None else gdos_num + wdos * g_on_E
-
-    gdos = (gdos_num / gdos_weight_sum) if gdos_weight_sum > 0 else np.zeros(nE)
     # PER-ATOM (per represented atom): divide the per-cell sum by the atom count,
     # so the absolute scale matches inelastic_mode 1/2 (which the engine also
-    # normalizes per represented atom). gdos is already a normalized weighted
-    # average and is unaffected.
+    # normalizes per represented atom).
     S_total = S_cell / n_atoms
     sigma_b_total = sigma_b_cell / n_atoms          # atom-weighted average bound xs
     return {
@@ -232,8 +191,6 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
         "per_species": per_species,
         "sigma_b_total": float(sigma_b_total),      # atom-averaged represented bound xs
         "temperature_k": T_K,
-        "gdos_e_mev": E,                            # neutron-weighted GDOS (1-D)
-        "gdos": gdos,
         "nphon_effective": int(nphon_eff),          # the order the ladder ran
         "nphon_required": int(nphon_req),           # derived requirement ('auto')
     }
@@ -250,7 +207,7 @@ class GainGridTooLargeError(ValueError):
 
 
 def compute_mode0_gain_direct(*, species, temperature_k, q_ang_inv, e_gain_mev,
-                              nphon="auto", tbeta=1.0, max_nfft=1 << 24):
+                              nphon="auto", max_nfft=1 << 24):
     """DIRECT energy-gain S(Q, E<0): explicit Bose factors, no detailed balance.
 
     Computes the incoherent-approximation phonon expansion on a SIGNED energy
@@ -290,9 +247,6 @@ def compute_mode0_gain_direct(*, species, temperature_k, q_ang_inv, e_gain_mev,
     T_K = float(temperature_k)
     if not T_K > 0.0:
         raise ValueError(f"temperature_k must be > 0, got {T_K}")
-    if float(tbeta) < 1.0:
-        raise ValueError("compute_mode0_gain_direct is solid-state only: "
-                         f"tbeta must be >= 1.0, got {tbeta}")
     auto_order = isinstance(nphon, str)
     if auto_order and nphon != "auto":
         raise ValueError(f"nphon must be an int or 'auto', got {nphon!r}")

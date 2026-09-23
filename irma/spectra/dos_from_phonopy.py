@@ -19,12 +19,11 @@ from __future__ import annotations
 import numpy as np
 
 from irma.core.phonopy_io import load_phonopy_mesh, compute_dos_tensor
+from irma.spectra.elastic import _group_atoms_by_symbol
 
 
 def partial_dos_from_phonopy(phonopy_yaml, mesh, *, born_path=None,
-                             force_constants=None, force_sets=None,
-                             e_max_ev=None, n_freq=None, sigma_ev=None,
-                             d_omega_mev=0.5):
+                             force_constants=None, force_sets=None):
     """Per-species partial phonon DOS from a phonopy.yaml + mesh.
 
     Parameters
@@ -36,10 +35,9 @@ def partial_dos_from_phonopy(phonopy_yaml, mesh, *, born_path=None,
         force-sets file; overrides the yaml-adjacent discovery (same priority
         as the mode-1/2 engine, so an explicit override gives identical
         phonons in every inelastic mode).
-    e_max_ev : top of the DOS grid [eV]; default = 1.05 x the max mesh frequency.
-    n_freq : number of uniform grid points [0, e_max_ev]; default chosen so the
-        spacing is ``d_omega_mev`` (0.5 meV).
-    sigma_ev : Gaussian smearing [eV]; default = 2 x grid spacing (compute_dos_tensor).
+
+    The DOS grid runs from 0 to 1.05 x the max mesh frequency with a 0.5 meV
+    spacing and compute_dos_tensor's default smearing.
 
     Returns a list of per-species dicts ``{symbol, omega_ev, rho, multiplicity}``
     in first-appearance order -- ready to merge with the per-species scattering
@@ -53,27 +51,15 @@ def partial_dos_from_phonopy(phonopy_yaml, mesh, *, born_path=None,
     w_max = float(np.max(mesh_data.frequencies_ev))
     if not w_max > 0.0:
         raise ValueError(f"{phonopy_yaml}: mesh has no positive phonon frequencies")
-    if e_max_ev is None:
-        e_max_ev = w_max * 1.05
-    if n_freq is None:
-        n_freq = max(int(round(e_max_ev * 1000.0 / float(d_omega_mev))) + 1, 16)
-
-    dos_tensor, omega_ev = compute_dos_tensor(mesh_data, float(e_max_ev),
-                                              int(n_freq), sigma_ev=sigma_ev)
+    e_max_ev = w_max * 1.05
+    n_freq = max(int(round(e_max_ev * 1000.0 / 0.5)) + 1, 16)
+    dos_tensor, omega_ev = compute_dos_tensor(mesh_data, e_max_ev, n_freq)
     # scalar per-atom DOS g_d = (1/3) Tr rho_{d,ij}  -> (n_atoms, n_freq), int = 1
     g_atom = np.einsum("diik->dk", dos_tensor) / 3.0
 
-    species_order, groups = [], {}
-    for d, sym in enumerate(mesh_data.atom_symbols):
-        if sym not in groups:
-            species_order.append(sym)
-            groups[sym] = []
-        groups[sym].append(d)
-
     omega_ev = np.ascontiguousarray(omega_ev, dtype=float)
     out = []
-    for sym in species_order:
-        idx = groups[sym]
+    for sym, idx in zip(*_group_atoms_by_symbol(list(mesh_data.atom_symbols))):
         rho = g_atom[idx].mean(axis=0)              # still normalized to 1/atom
         rho = np.clip(rho, 0.0, None)
         rho[0] = 0.0                                # kernel reconstructs omega=0
