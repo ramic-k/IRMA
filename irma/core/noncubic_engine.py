@@ -395,6 +395,13 @@ def compute_from_args(
             phonon_cutoff_summary = _summary(mesh_data, args.temperature)
             for _line in format_phonon_cutoff_summary(phonon_cutoff_summary):
                 print(_line, flush=True)
+        if incoherent_one_phonon_mode_energies_mev.size:
+            # the one-phonon term has no weight below the lowest kept mesh mode
+            e_low = float(np.min(incoherent_one_phonon_mode_energies_mev))
+            n_low = int(np.count_nonzero(np.abs(e_grid_mev) < e_low))
+            print(f"Lowest kept mesh-mode energy {e_low:.4g} meV: the one-phonon "
+                  f"term is zero for |E| below it ({n_low} of {e_grid_mev.size} "
+                  f"output energies)", flush=True)
         incoherent_one_phonon_mode_occupancies = 1.0 / np.expm1(np.clip(
             incoherent_one_phonon_mode_frequencies_thz * THzToEv
             / (_BK_EV_PER_K * args.temperature), 0.0, 700.0))
