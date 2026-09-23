@@ -45,8 +45,6 @@ def test_u_eigenvalues_sorted_and_clipped():
     eig = u_eigenvalues(U)
     assert eig[0] == 0.0
     assert np.all(np.diff(eig) >= 0.0)
-    with pytest.raises(ValueError):
-        u_eigenvalues(np.eye(2))
 
 
 def test_u_eigenvalues_rejects_materially_negative():

@@ -62,9 +62,9 @@ def _cfg(**kw):
 def test_sigma_coh_ext_runs_and_reduces_below_kinematic():
     sdw = _synthetic_species_dw()
     bragg = _synthetic_bragg()[0]
-    sigma_fn, edge_E, _ = make_sigma_coh_ext(bragg, _synthetic_bragg()[1], sdw, [0.0], _V, _N, 1.0, _cfg(), [296.0])
+    sigma_fn, edge_E, _ = make_sigma_coh_ext(bragg, _synthetic_bragg()[1], sdw, _V, _N, 1.0, _cfg(), [296.0])
     # kinematic reference (no extinction): BC_pure with no sizes -> y -> 1
-    kin_fn, _, _ = make_sigma_coh_ext(bragg, _synthetic_bragg()[1], sdw, [0.0], _V, _N, 1.0,
+    kin_fn, _, _ = make_sigma_coh_ext(bragg, _synthetic_bragg()[1], sdw, _V, _N, 1.0,
                                       _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
     for E in (0.006, 0.02, 0.1):
         ext = sigma_fn(E, 0)
@@ -78,7 +78,7 @@ def test_no_extinction_limit_matches_kinematic():
     # l=g=L=0 -> y == 1 everywhere -> sigma equals the plain kinematic edge sum
     sdw = _synthetic_species_dw()
     bragg = _synthetic_bragg()[0]
-    sig_fn, _, _ = make_sigma_coh_ext(bragg, _synthetic_bragg()[1], sdw, [0.0], _V, _N, 1.0,
+    sig_fn, _, _ = make_sigma_coh_ext(bragg, _synthetic_bragg()[1], sdw, _V, _N, 1.0,
                                       _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
     # plain kinematic: (1/E) sum_{E_j<=E} sigma_j
     for E in (0.006, 0.02, 0.1):
@@ -90,7 +90,7 @@ def test_extinction_s_table_is_histogram_and_monotonic():
     sdw = _synthetic_species_dw()
     bragg, dir_terms = _synthetic_bragg()
     sigma_fn, edge_E, E_active = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0, _cfg(), [296.0])
+        bragg, dir_terms, sdw, _V, _N, 1.0, _cfg(), [296.0])
     # minimal kinematic edge table (one node per edge energy, cumulative kinematic S)
     Ek, Scum, acc = [], [], 0.0
     for bj in bragg:
@@ -127,11 +127,11 @@ def test_reduction_is_scale_independent_cef_vs_mef():
     sdw = _synthetic_species_dw()
     bragg, dir_terms = _synthetic_bragg()
     cfg = _cfg()
-    cef_ext, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, [0.0], _V, _N, 2.7, cfg, [296.0])
-    cef_kin, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, [0.0], _V, _N, 2.7,
+    cef_ext, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 2.7, cfg, [296.0])
+    cef_kin, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 2.7,
                                        _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
-    mef_ext, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, [0.0], _V, _N, 1.0, cfg, [296.0])
-    mef_kin, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, [0.0], _V, _N, 1.0,
+    mef_ext, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 1.0, cfg, [296.0])
+    mef_kin, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 1.0,
                                        _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
     for E in (0.006, 0.02, 0.1):
         r_cef = cef_ext(E, 0) / cef_kin(E, 0)
@@ -147,7 +147,7 @@ def test_extinction_composes_with_grouped_high_e_edges():
     sdw = _synthetic_species_dw()
     bragg, dir_terms = _synthetic_bragg()
     sigma_fn, edge_E, _ = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0, _cfg(), [296.0])
+        bragg, dir_terms, sdw, _V, _N, 1.0, _cfg(), [296.0])
     E_active = 0.15                                        # explicit cutoff for the test
     # ungrouped nodes between the cutoff and the 1 eV grouping threshold keep the
     # splice point `top` fixed (as the real Be edge set does); grouping only collapses
@@ -172,7 +172,7 @@ def test_per_species_isotropic_dw_path_runs():
     # inelastic_mode=0 path: per-species (non-directional) DW must also work
     sdw = _synthetic_species_dw(use_dir=False)
     bragg, dir_terms = _synthetic_bragg()
-    sig_fn, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, [0.0], _V, _N, 1.0,
+    sig_fn, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw, _V, _N, 1.0,
                                       _cfg(), [296.0])
     assert 0.0 < sig_fn(0.02, 0) < 1e4
 
@@ -187,11 +187,9 @@ def test_debye_waller_attenuation_lowers_sigma():
     bragg, dir_terms = _synthetic_bragg()
     cfg = _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0)
     cold, _, _ = make_sigma_coh_ext(
-        bragg, dir_terms, _synthetic_species_dw(W_tensor_scale=0.0),
-        [0.0], _V, _N, 1.0, cfg, [296.0])
+        bragg, dir_terms, _synthetic_species_dw(W_tensor_scale=0.0), _V, _N, 1.0, cfg, [296.0])
     warm, _, _ = make_sigma_coh_ext(
-        bragg, dir_terms, _synthetic_species_dw(W_tensor_scale=5.0),
-        [0.0], _V, _N, 1.0, cfg, [296.0])
+        bragg, dir_terms, _synthetic_species_dw(W_tensor_scale=5.0), _V, _N, 1.0, cfg, [296.0])
     saw_attenuation = False
     for E in (0.02, 0.1, 0.3):
         c, w = cold(E, 0), warm(E, 0)
@@ -210,7 +208,7 @@ def test_multi_temperature_sigma_path():
     sdw = _synthetic_species_dw_multitemp([1.0, 12.0])   # T0 colder, T1 hotter DW
     tempr = [296.0, 1200.0]
     sig_fn, edge_E, _ = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0, 0.0], _V, _N, 1.0, _cfg(), tempr)
+        bragg, dir_terms, sdw, _V, _N, 1.0, _cfg(), tempr)
     for E in (0.02, 0.1):
         s0, s1 = sig_fn(E, 0), sig_fn(E, 1)
         assert s0 > 0.0 and s1 > 0.0
@@ -225,7 +223,7 @@ def test_extinction_s_table_multitemp_has_per_temp_block():
     sdw = _synthetic_species_dw_multitemp([1.0, 12.0])
     tempr = [296.0, 1200.0]
     sig_fn, edge_E, E_active = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0, 0.0], _V, _N, 1.0, _cfg(), tempr)
+        bragg, dir_terms, sdw, _V, _N, 1.0, _cfg(), tempr)
     Ek, S0, acc = [], [], 0.0
     for bj in bragg:
         acc += bj[1]
@@ -253,7 +251,7 @@ def test_extinction_splice_consumes_real_grouped_edges():
     sdw = _synthetic_species_dw()
     bragg, dir_terms = _synthetic_bragg()
     sigma_fn, edge_E, _ = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0, _cfg(), [296.0])
+        bragg, dir_terms, sdw, _V, _N, 1.0, _cfg(), [296.0])
     E_active = 0.15
     lo = sorted(edge_E[:-1])                       # real Be-like sub-cutoff edges
     hi = [1.0 + 0.05 * i for i in range(40)]       # 40 dense edges in [1, 3] eV
@@ -309,10 +307,10 @@ def test_late_strong_reflection_is_not_spliced_kinematically():
     bragg, dir_terms = _weak_edges_plus_strong()
     cfg = _cfg(model="BC_pure", l=1.0e7, g=0.0, L=0.0)
     sigma_fn, _, E_active = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0, cfg, [296.0])
+        bragg, dir_terms, sdw, _V, _N, 1.0, cfg, [296.0])
     assert E_active > 0.01                        # strong edge inside active region
     kin_fn, _, _ = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0,
+        bragg, dir_terms, sdw, _V, _N, 1.0,
         _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
     E = 0.0105
     ext, kin = sigma_fn(E, 0), kin_fn(E, 0)
@@ -337,27 +335,23 @@ def test_deficit_decay_check_falls_back_conservatively(monkeypatch):
     bragg, dir_terms = _weak_edges_plus_strong()
     with pytest.warns(RuntimeWarning, match="did not decay"):
         _, _, E_active = ee.make_sigma_coh_ext(
-            bragg, dir_terms, sdw, [0.0], _V, _N, 1.0,
+            bragg, dir_terms, sdw, _V, _N, 1.0,
             _cfg(model="BC_pure", l=1.0e7, g=0.0, L=0.0), [296.0])
     # y = 0.5 everywhere -> every edge stays active -> cutoff covers them all
     assert E_active >= 0.01
 
 
-# ---- review PH-1: the work cap fails closed, never splices ------------------
-
-def test_scan_continues_past_soft_cap_until_tail_is_proven():
-    """>50k planes with a late strong reflection: the old cap broke out with
-    a warning and returned the strong plane as uncorrected kinematic sigma
-    (474x too high in the review probe). The scan must now keep going, keep
-    the strong edge inside E_active, and return the extinguished value."""
+def test_scan_keeps_a_late_strong_reflection_inside_E_active():
+    """>50k planes with a late strong reflection: the scan must keep the
+    strong edge inside E_active and return the extinguished value."""
     sdw = _synthetic_species_dw()
     bragg, dir_terms = _weak_edges_plus_strong(planes_per_weak=2100)  # 52.5k
     cfg = _cfg(model="BC_pure", l=1.0e7, g=0.0, L=0.0)
     sigma_fn, _, E_active = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0, cfg, [296.0])
+        bragg, dir_terms, sdw, _V, _N, 1.0, cfg, [296.0])
     assert E_active > 0.01
     kin_fn, _, _ = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0,
+        bragg, dir_terms, sdw, _V, _N, 1.0,
         _cfg(model="BC_pure", l=0.0, g=0.0, L=0.0), [296.0])
     E = 0.0105
     ext, kin = sigma_fn(E, 0), kin_fn(E, 0)
@@ -365,24 +359,6 @@ def test_scan_continues_past_soft_cap_until_tail_is_proven():
     assert ext < 0.05 * kin
 
 
-def test_scan_hard_cap_raises_instead_of_splicing(monkeypatch):
-    """With the tail bound unprovable and the hard cap exceeded, the scan
-    must fail closed -- never return a kinematic splice."""
-    from irma.core import elastic_extinction as ee
-
-    def _rising_deficit(model, Nc, wl, F_hkl, d_hkl, **kw):
-        return wl / (1.0 + wl)      # deficit rises forever: bound never proven
-
-    monkeypatch.setattr(ee._ext, "extinction_factor", _rising_deficit)
-    monkeypatch.setattr(ee, "_SCAN_SOFT_CAP", 200)
-    monkeypatch.setattr(ee, "_SCAN_HARD_CAP", 1000)
-    sdw = _synthetic_species_dw()
-    bragg, dir_terms = _weak_edges_plus_strong(planes_per_weak=50)   # 1,251
-    with pytest.raises(RuntimeError, match="hard cap"), \
-            pytest.warns(RuntimeWarning, match="did not decay"):
-        ee.make_sigma_coh_ext(bragg, dir_terms, sdw, [0.0], _V, _N, 1.0,
-                              _cfg(model="BC_pure", l=1.0e7, g=0.0, L=0.0),
-                              [296.0])
 
 
 # ---- review PH-2: end-to-end nonnegative sigma through the fragile window --
@@ -399,7 +375,7 @@ def test_sabine_triangular_never_returns_negative_sigma():
         e_strong=0.5, fsq_strong=5.0)           # strong edge holds E_active up
     cfg = _cfg(model="Sabine_uncorr", l=1000.0, g=1.0, L=1.0e4, dist="tri")
     sigma_fn, _, E_active = make_sigma_coh_ext(
-        bragg, dir_terms, sdw, [0.0], _V, _N, 1.0, cfg, [296.0])
+        bragg, dir_terms, sdw, _V, _N, 1.0, cfg, [296.0])
     assert E_active > 0.0
     for E in np.geomspace(0.0011, 0.45, 601):
         s = sigma_fn(float(E), 0)

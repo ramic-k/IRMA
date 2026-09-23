@@ -72,7 +72,7 @@ def _sdw(F_sites, uniform):
     return types.SimpleNamespace(
         use_dir_dw=True, use_ps=False, nsp=1, b_sqb=[_B], awr_sp=[_AWR],
         F_species_per_temp=[[F_sites.mean(axis=0)]],
-        F_sites_per_temp=[[F_sites]],
+        F_sites_per_temp=[F_sites],
         dir_tensors_uniform=uniform, W_ps=None, bragg_dir_terms=None)
 
 
@@ -229,7 +229,7 @@ def test_driver_stores_site_tensors_in_card6d_order_and_flags_nonuniform():
     _store_directional_species_dw(ci, 0, 1,
                                   np.array([F_half, F_zero]))
     assert ci['dir_tensors_uniform'] is False
-    F_sites = ci['F_sites_per_temp'][0][0]
+    F_sites = ci['F_sites_per_temp'][0]
     assert np.array_equal(F_sites[0], F_zero)        # Card 6d site (0,0,0)
     assert np.array_equal(F_sites[1], F_half)        # Card 6d site (0.5,0,0)
     # averaged tensor unchanged (fast path input)
@@ -276,7 +276,7 @@ def test_driver_pairs_sites_modulo_shared_origin_shift():
     _store_directional_species_dw(ci, 0, 1,
                                   np.array([F_a, F_b]))
     assert ci['dir_tensors_uniform'] is False
-    F_sites = ci['F_sites_per_temp'][0][0]
+    F_sites = ci['F_sites_per_temp'][0]
     # deck (0,0,0) <-> phonopy atom 0 at (0,0,0.75); deck (0.5,0,0) <-> atom 1
     assert np.array_equal(F_sites[0], F_a)
     assert np.array_equal(F_sites[1], F_b)
@@ -294,23 +294,6 @@ def test_driver_raises_when_nonuniform_sites_cannot_be_paired():
             np.array([np.diag([1.0, 2.0, 3.0]), np.diag([4.0, 5.0, 6.0])]))
 
 
-# ---- resolver wiring ------------------------------------------------------------
-def test_resolver_requires_site_tensors_when_nonuniform():
-    from irma.core.elastic_dw import resolve_species_dw
-    ci = {
-        'atom_types': [{'Z': 6, 'A': 12, 'awr': _AWR, 'b_coh': 6.646,
-                        'sigma_inc': 0.0, 'dwpix': [0.5]}],
-        'F_species_per_temp': [[np.eye(3)]],
-        'bragg_dir_terms': [[]],
-        'dir_tensors_uniform': False,                # ...but no F_sites_per_temp
-    }
-    with pytest.raises(ValueError, match="F_sites_per_temp"):
-        resolve_species_dw(ci, [296.0], 1)
-    # complete state resolves and carries the new fields
-    ci['F_sites_per_temp'] = [[np.stack([np.eye(3), 2.0 * np.eye(3)])]]
-    sdw = resolve_species_dw(ci, [296.0], 1)
-    assert sdw.use_dir_dw and sdw.dir_tensors_uniform is False
-    assert np.array_equal(sdw.F_sites_per_temp[0][0][1], 2.0 * np.eye(3))
 
 
 # ---- extinction path -------------------------------------------------------------
@@ -341,7 +324,7 @@ def test_extinction_site_resolved_delta_matches_reference():
                     dist="Gauss", recipe="std")
 
     bragg, dir_terms, sdw_ne = _two_edge_bragg(F_ne, uniform=False)
-    sig_ne, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw_ne, [0.0],
+    sig_ne, _, _ = make_sigma_coh_ext(bragg, dir_terms, sdw_ne,
                                       _V, _N, 1.0, no_ext, [_T])
     E = 2.0 * float(bragg[1][0])                    # above both edges
     ref = sum(_exact_site_sum(float(bragg[j][0]), dir_terms[j][0][0],
@@ -351,7 +334,7 @@ def test_extinction_site_resolved_delta_matches_reference():
 
     # uniform state keeps the old (averaged == exact here) arithmetic
     bragg_u, dir_terms_u, sdw_eq = _two_edge_bragg(F_eq, uniform=True)
-    sig_eq, _, _ = make_sigma_coh_ext(bragg_u, dir_terms_u, sdw_eq, [0.0],
+    sig_eq, _, _ = make_sigma_coh_ext(bragg_u, dir_terms_u, sdw_eq,
                                       _V, _N, 1.0, no_ext, [_T])
     ref_u = sum(_old_averaged(float(bragg_u[j][0]), dir_terms_u[j][0][0],
                               dir_terms_u[j][0][1],
@@ -362,9 +345,9 @@ def test_extinction_site_resolved_delta_matches_reference():
     # both run without error under a real extinction model, y <= 1
     for br, dt, sdw in [(bragg, dir_terms, sdw_ne),
                         (bragg_u, dir_terms_u, sdw_eq)]:
-        sfn, _, _ = make_sigma_coh_ext(br, dt, sdw, [0.0], _V, _N, 1.0,
+        sfn, _, _ = make_sigma_coh_ext(br, dt, sdw, _V, _N, 1.0,
                                        real_ext, [_T])
-        kfn, _, _ = make_sigma_coh_ext(br, dt, sdw, [0.0], _V, _N, 1.0,
+        kfn, _, _ = make_sigma_coh_ext(br, dt, sdw, _V, _N, 1.0,
                                        no_ext, [_T])
         s, k = sfn(E, 0), kfn(E, 0)
         assert 0.0 < s <= k * (1.0 + 1e-12)

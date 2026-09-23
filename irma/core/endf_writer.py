@@ -864,7 +864,7 @@ def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
         from irma.core.elastic_extinction import make_sigma_coh_ext
         crystal = crystal_info['crystal']
         sigma_fn, edge_E, E_active = make_sigma_coh_ext(
-            bragg, crystal_info['bragg_dir_terms'], species_dw, dwpix_out,
+            bragg, crystal_info['bragg_dir_terms'], species_dw,
             crystal.volume, crystal.n_atoms, scale, ext_cfg, tempr)
         kin_table = _coherent_s_table_or_grouped(
             bragg, nedge, ntempr, tempr, _edge_delta, crystal_info)

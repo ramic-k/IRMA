@@ -68,7 +68,7 @@ def test_provenance_comment_records_model_and_params():
     ("extinction BC_mix l=8550 /", "needs l>0, g>0 and L>0"),
     ("extinction BC_mod g=170 L=75750 /", "needs l>0, g>0 and L>0"),
     ("extinction BC_pure l=8550 g=170 L=75750 /", "primary OR secondary, not both"),
-    ("extinction BC_mix g=170 L=75750 rec=lux /", "rec=lux is not implemented"),
+    ("extinction BC_mix g=170 L=75750 rec=lux /", "rec must be one of"),
     ("extinction BC_pure /", "no active mechanism"),
     ("extinction BC_pure l=1 l=2 /", "given more than once"),
     ("extinction BC_pure l=8550 dist=Bogus /", "dist for BC_pure must be one of"),

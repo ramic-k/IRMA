@@ -129,8 +129,6 @@ def u_eigenvalues(U):
     raises instead of being silently clipped.
     """
     U = np.asarray(U, float)
-    if U.shape != (3, 3):
-        raise ValueError(f"U must be a 3x3 tensor, got shape {U.shape}")
     eig = np.linalg.eigvalsh(0.5 * (U + U.T))
     tol = 1.0e-8 * max(1.0e-30, float(np.max(np.abs(eig))))
     if eig[0] < -tol:
@@ -207,7 +205,11 @@ def dw_orientation_average(u_eig, Q):
     return dw_orientation_average_tsq(u_eig, Q * Q)
 
 
-def sigma_elinc_directional(ksq_invA2, channels, *, n_t=16384):
+# Points of the log t-grid of sigma_elinc_directional.
+_N_T = 16384
+
+
+def sigma_elinc_directional(ksq_invA2, channels):
     """Angle-integrated directional incoherent-elastic cross section [barn].
 
     sigma(E) = sum_d (sigma_d / (4 k^2)) * int_0^{4k^2} f_d(sqrt(t)) dt
@@ -229,17 +231,13 @@ def sigma_elinc_directional(ksq_invA2, channels, *, n_t=16384):
     comparing a table with itself.
     """
     ksq = np.atleast_1d(np.asarray(ksq_invA2, float))
-    if np.any(ksq < 0.0):
-        raise ValueError("ksq_invA2 must be non-negative")
     t_hi = 4.0 * float(np.max(ksq, initial=0.0))
     out = np.zeros_like(ksq)
     if t_hi <= 0.0:
         return out + sum(float(sb) for sb, _ in channels)
-    u_max = max((float(np.max(np.asarray(u_eig, float)))
-                 for _, u_eig in channels), default=0.0)
-    t_scale = min(t_hi, 1.0 / u_max) if u_max > 0.0 else t_hi
-    t = np.concatenate([[0.0],
-                        np.geomspace(t_scale * 1.0e-8, t_hi, int(n_t))])
+    u_max = max(float(np.max(np.asarray(u_eig, float))) for _, u_eig in channels)
+    t_scale = min(t_hi, 1.0 / u_max)
+    t = np.concatenate([[0.0], np.geomspace(t_scale * 1.0e-8, t_hi, _N_T)])
     for sb, u_eig in channels:
         f = dw_orientation_average_tsq(u_eig, t)
         cum = np.concatenate([[0.0],

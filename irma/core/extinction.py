@@ -36,7 +36,7 @@ import math
 _INV_PI = 1.0 / math.pi
 
 EXTINCTION_MODELS = ("Sabine_uncorr", "Sabine_corr", "BC_pure", "BC_mix", "BC_mod")
-RECIPES = ("cls", "std", "lux")
+RECIPES = ("cls", "std")
 # tilt/mosaic distribution keyword -> internal code, per model family
 _SABINE_DIST = {"rect": 0, "tri": 1}
 _BC_DIST = {"Gauss": 1, "Lorentz": 2, "Fresnel": 3}
@@ -58,110 +58,70 @@ def _nest(coeffs, ops, v):
 _M5 = [-1] * 5
 _M3 = [-1] * 3
 
+# kind -> (small-x y0 coefficients, fitted y0 coefficients, their ops,
+#          small-u ydelta coefficients, fitted ydelta coefficients, their ops);
+# kind 0 is primary extinction, 1/2/3 secondary with a Gauss/Lorentz/Fresnel tilt.
+_BC2025 = {
+    0: ([1.0, 0.94285714, 0.8204, 0.593, 0.364, 0.19],
+        [0.518212, 0.93036, 0.182006, 1.10097, 0.62625, 1.73562,
+         1.08506, 2.19459, 1.40451, 1.62083, 1.1031, 0.49125, 0.357611],
+        [-1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1],
+        [0.41021645, 1.187, 2.37, 4.18],
+        [0.05508, 0.1166, 0.2099, 0.5482, 0.5248, 1.402, 1.168,
+         2.096, 2.116, 1.155, 1.952, 0.6046],
+        [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1]),
+    1: ([1.0, 1.0606602, 0.9238, 0.667, 0.409, 0.22],
+        [0.4588909, 1.038687, 0.2401003, 1.288282, 0.7641972, 1.880246,
+         1.886916, 2.171852, 3.273034, 0.9771599, 2.988445, 0.4993548,
+         1.037121, 0.4353142],
+        [-1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1, 1, -1],
+        [0.46188022, 1.333, 2.66, 4.68],
+        [0.062289443, 0.13177896, 0.240705, 0.61857545, 0.61744404,
+         1.4812474, 1.5419561, 1.9976424, 2.8090858, 0.74297172,
+         2.3120683, 0.8661981],
+        [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1]),
+    2: ([1.0, 1.0, 1.0667, 0.988, 0.79, 0.55],
+        [0.53379, 0.84182, 0.16806, 0.65124, 0.67623, 0.47199, 1.0872,
+         0.030142, 0.91361, 0.28313, 0.30078, 0.1507],
+        [-1, -1, 1, -1, 1, -1, 1, -1, -1, 1, -1],
+        [0.53333333, 1.9753, 5.14, 11.9],
+        [0.0514714, 0.0863117, 0.191581, 0.266342, 0.504516,
+         0.32195, 0.894662, 0.0162501, 0.708855, 0.33707],
+        [1, -1, 1, -1, 1, -1, -1, 1, -1]),
+    3: ([1.0, 1.0, 0.88, 0.639, 0.394, 0.21],
+        [0.493354, 0.963692, 0.235067, 1.18222, 0.672931, 1.78522,
+         1.09976, 2.10882, 1.34721, 1.46841, 1.0054, 0.426279, 0.313436],
+        [-1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1],
+        [0.44, 1.278, 2.56, 4.52],
+        [0.05839, 0.12063, 0.233343, 0.578753, 0.584531, 1.42753,
+         1.28278, 1.95436, 2.18561, 0.877761, 1.80505, 0.599956],
+        [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1]),
+}
 
-def bc2025_y_primary(x, sintheta):
-    """BC2025 'std' primary-extinction factor y(x, sintheta).
 
-    Chebyshev-nested fit to the Becker-Coppens primary integral, with the
-    asymptotic sqrt(1e3/x) continuation above x = 1e3.
+def bc2025_y(kind, x, sintheta):
+    """BC2025 'std' extinction factor y(x, sintheta) for ``kind`` (see _BC2025).
+
+    Above x = 1e3 the fit continues as x^-0.933 (Gauss secondary) or
+    sqrt(1e3/x) (the others).
     """
+    y0_small, y0_c, y0_ops, yd_small, yd_c, yd_ops = _BC2025[kind]
     if x < 0.1:
-        y0 = _nest([1.0, 0.94285714, 0.8204, 0.593, 0.364, 0.19], _M5, x)
+        y0 = _nest(y0_small, _M5, x)
     else:
         if x > 1e3:
-            return bc2025_y_primary(1e3, sintheta) * math.sqrt(1e3 / x)
+            tail = (x * 1e-3) ** (-0.933) if kind == 1 else math.sqrt(1e3 / x)
+            return bc2025_y(kind, 1e3, sintheta) * tail
         xp = (math.sqrt(x) - 1.0) / (math.sqrt(x) + 1.0)
-        y0 = _nest([0.518212, 0.93036, 0.182006, 1.10097, 0.62625, 1.73562,
-                    1.08506, 2.19459, 1.40451, 1.62083, 1.1031, 0.49125, 0.357611],
-                   [-1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1], xp)
+        y0 = _nest(y0_c, y0_ops, xp)
     s = math.sqrt(sintheta)
     u = x * s
     if u < 0.1:
-        ydelta = u * u * _nest([0.41021645, 1.187, 2.37, 4.18], _M3, u)
+        ydelta = u * u * _nest(yd_small, _M3, u)
     else:
         up = (math.sqrt(u) - 1.0) / (math.sqrt(u) + 1.0)
-        ydelta = _nest([0.05508, 0.1166, 0.2099, 0.5482, 0.5248, 1.402, 1.168,
-                        2.096, 2.116, 1.155, 1.952, 0.6046],
-                       [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1], up)
+        ydelta = _nest(yd_c, yd_ops, up)
     return y0 + sintheta * s * ydelta
-
-
-def bc2025_y_scndgauss(x, sintheta):
-    """BC2025 'std' secondary-extinction factor for a Gaussian tilt
-    distribution, with the x^-0.933 continuation above x = 1e3."""
-    if x < 0.1:
-        y0 = _nest([1.0, 1.0606602, 0.9238, 0.667, 0.409, 0.22], _M5, x)
-    else:
-        if x > 1e3:
-            return bc2025_y_scndgauss(1e3, sintheta) * (x * 1e-3) ** (-0.933)
-        xp = (math.sqrt(x) - 1.0) / (math.sqrt(x) + 1.0)
-        y0 = _nest([0.4588909, 1.038687, 0.2401003, 1.288282, 0.7641972, 1.880246,
-                    1.886916, 2.171852, 3.273034, 0.9771599, 2.988445, 0.4993548,
-                    1.037121, 0.4353142],
-                   [-1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1, 1, -1], xp)
-    s = math.sqrt(sintheta)
-    u = x * s
-    if u < 0.1:
-        ydelta = u * u * _nest([0.46188022, 1.333, 2.66, 4.68], _M3, u)
-    else:
-        up = (math.sqrt(u) - 1.0) / (math.sqrt(u) + 1.0)
-        ydelta = _nest([0.062289443, 0.13177896, 0.240705, 0.61857545, 0.61744404,
-                        1.4812474, 1.5419561, 1.9976424, 2.8090858, 0.74297172,
-                        2.3120683, 0.8661981],
-                       [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1], up)
-    return y0 + sintheta * s * ydelta
-
-
-def bc2025_y_scndlorentz(x, sintheta):
-    """BC2025 'std' secondary-extinction factor for a Lorentzian tilt
-    distribution, with the sqrt(1e3/x) continuation above x = 1e3."""
-    if x < 0.1:
-        y0 = _nest([1.0, 1.0, 1.0667, 0.988, 0.79, 0.55], _M5, x)
-    else:
-        if x > 1e3:
-            return bc2025_y_scndlorentz(1e3, sintheta) * math.sqrt(1e3 / x)
-        xp = (math.sqrt(x) - 1.0) / (math.sqrt(x) + 1.0)
-        y0 = _nest([0.53379, 0.84182, 0.16806, 0.65124, 0.67623, 0.47199, 1.0872,
-                    0.030142, 0.91361, 0.28313, 0.30078, 0.1507],
-                   [-1, -1, 1, -1, 1, -1, 1, -1, -1, 1, -1], xp)
-    s = math.sqrt(sintheta)
-    u = x * s
-    if u < 0.1:
-        ydelta = u * u * _nest([0.53333333, 1.9753, 5.14, 11.9], _M3, u)
-    else:
-        up = (math.sqrt(u) - 1.0) / (math.sqrt(u) + 1.0)
-        ydelta = _nest([0.0514714, 0.0863117, 0.191581, 0.266342, 0.504516,
-                        0.32195, 0.894662, 0.0162501, 0.708855, 0.33707],
-                       [1, -1, 1, -1, 1, -1, -1, 1, -1], up)
-    return y0 + sintheta * s * ydelta
-
-
-def bc2025_y_scndfresnel(x, sintheta):
-    """BC2025 'std' secondary-extinction factor for a Fresnel tilt
-    distribution."""
-    if x < 0.1:
-        y0 = _nest([1.0, 1.0, 0.88, 0.639, 0.394, 0.21], _M5, x)
-    else:
-        if x > 1e3:
-            return bc2025_y_scndfresnel(1e3, sintheta) * math.sqrt(1e3 / x)
-        xp = (math.sqrt(x) - 1.0) / (math.sqrt(x) + 1.0)
-        y0 = _nest([0.493354, 0.963692, 0.235067, 1.18222, 0.672931, 1.78522,
-                    1.09976, 2.10882, 1.34721, 1.46841, 1.0054, 0.426279, 0.313436],
-                   [-1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1], xp)
-    s = math.sqrt(sintheta)
-    u = x * s
-    if u < 0.1:
-        ydelta = u * u * _nest([0.44, 1.278, 2.56, 4.52], _M3, u)
-    else:
-        up = (math.sqrt(u) - 1.0) / (math.sqrt(u) + 1.0)
-        ydelta = _nest([0.05839, 0.12063, 0.233343, 0.578753, 0.584531, 1.42753,
-                        1.28278, 1.95436, 2.18561, 0.877761, 1.80505, 0.599956],
-                       [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1], up)
-    return y0 + sintheta * s * ydelta
-
-
-_BC2025_SECONDARY = {1: bc2025_y_scndgauss, 2: bc2025_y_scndlorentz,
-                     3: bc2025_y_scndfresnel}
 
 
 # --------------------------------------------------------------------------- #
@@ -206,77 +166,53 @@ def _y_secondary(x, sintheta, cos_2theta, tilt_dist, recipe, force_212=False):
     """Secondary-extinction factor for the selected recipe ('cls'/'std')."""
     if recipe == "cls":
         return _y_bc1974_secondary(x, cos_2theta, tilt_dist, force_212)
-    return _BC2025_SECONDARY[tilt_dist](x, sintheta)   # 'std' (lux gated upstream)
+    return bc2025_y(tilt_dist, x, sintheta)
 
 
 def _y_primary(x, sintheta, cos_2theta, recipe):
     """Primary-extinction factor for the selected recipe ('cls'/'std')."""
     if recipe == "cls":
         return _y_bc1974_primary(x, cos_2theta)
-    return bc2025_y_primary(x, sintheta)               # 'std'
+    return bc2025_y(0, x, sintheta)
 
 
 # --------------------------------------------------------------------------- #
-#  Sabine's model  (analytic; Int. Tables Vol. C, ch. 6.4)                     #
-#  mu (absorption) is kept for fidelity but defaults to 0 as in CrysXT.        #
+#  Sabine's model  (analytic; Int. Tables Vol. C, ch. 6.4), without absorption #
+#  (A = B = 1), as in CrysXT.                                                  #
 # --------------------------------------------------------------------------- #
-def _calc_AB_sabine(y):
-    """Sabine A(y), B(y) absorption-coupling coefficients (y = mu * D)."""
-    if y <= 1e-9:
-        return (1.0, 1.0)
-    return (math.exp(-y) * math.sinh(y) / y,
-            1.0 / y - math.exp(-y) / math.sinh(y))
-
-
-def _sabine_primary_factors(x, y):
-    """Sabine primary factors (Bragg/Laue components) at x, with absorption y."""
-    """Returns (E_L, E_B): the 2theta=0 and 2theta=pi limiting primary factors."""
-    el = math.exp(-y)
+def _sabine_primary_factors(x):
+    """Sabine primary factors (E_L, E_B): the 2theta=0 and 2theta=pi limits."""
     if x <= 1.0:
-        el *= (1.0 - x / 2.0 + x * x / 4.0 - 5.0 * x ** 3 / 48.0 + 7.0 * x ** 4 / 192.0)
+        el = (1.0 - x / 2.0 + x * x / 4.0 - 5.0 * x ** 3 / 48.0 + 7.0 * x ** 4 / 192.0)
     else:
-        el *= math.sqrt(2.0 * _INV_PI / x)
+        el = math.sqrt(2.0 * _INV_PI / x)
         el *= (1.0 - 1.0 / (8.0 * x) - 3.0 / (128.0 * x * x) - 15.0 / (1024.0 * x ** 3))
-    a, b = _calc_AB_sabine(y)
-    return (el, a / math.sqrt(1.0 + b * x))
+    return (el, 1.0 / math.sqrt(1.0 + x))
 
 
-def _sabine_secondary_factors(x, y, tilt_dist):
-    """tilt_dist 0=rectangular, 1=triangular tilt distribution.
+def _sabine_secondary_factors(x, tilt_dist):
+    """Sabine secondary factors (E_L, E_B); tilt_dist 0=rectangular, 1=triangular.
 
-    Numerically stable forms (review PH-2): the textbook triangular
-    expression ``1 - (1 - exp(-2x))/(2x)`` loses ALL significant digits by
-    direct subtraction just above the small-x threshold (relative error
-    ~eps/x^2: at x ~ 1e-9 the factor came out anywhere in [-100, +100],
-    producing negative extinction factors and negative coherent cross
-    sections end to end). Rewritten exactly as
-    ``(2x + expm1(-2x)) / (2x)`` the cancellation happens inside expm1 and
-    the relative error stays ~eps/x (bounded, ~2e-7 at x=1e-9). The same
-    defect exists verbatim in upstream ncplugin-CrysXT (scnd_extn_fact,
-    triangular branch). ``bx - log1p(bx)`` (relative error ~2eps/bx) gets a
-    series branch below bx=1e-4 for the same reason.
+    Written as ``(2x + expm1(-2x)) / (2x)`` and ``x - log1p(x)`` (with a
+    series below 1e-4) instead of the textbook ``1 - (1 - exp(-2x))/(2x)``,
+    which loses all digits at small x. The textbook form is also in
+    ncplugin-CrysXT.
     """
-    a, b = _calc_AB_sabine(y)
-    bx = b * x
     if tilt_dist == 0:
-        el = math.exp(-y) if x < 1e-9 \
-            else math.exp(-y) * (-math.expm1(-2.0 * x)) / (2.0 * x)
-        return (el, a / (1.0 + bx))
+        el = 1.0 if x < 1e-9 else (-math.expm1(-2.0 * x)) / (2.0 * x)
+        return (el, 1.0 / (1.0 + x))
     if x < 1e-9:
-        return (math.exp(-y), a * b)
-    el = math.exp(-y) / x * (2.0 * x + math.expm1(-2.0 * x)) / (2.0 * x)
-    if bx < 1e-4:
-        # bx - log1p(bx) = bx^2/2 - bx^3/3 + bx^4/4 - ... ; truncation
-        # relative error < bx^3 terms / leading ~ (2/3)bx < 1e-4 * 2/3,
-        # and with the bx^3/bx^4 terms kept it is < 1e-12 at the branch.
-        series = bx * bx * (0.5 - bx / 3.0 + bx * bx / 4.0)
-        eb = 2.0 * a / bx / x * series
+        return (1.0, 1.0)
+    el = 1.0 / x * (2.0 * x + math.expm1(-2.0 * x)) / (2.0 * x)
+    if x < 1e-4:
+        series = x * x * (0.5 - x / 3.0 + x * x / 4.0)
+        eb = 2.0 / x / x * series
     else:
-        eb = 2.0 * a / bx / x * (bx - math.log1p(bx))
+        eb = 2.0 / x / x * (x - math.log1p(x))
     return (el, eb)
 
 
-def _sabine_uncorr(Nc, wl, F, l, d, g, L, tilt_dist, mu):
+def _sabine_uncorr(Nc, wl, F, l, d, g, L, tilt_dist):
     """Sabine extinction factor, uncorrelated primary x secondary blocks."""
     sin_t = 0.5 * wl / d
     if sin_t > 1.0:
@@ -284,20 +220,19 @@ def _sabine_uncorr(Nc, wl, F, l, d, g, L, tilt_dist, mu):
     sin2 = sin_t * sin_t
     cos2 = 1.0 - sin2
     cos_t = math.sqrt(cos2)
-    y = mu * l
     xp = (Nc * wl * F * l) ** 2
-    ep_l, ep_b = _sabine_primary_factors(xp, y)
+    ep_l, ep_b = _sabine_primary_factors(xp)
     ep = ep_l * cos2 + ep_b * sin2
     if sin_t == 0.0 or cos_t == 0.0:
         return 0.0
     q = (Nc * wl * F) ** 2 * wl / (2.0 * sin_t * cos_t)
     xs = ep * q * g * L
-    es_l, es_b = _sabine_secondary_factors(xs, y, tilt_dist)
+    es_l, es_b = _sabine_secondary_factors(xs, tilt_dist)
     es = es_l * cos2 + es_b * sin2
     return ep * es
 
 
-def _sabine_corr(Nc, wl, F, l, d, g, L, mu):
+def _sabine_corr(Nc, wl, F, l, d, g, L):
     """Sabine extinction factor, correlated (series-coupled) variant."""
     sin_t = 0.5 * wl / d
     if sin_t > 1.0:
@@ -305,7 +240,6 @@ def _sabine_corr(Nc, wl, F, l, d, g, L, mu):
     sin2 = sin_t * sin_t
     cos2 = 1.0 - sin2
     cos_t = math.sqrt(cos2)
-    y = mu * l
     if l > 0.0 and g == 0.0:
         x = (Nc * wl * F * l) ** 2
     else:
@@ -313,7 +247,7 @@ def _sabine_corr(Nc, wl, F, l, d, g, L, mu):
             return 0.0
         q = (Nc * wl * F) ** 2 * wl / (2.0 * sin_t * cos_t)
         x = (Nc * wl * F * l + g * q * (L - l)) ** 2
-    el, eb = _sabine_primary_factors(x, y)
+    el, eb = _sabine_primary_factors(x)
     return el * cos2 + eb * sin2
 
 
@@ -376,11 +310,11 @@ def _bc_mix(Nc, wl, F, l, d, g, L, tilt_dist, recipe, primary):
 # --------------------------------------------------------------------------- #
 #  Public dispatcher                                                          #
 # --------------------------------------------------------------------------- #
-def _extinction_factor_raw(model, Nc, wl, F_hkl, d_hkl, *, l=0.0, g=0.0, L=0.0,
-                      dist=None, recipe="std", mu=0.0):
-    """Per-plane extinction factor y in (0, 1].
+def extinction_factor(model, Nc, wl, F_hkl, d_hkl, *, l=0.0, g=0.0, L=0.0,
+                      dist="Gauss", recipe="std"):
+    """Per-plane extinction factor y in [0, 1].
 
-    model    : one of EXTINCTION_MODELS.
+    model    : one of EXTINCTION_MODELS (the deck parser checks the options).
     Nc       : unit cells per volume = 1/V_cell  [Angstrom^-3].
     wl       : neutron wavelength [Angstrom].
     F_hkl    : |F_hkl|, structure-factor modulus per cell [Angstrom]
@@ -388,69 +322,24 @@ def _extinction_factor_raw(model, Nc, wl, F_hkl, d_hkl, *, l=0.0, g=0.0, L=0.0,
     d_hkl    : interplanar spacing [Angstrom].
     l, g, L  : crystallite size [A], mosaic spread [rad^-1], grain size [A].
     dist     : 'rect'/'tri' (Sabine) or 'Gauss'/'Lorentz'/'Fresnel' (BC).
-    recipe   : 'cls' or 'std' (BC models). 'lux' is intentionally unsupported --
-               see note below.
-    mu       : absorption attenuation [A^-1]; 0 as in CrysXT.
-    """
-    if model not in EXTINCTION_MODELS:
-        raise ValueError(f"unknown extinction model {model!r}; "
-                         f"expected one of {EXTINCTION_MODELS}")
-    if recipe not in RECIPES:
-        raise ValueError(f"unknown recipe {recipe!r}; expected one of {RECIPES}")
-    if recipe == "lux":
-        # The BC2025 'lux' recipe guarantees error < 1e-6, but the coherent-elastic
-        # tape is tabulated to ~0.2% RMSE -- 'lux' is ~1000x tighter than the
-        # tabulation tolerance and so cannot change the output. Use 'std'.
-        raise NotImplementedError(
-            "recipe='lux' is not implemented: its 1e-6 precision is far below the "
-            "tape tabulation tolerance (~0.2% RMSE), so it cannot affect the result. "
-            "Use recipe='std' (default) or 'cls'.")
+    recipe   : 'cls' or 'std' (BC models).
 
+    Rounding-scale excursions outside [0, 1] are clamped; a larger one is a
+    model error and raises.
+    """
     if model.startswith("Sabine"):
         td = _SABINE_DIST.get(dist, 0)
         if model == "Sabine_uncorr":
-            return _sabine_uncorr(Nc, wl, F_hkl, l, d_hkl, g, L, td, mu)
-        return _sabine_corr(Nc, wl, F_hkl, l, d_hkl, g, L, mu)
-
-    td = _BC_DIST.get(dist, 1)
-    if model in ("BC_mix", "BC_mod") and not (l > 0.0 and g > 0.0 and L > 0.0):
-        # both run the coupled primary+secondary (BC_mod = secondary-only) path,
-        # whose secondary x is parameterised by the crystallite size l as well as
-        # the mosaic spread g and grain L -- so all three must be positive, else
-        # _bc_mix returns y=1 (a silent no-op stamped as "corrected").
-        raise ValueError(
-            f"{model} requires l>0, g>0 and L>0 (it couples primary and secondary "
-            "extinction). For primary-only extinction use BC_pure with only l set.")
-    if model == "BC_pure":
-        return _bc_pure(Nc, wl, F_hkl, l, d_hkl, g, L, td, recipe)
-    if model == "BC_mix":
-        return _bc_mix(Nc, wl, F_hkl, l, d_hkl, g, L, td, recipe, primary=True)
-    return _bc_mix(Nc, wl, F_hkl, l, d_hkl, g, L, td, recipe, primary=False)  # BC_mod
-
-
-# Rounding-scale tolerance for the [0, 1] physical invariant below.
-_Y_TOL = 1e-6
-
-
-def extinction_factor(model, Nc, wl, F_hkl, d_hkl, *, l=0.0, g=0.0, L=0.0,
-                      dist="Gauss", recipe="std", mu=0.0):
-    """Extinction factor y in [0, 1] -- the invariant-checked public boundary.
-
-    Extinction can only REDUCE the kinematic intensity, so every model must
-    return y in [0, 1] (review PH-2). Rounding-scale excursions (composed
-    primary x secondary products land ~1e-9 outside on some parameter sets)
-    are clamped; a material violation is a numerical-stability or parameter
-    bug in a model and raises rather than propagating -- an unchecked
-    negative factor reached ENDF tapes as a negative coherent-elastic cross
-    section, and a factor > 1 corrupts the extinction scan's deficit bound.
-    """
-    y = _extinction_factor_raw(model, Nc, wl, F_hkl, d_hkl, l=l, g=g, L=L,
-                               dist=dist, recipe=recipe, mu=mu)
-    if not math.isfinite(y) or y < -_Y_TOL or y > 1.0 + _Y_TOL:
-        raise ValueError(
-            f"extinction model {model!r} returned a nonphysical factor "
-            f"y={y!r} (must be in [0, 1]) at wl={wl:.6g} A, "
-            f"F_hkl={F_hkl:.6g} A, d_hkl={d_hkl:.6g} A, l={l:.6g}, "
-            f"g={g:.6g}, L={L:.6g} -- numerical-stability or parameter "
-            "problem in the extinction model")
+            y = _sabine_uncorr(Nc, wl, F_hkl, l, d_hkl, g, L, td)
+        else:
+            y = _sabine_corr(Nc, wl, F_hkl, l, d_hkl, g, L)
+    else:
+        td = _BC_DIST.get(dist, 1)
+        if model == "BC_pure":
+            y = _bc_pure(Nc, wl, F_hkl, l, d_hkl, g, L, td, recipe)
+        else:   # BC_mix, or BC_mod (no primary factor)
+            y = _bc_mix(Nc, wl, F_hkl, l, d_hkl, g, L, td, recipe,
+                        primary=(model == "BC_mix"))
+    if not (math.isfinite(y) and -1e-6 <= y <= 1.0 + 1e-6):
+        raise ValueError(f"extinction model {model!r} returned y={y!r} outside [0, 1]")
     return min(1.0, max(0.0, y))
