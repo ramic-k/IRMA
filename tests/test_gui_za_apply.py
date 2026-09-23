@@ -59,7 +59,6 @@ def _quiet_dialogs(app, monkeypatch):
     monkeypatch.setattr(endf_form.messagebox, "showerror", lambda *a, **k: None)
     monkeypatch.setattr(app, "_ask_yes_no", lambda *a, **k: True)
     app.inelastic_mode_var.set(2)
-    app._toggle_noncubic()
     app.za_status_var.set("")
     yield
 

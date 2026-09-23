@@ -39,12 +39,27 @@ _EXT_DIST_SABINE = ["rect", "tri"]
 _EXT_DISTS = _EXT_DIST_BC + _EXT_DIST_SABINE
 
 # iel dropdown entries. The menu is narrowed to _IEL_GENERALIZED alone while a
-# phonopy-backed inelastic mode is selected (see _sync_iel_choices).
+# phonopy-backed inelastic mode is selected (see _sync_modes).
 _IEL_GENERALIZED = "10 — Generalized (crystal structure)"
 _IEL_CHOICES = ["0 — None", "1 — Graphite (legacy)",
                 "2 — Be (legacy)", "3 — BeO (legacy)",
                 "4 — Al (legacy)", "5 — Pb (legacy)",
                 "6 — Fe (legacy)", _IEL_GENERALIZED]
+
+
+def _set_values(box, values):
+    """Replace a text box's contents with the values in %.6e."""
+    box.delete("1.0", tk.END)
+    box.insert("1.0", " ".join(f"{v:.6e}" for v in values))
+
+
+def _show(widget, on, **pack):
+    """Pack the widget with the given options, or unpack it."""
+    if on:
+        widget.pack(**pack)
+    else:
+        widget.pack_forget()
+
 
 STRUCTURE_FILL_TITLE = "Fill structure from phonopy.yaml"
 STRUCTURE_FILL_HELP = (
@@ -220,7 +235,7 @@ class EndfFormMixin:
         on a tab the user is not looking at. The jump bar preserves the
         tabs' direct navigation: each button scrolls its part to the top.
         """
-        self._init_form_styles()
+        init_form_styles()
         import tkinter.font as tkfont
         if "IrmaPartFont" not in tkfont.names():
             base = tkfont.nametofont("TkDefaultFont")
@@ -295,9 +310,7 @@ class EndfFormMixin:
         self._build_output_tab()
 
         # initial conditional-visibility state (traces only fire on writes)
-        self._toggle_iel()
-        self._sync_iel_choices()
-        self._update_phonon_note()
+        self._sync_modes()
 
     def _form_part(self, title):
         """One deck part (a former tab) inside the single-page form: a
@@ -324,16 +337,6 @@ class EndfFormMixin:
         y = self._endf_parts[title].winfo_y()
         canvas.yview_moveto(min(1.0, max(0.0, y / total)))
 
-    def _init_form_styles(self):
-        """Named fonts + ttk styles for the flat form sections (shared)."""
-        init_form_styles()
-
-    def _section(self, parent, title, help_title=None, help_text=None,
-                 expand=False):
-        """A flat form section (see :func:`irma.gui.widgets.form_section`)."""
-        return form_section(parent, title, help_title=help_title,
-                            help_text=help_text, expand=expand)
-
     # ------------------------------------------------------------------
     # Tab 1: Material Setup
     # ------------------------------------------------------------------
@@ -344,7 +347,7 @@ class EndfFormMixin:
         LBL = 20        # shared label-column width (chars) for this part
 
         # Import input file
-        qs_body = self._section(frame, "Quick Start")
+        qs_body = form_section(frame, "Quick Start")
         qs_row = ttk.Frame(qs_body)
         qs_row.pack(fill=tk.X)
         ttk.Button(qs_row, text="Import Input File...", default="active",
@@ -357,7 +360,7 @@ class EndfFormMixin:
         # Inelastic mode. Parented to the tab frame, not _iel10_group: the
         # selector is a top-level choice about MF7/MT4 and stays visible for
         # every iel. Built before the elastic section so it packs above it.
-        nc_body = self._section(
+        nc_body = form_section(
             frame, "Inelastic Mode",
             help_title="Inelastic Mode",
             help_text="Selects how the inelastic scattering (MF7/MT4, the "
@@ -393,7 +396,7 @@ class EndfFormMixin:
         # inelastic_mode selector
         self.inelastic_mode_var = tk.IntVar(value=0)
         self.inelastic_mode_var.trace_add(
-            "write", lambda *_: self._toggle_noncubic())
+            "write", self._sync_modes)
         coh_elas_dw_row = ttk.Frame(nc_body)
         coh_elas_dw_row.pack(fill=tk.X, pady=2)
         ttk.Label(coh_elas_dw_row, text="inelastic_mode:", width=LBL,
@@ -432,7 +435,7 @@ class EndfFormMixin:
 
         # Structure prefill. Lives here, directly under the model selector,
         # so it inherits the sub-frame's progressive disclosure: it is only
-        # on screen for the phonopy-backed modes (1/2), which _sync_iel_choices
+        # on screen for the phonopy-backed modes (1/2), which _sync_modes
         # in turn pins to iel=10 -- exactly the decks whose Card 6c/6d it
         # writes. Click-only; see _fill_structure_from_phonopy.
         fill_row = ttk.Frame(self._nc_subframe)
@@ -546,7 +549,7 @@ class EndfFormMixin:
         # the trace keeps the nphon entry's grey-out in step (it also
         # fires on deck import and reset).
         self.nc_auto_order_var.trace_add(
-            "write", lambda *_: self._update_nphon_state())
+            "write", self._sync_modes)
         ttk.Checkbutton(
             ctrl_row, text="Auto-size multiphonon order",
             variable=self.nc_auto_order_var,
@@ -597,10 +600,10 @@ class EndfFormMixin:
         born_row = ttk.Frame(self._nc_subframe)
         born_row.pack(fill=tk.X, pady=2)
         self.nc_use_born_var = tk.IntVar(value=0)
+        self.nc_use_born_var.trace_add("write", self._sync_modes)
         ttk.Checkbutton(
             born_row, text="Use BORN corrections (NAC)",
             variable=self.nc_use_born_var,
-            command=self._toggle_born
         ).pack(side=tk.LEFT)
         InfoLabel(born_row, "BORN Corrections (NAC)",
                   "Non-analytical correction (NAC) for polar materials, "
@@ -623,11 +626,8 @@ class EndfFormMixin:
                       "Generated by phonopy with: phonopy --born")
         self.nc_born_path.pack(fill=tk.X, pady=2)
 
-        # Initially hide sub-frame (inelastic_mode=0 by default)
-        self._toggle_noncubic()
-
         # Elastic mode
-        mode_body = self._section(frame, "Elastic Scattering Mode")
+        mode_body = form_section(frame, "Elastic Scattering Mode")
 
         self.iel_var = tk.StringVar(value="10")
         row = ttk.Frame(mode_body)
@@ -684,7 +684,7 @@ class EndfFormMixin:
         # mode is NOT in here; it is built above, outside this group.
         self._iel10_group = ttk.Frame(frame)
         self._iel10_group.pack(fill=tk.X)
-        self.iel_var.trace_add("write", lambda *_: self._toggle_iel())
+        self.iel_var.trace_add("write", self._sync_modes)
 
         # Lattice parameters
         latt_help = ("Unit cell lattice parameters defining the crystal "
@@ -699,9 +699,9 @@ class EndfFormMixin:
                      "  Hexagonal: a=b, alpha=beta=90, gamma=120\n"
                      "  FCC NaCl: a=b=c=5.69, all angles 90")
 
-        latt_body = self._section(self._iel10_group, "Lattice Parameters",
-                                  help_title="Lattice Constants",
-                                  help_text=latt_help)
+        latt_body = form_section(self._iel10_group, "Lattice Parameters",
+                                 help_title="Lattice Constants",
+                                 help_text=latt_help)
         ttk.Label(latt_body, style="Hint.TLabel", justify=tk.LEFT,
                   wraplength=640, text=IDENTITY_HINT_LATTICE).pack(anchor=tk.W)
         latt_grid = ttk.Frame(latt_body)
@@ -728,7 +728,7 @@ class EndfFormMixin:
                       padx=(0, 24), pady=3)
 
         # Atom types
-        atom_body = self._section(
+        atom_body = form_section(
             self._iel10_group, "Atom Types in Unit Cell",
             help_title="Atom Types",
             help_text="Define each distinct atom species in the unit cell, "
@@ -819,7 +819,7 @@ class EndfFormMixin:
             "are small enough that grouping preserves the average cross "
             "section. Edges at or below this energy are always kept "
             "individually. Only used when bins/decade > 0.")
-        grp_body = self._section(
+        grp_body = form_section(
             self._iel10_group, "Coherent-Elastic Output (iel=10)",
             help_title="Bragg-Edge Grouping (ENDF-102 7.2.2)",
             help_text=(grp_overview
@@ -868,7 +868,7 @@ class EndfFormMixin:
         # Off by default; reduces the Bragg edges for dynamical-diffraction
         # extinction (a SAMPLE property: crystallite l, mosaic g, grain L).
         # Models ported from the NCrystal CrysXT plugin.
-        ext_body = self._section(
+        ext_body = form_section(
             self._iel10_group, "Crystalline Extinction (Optional)",
             help_title="Crystalline Extinction", help_text=EXT_HELP["about"])
         self.ext_enable_var = tk.BooleanVar(value=False)
@@ -930,29 +930,44 @@ class EndfFormMixin:
         InfoLabel(ext_attr, "Extinction (attribution & references)",
                   EXT_HELP["attribution"]).pack(side=tk.LEFT, padx=(6, 0))
 
-    def _toggle_iel(self):
-        """Show the generalized-treatment sections only for iel=10.
+    def _sync_modes(self, *_):
+        """Show the sections that the selected iel and inelastic_mode read.
 
-        The crystal structure and the elastic format are iel=10 features;
-        for the built-in materials (iel=0-6) they are not read, so hiding
-        them keeps users from filling in fields that have no effect. The
-        inelastic-mode selector is NOT hidden here: it sits above this
-        section and applies to every iel.
+        Modes 1/2 exist only for iel=10, so they narrow the iel menu to the
+        generalized entry. Deck generation forces inelastic_mode=0 when
+        iel != 10, so the phonopy layout (phonon cards and special modes
+        hidden behind notes, nphon greyed out under auto-size) follows the
+        effective mode. Hiding the special modes also clears them: a value
+        left behind a hidden section would fail the run with the control
+        off screen.
         """
-        is_generalized = self.iel_var.get().strip().startswith("10")
-        if is_generalized:
-            self.elastic_mode.pack(fill=tk.X, pady=2)
-            self._iel10_group.pack(fill=tk.X)
+        mode = self.inelastic_mode_var.get()
+        if mode in (1, 2):
+            self._iel_combo.configure(values=[_IEL_GENERALIZED])
+            if self._code(self.iel_var) != 10:
+                self.iel_var.set(_IEL_GENERALIZED)  # the trace re-enters here
+                return
         else:
-            self.elastic_mode.pack_forget()
-            self._iel10_group.pack_forget()
-        # The Phonon-part "cards are NOT read" banner depends on the EFFECTIVE
-        # mode (deck generation forces inelastic_mode=0 for iel != 10), so an
-        # iel change must refresh it — otherwise switching away from iel=10
-        # leaves a stale banner claiming the now-required cards are ignored.
-        self._update_phonon_note()
-        self._update_special_scatter_note()
-        self._update_nphon_state()
+            self._iel_combo.configure(values=list(_IEL_CHOICES))
+        gen = self._code(self.iel_var) == 10
+        phonopy = gen and mode > 0
+        _show(self.elastic_mode, gen, fill=tk.X, pady=2)
+        _show(self._iel10_group, gen, fill=tk.X)
+        _show(self._nc_subframe, mode > 0, fill=tk.X, pady=5)
+        _show(self.nc_born_path, mode > 0 and self.nc_use_born_var.get(),
+              fill=tk.X, pady=2)
+        if phonopy:
+            self._clear_special_scatter_fields()
+            self._sec2_frame.pack_forget()
+        for w, info in self._phonon_card_sections + self._special_scatter_sections:
+            _show(w, not phonopy, **info)
+        for note in (self._phonon_ignored_note, self._special_modes_note):
+            _show(note, phonopy, fill=tk.X, pady=(0, 8))
+        if not phonopy:
+            self._update_scattering_groups()
+        self.nphon.entry.config(
+            state=tk.DISABLED if phonopy and self.nc_auto_order_var.get()
+            else tk.NORMAL)
 
     IINT_LOGLIN = "0 — log-lin (INT=4)"
     IINT_LINLIN = "1 — lin-lin (INT=2)"
@@ -968,73 +983,8 @@ class EndfFormMixin:
         (which sets the mode variable and then the deck's own iint) and the
         user's later choice of iint are left alone.
         """
-        self._toggle_noncubic()
-        if hasattr(self, "iint"):
-            self.iint.set(self.IINT_LINLIN if self.inelastic_mode_var.get() == 2
-                          else self.IINT_LOGLIN)
-
-    def _toggle_noncubic(self):
-        """Show/hide the phonopy parameter sub-frame based on inelastic_mode."""
-        if self.inelastic_mode_var.get() > 0:
-            self._nc_subframe.pack(fill=tk.X, pady=5)
-        else:
-            self._nc_subframe.pack_forget()
-        self._sync_iel_choices()
-        self._toggle_born()
-        self._update_phonon_note()
-        self._update_special_scatter_note()
-        self._update_nphon_state()
-
-    def _sync_iel_choices(self):
-        """Keep the iel menu consistent with the selected inelastic mode.
-
-        Modes 1 and 2 are the phonopy-backed crystal-structure paths and
-        are only defined for iel=10: deck generation silently coerces
-        inelastic_mode to 0 for every other iel (see _generate_input_text).
-        That coercion was invisible while the mode selector lived inside
-        the iel=10 group; now that the selector is always shown, offering a
-        classic iel next to mode 1/2 would be a visible lie. So modes 1/2
-        narrow the menu to the generalized entry and select it; mode 0
-        restores the full menu and leaves the selection alone.
-        """
-        if not hasattr(self, "_iel_combo"):
-            return      # iel widgets not built yet
-        if self.inelastic_mode_var.get() in (1, 2):
-            self._iel_combo.configure(values=[_IEL_GENERALIZED])
-            if not self.iel_var.get().strip().startswith("10"):
-                self.iel_var.set(_IEL_GENERALIZED)
-        else:
-            self._iel_combo.configure(values=list(_IEL_CHOICES))
-
-    def _update_phonon_note(self):
-        """Progressive disclosure for the Phonon part (modes 1/2).
-
-        The phonopy-backed modes never read the phonon distribution,
-        translational, or oscillator cards, so those sections are hidden
-        outright and a short note says why; mode 0 shows the cards and
-        drops the note. Tracks the EFFECTIVE mode: deck generation forces
-        inelastic_mode=0 whenever iel != 10, so for the built-in materials
-        the cards ARE read and must stay visible, even if a phonopy mode
-        is still selected on the (hidden) iel=10 section.
-        """
-        if not hasattr(self, "_phonon_ignored_note"):
-            return      # Phonon part not built yet
-        is_generalized = self.iel_var.get().strip().startswith("10")
-        if is_generalized and self.inelastic_mode_var.get() > 0:
-            for w, _ in self._phonon_card_sections:
-                w.pack_forget()
-            self._phonon_ignored_note.pack(fill=tk.X, pady=(0, 8))
-        else:
-            self._phonon_ignored_note.pack_forget()
-            for w, info in self._phonon_card_sections:
-                w.pack(**{k: v for k, v in info.items() if k != "in"})
-
-    def _toggle_born(self):
-        """Show/hide BORN file selector based on use_born checkbox."""
-        if self.inelastic_mode_var.get() and self.nc_use_born_var.get():
-            self.nc_born_path.pack(fill=tk.X, pady=2)
-        else:
-            self.nc_born_path.pack_forget()
+        self.iint.set(self.IINT_LINLIN if self.inelastic_mode_var.get() == 2
+                      else self.IINT_LOGLIN)
 
     # ------------------------------------------------------------------
     # Structure prefill from the Card 6f phonopy model
@@ -1420,7 +1370,7 @@ class EndfFormMixin:
         frame = self._form_part("Scattering")
 
         # Principal scatterer
-        pf = self._section(frame, "Principal Scatterer")
+        pf = form_section(frame, "Principal Scatterer")
         ttk.Label(pf, style="Hint.TLabel", justify=tk.LEFT, wraplength=640,
                   text=IDENTITY_HINT_SCATTERER).pack(anchor=tk.W)
 
@@ -1510,7 +1460,7 @@ class EndfFormMixin:
         self.npr.pack(fill=tk.X, pady=2)
 
         # ENDF output
-        ef = self._section(frame, "ENDF Output Control")
+        ef = form_section(frame, "ENDF Output Control")
         ttk.Label(ef, style="Hint.TLabel", justify=tk.LEFT, wraplength=640,
                   text=IDENTITY_HINT_MAT).pack(anchor=tk.W)
 
@@ -1613,7 +1563,7 @@ class EndfFormMixin:
         self.smin.pack(fill=tk.X, pady=2)
 
         # Cold/Skold
-        cf = self._section(frame, "Special Modes")
+        cf = form_section(frame, "Special Modes")
 
         self.ncold = LabeledCombobox(
             cf, "ncold:", ["0 — None", "1 — Ortho-H", "2 — Para-H",
@@ -1690,7 +1640,7 @@ class EndfFormMixin:
         self.cfrac.pack(fill=tk.X, pady=2)
 
         # Secondary scatterer
-        sf = self._section(frame, "Secondary Scatterer (optional)")
+        sf = form_section(frame, "Secondary Scatterer (optional)")
 
         self.nss = LabeledCombobox(
             sf, "nss:", ["0 — None", "1 — One secondary scatterer"],
@@ -1762,8 +1712,8 @@ class EndfFormMixin:
         # secondary scatterer's own detail block, emitted as a complete
         # second temperature pass (shared-spectrum convention: first
         # temperature positive, the rest negative).
-        s2 = self._section(frame,
-                           "Secondary phonon model (b7 = 0 two-pass only)")
+        s2 = form_section(frame,
+                          "Secondary phonon model (b7 = 0 two-pass only)")
         # show/hide toggles the whole section (title + separator + body)
         self._sec2_frame = s2.master
 
@@ -1840,11 +1790,11 @@ class EndfFormMixin:
 
         # iel=10 + inelastic_mode 1/2 rejects any nonzero special mode or
         # secondary scatterer at deck generation, so both sections hide
-        # behind a one-line note in that state (the _update_phonon_note
-        # pattern: capture (widget, pack options) once, right after
-        # construction).
+        # behind a one-line note in that state (see _sync_modes; the pack
+        # options are captured once, right after construction).
         self._special_scatter_sections = [
-            (w, dict(w.pack_info())) for w in (cf.master, sf.master)]
+            (w, {k: v for k, v in w.pack_info().items() if k != "in"})
+            for w in (cf.master, sf.master)]
         self._special_modes_note = ttk.Label(
             frame,
             text=("Special modes and the secondary scatterer apply to "
@@ -1856,24 +1806,13 @@ class EndfFormMixin:
                   "to. Going back to inelastic_mode = 0 does not restore "
                   "the values — re-enter them there."),
             foreground="gray", wraplength=860, justify=tk.LEFT)
-        self._update_special_scatter_note()
-        self._update_nphon_state()
 
     def _clear_special_scatter_fields(self):
-        """Reset the Special Modes + Secondary Scatterer fields to OFF.
+        """Reset the Special Modes and Secondary Scatterer fields to off.
 
-        Called the moment those sections are hidden (inelastic_mode 1/2
-        under iel=10). The phonopy-backed modes build MF7/MT4 from the
-        force constants, so ncold/nsk (a pair-correlation correction to
-        the incoherent approximation) and a secondary scatterer are
-        rejected at deck generation -- the parser guard stays for
-        hand-written decks. Clearing here makes that invalid combination
-        unreachable from the form instead of merely illegal: without it a
-        value set in mode 0 survives the switch invisibly and Run fails on
-        a control the user cannot see.
-
-        The values are OFF values, identical to _reset_form_to_defaults,
-        so a state that was already valid generates byte-identically.
+        Called by _sync_modes when it hides those sections (iel=10 with
+        inelastic_mode 1/2, where deck generation rejects them) and by
+        _reset_form_to_defaults.
         """
         self.ncold.set("0 — None")
         self.nsk.set("0 — None")
@@ -1892,50 +1831,6 @@ class EndfFormMixin:
         self.sec_tbeta.set("1.0")
         self.sec_osc_energies.delete("1.0", tk.END)
         self.sec_osc_weights.delete("1.0", tk.END)
-
-    def _update_special_scatter_note(self):
-        """Progressive disclosure for the Special Modes and Secondary
-        Scatterer sections.
-
-        Under iel=10 with inelastic_mode 1/2 any nonzero ncold/nsk/nss is
-        a hard error at deck generation, so the sections are hidden
-        outright with a note saying why; mode 0 or a classic iel shows
-        them again (same pattern as _update_phonon_note, tracking the
-        EFFECTIVE mode).
-
-        Hiding also CLEARS the fields (see _clear_special_scatter_fields):
-        a value left set behind the hidden section is state the user
-        cannot see and generation then refuses, with the offending control
-        off screen. The values are not restored on the way back — the note
-        says so."""
-        if not hasattr(self, "_special_modes_note"):
-            return      # Scattering part not built yet
-        is_generalized = self.iel_var.get().strip().startswith("10")
-        if is_generalized and self.inelastic_mode_var.get() > 0:
-            self._clear_special_scatter_fields()
-            for w, _ in self._special_scatter_sections:
-                w.pack_forget()
-            self._sec2_frame.pack_forget()
-            self._special_modes_note.pack(fill=tk.X, pady=(0, 8))
-        else:
-            self._special_modes_note.pack_forget()
-            for w, info in self._special_scatter_sections:
-                w.pack(**{k: v for k, v in info.items() if k != "in"})
-            # restore the two-pass frame per the current nss/b7 selection
-            self._update_scattering_groups()
-
-    def _update_nphon_state(self):
-        """Grey out nphon when it cannot be honored: with inelastic_mode
-        1/2 and Card 6g auto-size ON, IRMA sizes the multiphonon order
-        from the Debye-Waller physics and the Card 3 value is ignored.
-        Tracks the EFFECTIVE mode (iel != 10 forces mode 0)."""
-        if not hasattr(self, "nphon"):
-            return      # Scattering part not built yet
-        is_generalized = self.iel_var.get().strip().startswith("10")
-        ignored = (is_generalized and self.inelastic_mode_var.get() > 0
-                   and bool(self.nc_auto_order_var.get()))
-        self.nphon.entry.config(
-            state=tk.DISABLED if ignored else tk.NORMAL)
 
     def _update_scattering_groups(self):
         """Show only the special-mode fields the selected modes use."""
@@ -1975,7 +1870,7 @@ class EndfFormMixin:
         frame = self._form_part("Grids")
 
         # Temperatures
-        tf = self._section(frame, "Temperatures")
+        tf = form_section(frame, "Temperatures")
 
         temp_row = ttk.Frame(tf)
         temp_row.pack(fill=tk.X)
@@ -2024,7 +1919,7 @@ class EndfFormMixin:
         self.lat.pack(fill=tk.X)
 
         # Alpha/Beta grids
-        gf = self._section(frame, "Alpha / Beta Grids")
+        gf = form_section(frame, "Alpha / Beta Grids")
 
         grid_desc = ttk.Frame(gf)
         grid_desc.pack(fill=tk.X, pady=(0, 5))
@@ -2316,9 +2211,9 @@ class EndfFormMixin:
                 freq_max = parse_float("Max phonon freq [eV]", self.freq_max.get())
                 # Anchor exactly as the deck writer does: lat=1 grids are in
                 # fixed 0.0253 eV units, independent of temps[0].
-                t_ref = grid_reference_temperature_K(self._parse_lat(), temps[0])
+                t_ref = grid_reference_temperature_K(self._code(self.lat), temps[0])
                 awr = parse_float("AWR", self.awr.get())
-                iint = self._parse_combo_int(self.iint)
+                iint = self._code(self.iint)
                 beta = generate_beta_grid(
                     freq_max, t_ref, iint=iint, awr=awr,
                     n_lower=parse_int("N lower (log)", self.n_lower.get()),
@@ -2371,7 +2266,7 @@ class EndfFormMixin:
                   "translational, and oscillator cards do not apply and "
                   "are hidden. They return with inelastic_mode = 0."),
             foreground="#e5484d", wraplength=860, justify=tk.LEFT)
-        cf = self._section(frame, "Continuous Phonon Distribution")
+        cf = form_section(frame, "Continuous Phonon Distribution")
 
         # Each source's fields live directly under its radio button and
         # only the selected source's fields are shown.
@@ -2419,7 +2314,7 @@ class EndfFormMixin:
         self._toggle_dos_source()
 
         # Translational mode
-        tf = self._section(frame, "Translational Mode")
+        tf = form_section(frame, "Translational Mode")
 
         self.twt = LabeledEntry(
             tf, "twt:", "0.0",
@@ -2469,11 +2364,12 @@ class EndfFormMixin:
         self.tbeta.pack(fill=tk.X, pady=2)
 
         # Discrete oscillators
-        of = self._section(frame, "Discrete Oscillators")
+        of = form_section(frame, "Discrete Oscillators")
         # (widget, original pack options) for the mode-1/2 hide/show in
-        # _update_phonon_note; captured once, right after construction.
+        # _sync_modes; captured once, right after construction.
         self._phonon_card_sections = [
-            (w, dict(w.pack_info())) for w in (cf.master, tf.master, of.master)]
+            (w, {k: v for k, v in w.pack_info().items() if k != "in"})
+            for w in (cf.master, tf.master, of.master)]
 
         osc_header = ttk.Frame(of)
         osc_header.pack(fill=tk.X)
@@ -2513,7 +2409,7 @@ class EndfFormMixin:
         frame = self._form_part("Run")
 
         # Output file
-        of = self._section(frame, "Output")
+        of = form_section(frame, "Output")
 
         self.output_file = FileSelector(
             of, "Output ENDF file:", mode="save",
@@ -2529,7 +2425,7 @@ class EndfFormMixin:
         self.output_file.pack(fill=tk.X, pady=2)
 
         # ENDF comments (MF1/MT451)
-        cf = self._section(frame, "ENDF Comment Cards (MF1/MT451)")
+        cf = form_section(frame, "ENDF Comment Cards (MF1/MT451)")
 
         cf_top = ttk.Frame(cf)
         cf_top.pack(fill=tk.X)
@@ -2582,7 +2478,7 @@ class EndfFormMixin:
                   foreground="#3b9eff").pack(side=tk.LEFT, padx=(10, 0))
 
         # Log output
-        lf = self._section(frame, "Log", expand=True)
+        lf = form_section(frame, "Log", expand=True)
 
         self.log = ScrolledText(lf, height=20)
         self.log.pack(fill=tk.BOTH, expand=True)
@@ -2618,50 +2514,16 @@ class EndfFormMixin:
         return np.array([parse_float(label, x) for x in text.split()])
 
     @staticmethod
-    def _combo_int(val):
-        """Integer code from an 'N — label' combobox value (or a bare int)."""
-        return int(val.split("—")[0].strip()) if "—" in val else int(val)
+    def _code(widget):
+        """Leading integer of an 'N — label' combobox or variable."""
+        return int(widget.get().split("—")[0])
 
-    def _parse_combo_int(self, widget):
-        """Leading integer of a combo selection."""
-        return self._combo_int(widget.get())
-
-    # Every 'N — label' code widget parses the same way, so these all delegate
-    # to the shared _parse_combo_int helper (which strips the trailing label and
-    # accepts a bare int). iel is backed by a StringVar; the rest by comboboxes
-    # -- both expose .get(), so the one helper covers them.
-    def _parse_iel(self):
-        """Parse the elastic-option combo into the deck ``iel`` integer."""
-        return self._parse_combo_int(self.iel_var)
-
-    def _parse_ncold(self):
-        """Parse the cold-hydrogen combo into the deck ``ncold`` integer."""
-        return self._parse_combo_int(self.ncold)
-
-    def _parse_nsk(self):
-        """Parse the Skold combo into the deck ``nsk`` integer."""
-        return self._parse_combo_int(self.nsk)
-
-    def _parse_nss(self):
-        """Parse the secondary-scatterer combo into the deck ``nss`` integer."""
-        return self._parse_combo_int(self.nss)
-
-    def _parse_elastic_mode(self):
-        """Parse the generalized-elastic combo into ``elastic_mode``."""
-        return self._parse_combo_int(self.elastic_mode)
-
-    def _parse_lat(self):
-        """Parse the lat combo into the deck ``lat`` integer."""
-        return self._parse_combo_int(self.lat)
-
-    def _parse_atoms(self):
-        """Parse atom type lines from the text widget.
-
-        Returns list of dicts with keys: Z, A, awr, b_coh, sigma_inc,
-        npos, positions. The parsing/validation itself lives in the
-        Tk-free deck_text module so it is headlessly testable.
-        """
-        return parse_atoms_text(self.atoms_text.get("1.0", tk.END))
+    @staticmethod
+    def _set_code(widget, code, values=None):
+        """Select the 'N — label' entry whose leading integer is code."""
+        values = values or widget.combo["values"]
+        widget.set(next((v for v in values if v.split(" —")[0] == str(code)),
+                        str(code)))
 
     def _read_phonopy_dos(self, filename):
         """Read phonopy total_dos.dat and convert to IRMA input format."""
@@ -2715,14 +2577,14 @@ class EndfFormMixin:
 
         temps = self._parse_temperatures()
         ntempr = len(temps)
-        iel = self._parse_iel()
-        ncold = self._parse_ncold()
-        nsk = self._parse_nsk()
-        nss = self._parse_nss()
-        lat = self._parse_lat()
-        isabt = self._parse_combo_int(self.isabt)
-        ilog = self._parse_combo_int(self.ilog)
-        iint = self._parse_combo_int(self.iint)
+        iel = self._code(self.iel_var)
+        ncold = self._code(self.ncold)
+        nsk = self._code(self.nsk)
+        nss = self._code(self.nss)
+        lat = self._code(self.lat)
+        isabt = self._code(self.isabt)
+        ilog = self._code(self.ilog)
+        iint = self._code(self.iint)
 
         npr = int(parse_float("npr (principal atom count)",
                               self.npr.get().strip() or "1"))
@@ -2793,7 +2655,7 @@ class EndfFormMixin:
         b7 = 1
         sec_rho = []
         if nss > 0:
-            b7 = self._parse_combo_int(self.b7)
+            b7 = self._code(self.b7)
             mss = int(parse_float("mss (secondary atom count)",
                                   self.mss.get().strip() or "1"))
             if mss < 1:
@@ -2853,7 +2715,7 @@ class EndfFormMixin:
                     + ". Type them in, press '" + STRUCTURE_FILL_TITLE
                     + "' (inelastic_mode 1/2), or load an input file with Import "
                     "Input File.")
-            atoms = self._parse_atoms()
+            atoms = parse_atoms_text(self.atoms_text.get("1.0", tk.END))
             nat = len(atoms)
             if nat < 1:
                 raise ValueError(
@@ -2873,7 +2735,7 @@ class EndfFormMixin:
                 if za_int is not None and za_int > 0:
                     atoms = self._relabel_row_or_abort(za_int, atoms)
                     nat = len(atoms)
-            elastic_mode = self._parse_elastic_mode()
+            elastic_mode = self._code(self.elastic_mode)
 
             # Card 6e partial spectra ride through import -> export verbatim;
             # they are a classic-path (inelastic_mode=0) feature only.
@@ -2984,7 +2846,7 @@ class EndfFormMixin:
             t_ref = grid_reference_temperature_K(lat, temps[0])
             awr = parse_float("AWR", self.awr.get())
             # iint=1 gets the step-capped lin-lin tail, iint=0 the pure log tail.
-            iint = self._parse_combo_int(self.iint)
+            iint = self._code(self.iint)
             beta = generate_beta_grid(
                 freq_max, t_ref, iint=iint, awr=awr,
                 n_lower=parse_int("N lower (log)", self.n_lower.get()),
@@ -3005,11 +2867,10 @@ class EndfFormMixin:
         lines.append(f"{len(alpha)} {len(beta)} {lat} /")
 
         # Card 8: alpha (fmt_array is the Tk-free deck-text helper)
-        fmt_arr = fmt_array
 
-        lines.append(fmt_arr(alpha) + ' /')
+        lines.append(fmt_array(alpha) + ' /')
         # Card 9: beta
-        lines.append(fmt_arr(beta) + ' /')
+        lines.append(fmt_array(beta) + ' /')
 
         # Temperature loop
         for itemp, temp in enumerate(temps):
@@ -3024,7 +2885,7 @@ class EndfFormMixin:
                     if dos_path and os.path.exists(dos_path):
                         delta_e, rho = self._read_phonopy_dos(dos_path)
                         lines.append(f"{delta_e:.6e} {len(rho)} /")
-                        lines.append(fmt_arr(rho) + ' /')
+                        lines.append(fmt_array(rho) + ' /')
                     else:
                         raise ValueError(
                             "Phonopy DOS file not found. "
@@ -3037,7 +2898,7 @@ class EndfFormMixin:
                     rho = np.array([parse_float("phonon spectrum (rho)", x)
                                     for x in rho_text.split()])
                     lines.append(f"{delta_e:.6e} {len(rho)} /")
-                    lines.append(fmt_arr(rho) + ' /')
+                    lines.append(fmt_array(rho) + ' /')
 
                 # twt, c, tbeta
                 lines.append(f"{self.twt.get()} {self.c_diff.get()} "
@@ -3082,7 +2943,7 @@ class EndfFormMixin:
                             "nsk > 0 or ncold > 0 requires dka > 0 "
                             "(S(kappa) grid spacing).")
                     lines.append(f"{len(ska_vals)} {dka_v:.6e} /")
-                    lines.append(fmt_arr(np.asarray(ska_vals)) + ' /')
+                    lines.append(fmt_array(np.asarray(ska_vals)) + ' /')
                 if nsk > 0:
                     cfrac_raw = self.cfrac.get().strip()
                     if not cfrac_raw:
@@ -3106,7 +2967,7 @@ class EndfFormMixin:
                 sec_delta = parse_float("secondary delta [eV]",
                                         self.sec_dos_delta.get().strip())
                 lines.append(f"{sec_delta:.6e} {len(sec_rho)} /")
-                lines.append(fmt_arr(np.asarray(sec_rho)) + ' /')
+                lines.append(fmt_array(np.asarray(sec_rho)) + ' /')
                 lines.append(f"{self.sec_twt.get().strip() or '0.0'} "
                              f"{self.sec_c_diff.get().strip() or '0.0'} "
                              f"{self.sec_tbeta.get().strip() or '1.0'} /")
@@ -3303,8 +3164,9 @@ class EndfFormMixin:
         """Restore every import-derived widget/var to its classic-deck
         default, so an import is a full replace and absent cards fall back
         deterministically (no leak across back-to-back imports)."""
-        self.iel_var.set("0 — None")
+        # mode first: under mode 1/2 _sync_modes pins iel to 10
         self.inelastic_mode_var.set(0)
+        self.iel_var.set("0 — None")
         self._imported_partial_spectra = []
         self._imported_title = "IRMA calculation"
         self._imported_iprint = 0
@@ -3323,22 +3185,8 @@ class EndfFormMixin:
         self.awr.set("")
         self.spr.set("")
         self.npr.set("1")
-        self.ncold.set("0 — None")
-        self.nsk.set("0 — None")
-
-        # Secondary scatterer
-        self.nss.set("0 — None")
-        self.b7.set("1 — Free gas")
-        self.aws.set("0")
-        self.sps.set("0")
-        self.mss.set("1")
-        self.sec_dos_delta.set("0")
-        self.sec_dos_rho_text.delete("1.0", tk.END)
-        self.sec_twt.set("0.0")
-        self.sec_c_diff.set("0.0")
-        self.sec_tbeta.set("1.0")
-        self.sec_osc_energies.delete("1.0", tk.END)
-        self.sec_osc_weights.delete("1.0", tk.END)
+        # special modes, S(kappa), secondary scatterer
+        self._clear_special_scatter_fields()
 
         # Generalized elastic / noncubic (iel=10)
         self.elastic_mode.set("1 — SEF (Single-channel Elastic Format)")
@@ -3391,22 +3239,13 @@ class EndfFormMixin:
         self.osc_energies.delete("1.0", tk.END)
         self.osc_weights.delete("1.0", tk.END)
 
-        # S(kappa) table / coherent fraction
-        self.ska_dka.set("0")
-        self.ska_text.delete("1.0", tk.END)
-        self.cfrac.set("0")
-
         # Comments
         self.comments_text.clear()
-
-        # The defaults above are a classic (mode 0) deck, so the full iel
-        # menu must be back even if the form was left on mode 1/2.
-        self._sync_iel_choices()
 
     def _apply_imported_state(self, st):
         """Apply a parsed staging dict (from parse_deck_to_staging) to the
         widgets. Called only after a successful parse and a reset to
-        defaults, so import semantics are 'replace'."""
+        defaults, so only the cards present in the deck are set here."""
         self._imported_title = st['title']
         self._imported_iprint = st['iprint']
         self.nphon.set(str(st['nphon']))
@@ -3414,13 +3253,9 @@ class EndfFormMixin:
         self.mat.set(str(st['mat']))
         za = st['za']
         self.za.set(str(int(za)) if za == int(za) else str(za))
-        isabt_map = {0: "0 — S(α,β) (standard)",
-                     1: "1 — S̃(α,β) (asymmetric)"}
-        ilog_map = {0: "0 — S values", 1: "1 — ln(S) values"}
-        iint_map = {0: "0 — log-lin (INT=4)", 1: "1 — lin-lin (INT=2)"}
-        self.isabt.set(isabt_map.get(st['isabt'], str(st['isabt'])))
-        self.ilog.set(ilog_map.get(st['ilog'], str(st['ilog'])))
-        self.iint.set(iint_map.get(st.get('iint', 0), str(st.get('iint', 0))))
+        self._set_code(self.isabt, st['isabt'])
+        self._set_code(self.ilog, st['ilog'])
+        self._set_code(self.iint, st['iint'])
         self.smin.set(f"{st['smin']:g}")
 
         self.awr.set(str(st['awr']))
@@ -3428,28 +3263,14 @@ class EndfFormMixin:
         self.npr.set(str(st['npr']))
 
         iel = st['iel']
-        iel_map = {
-            0: "0 — None", 1: "1 — Graphite (legacy)",
-            2: "2 — Be (legacy)", 3: "3 — BeO (legacy)",
-            4: "4 — Al (legacy)", 5: "5 — Pb (legacy)",
-            6: "6 — Fe (legacy)",
-            10: "10 — Generalized (crystal structure)",
-        }
-        self.iel_var.set(iel_map.get(iel, str(iel)))
-        ncold_map = {0: "0 — None", 1: "1 — Ortho-H", 2: "2 — Para-H",
-                     3: "3 — Ortho-D", 4: "4 — Para-D"}
-        self.ncold.set(ncold_map.get(st['ncold'], str(st['ncold'])))
-        nsk_map = {0: "0 — None", 1: "1 — Vineyard", 2: "2 — Skold"}
-        self.nsk.set(nsk_map.get(st['nsk'], str(st['nsk'])))
+        self._set_code(self.iel_var, iel, _IEL_CHOICES)
+        self._set_code(self.ncold, st['ncold'])
+        self._set_code(self.nsk, st['nsk'])
 
         # Secondary scatterer
-        nss = st['nss']
-        nss_map = {0: "0 — None", 1: "1 — One secondary scatterer"}
-        self.nss.set(nss_map[nss])
-        if nss > 0:
-            b7_map = {0: "0 — Bound (two-pass)",
-                      1: "1 — Free gas", 2: "2 — Diffusion"}
-            self.b7.set(b7_map[st['b7']])
+        self._set_code(self.nss, st['nss'])
+        if st['nss'] > 0:
+            self._set_code(self.b7, st['b7'])
             self.mss.set(str(st['mss']))
         self.aws.set(str(st['aws']))
         self.sps.set(str(st['sps']))
@@ -3457,10 +3278,7 @@ class EndfFormMixin:
         # Generalized elastic cards (iel=10)
         self._imported_partial_spectra = st['partial_spectra']
         if iel == 10:
-            em_map = {1: "1 — SEF (Single-channel Elastic Format)",
-                      2: "2 — MEF (Mixed Elastic Format)"}
-            self.elastic_mode.set(
-                em_map.get(st['elastic_mode'], str(st['elastic_mode'])))
+            self._set_code(self.elastic_mode, st['elastic_mode'])
             # Grouping toggle follows the deck; keep a sensible bins/decade in the
             # field when the deck has none so re-checking the box is meaningful.
             _has_group = st['edge_group_bpd'] > 0
@@ -3470,9 +3288,7 @@ class EndfFormMixin:
                 f"{st['edge_group_thr']:g}" if st['edge_group_thr'] > 0
                 else "1.0")
             self.inelastic_mode_var.set(st['inelastic_mode'])
-            # Crystalline extinction (iel=10): populate the toggle + fields, or
-            # turn it off when the deck has no extinction card.
-            ext = st.get('coherent_extinction')
+            ext = st['coherent_extinction']
             if ext is not None:
                 self.ext_enable_var.set(True)
                 self.ext_model.set(ext['model'])
@@ -3486,8 +3302,6 @@ class EndfFormMixin:
                 self.ext_dist.set(ext['dist'])
                 self.ext_recipe.set(ext['recipe'])
                 self.ext_rmse_tol.set(f"{ext['rmse_tol']:g}")
-            else:
-                self.ext_enable_var.set(False)
 
             lat6 = st['lattice']
             self.latt_a.set(str(lat6[0]))
@@ -3504,7 +3318,6 @@ class EndfFormMixin:
                     f"{at['Z']}  {at['A']}  {at['awr']}  {at['b_coh']}  "
                     f"{at['sigma_inc']}  {at['npos']}  "
                     + "  ".join(coord_strs))
-            self.atoms_text.delete("1.0", tk.END)
             if atom_lines:
                 self.atoms_text.insert("1.0", "\n".join(atom_lines) + "\n")
 
@@ -3517,27 +3330,19 @@ class EndfFormMixin:
                 self.nc_ncpu.set(str(nc['ncpu']))
                 self.nc_use_born_var.set(nc['use_born'])
                 self.nc_born_path.set(nc['born_path'])
-                cutoff = nc.get('min_phonon_energy_mev', 0.0)
+                cutoff = nc['min_phonon_energy_mev']
                 self.nc_min_phonon_energy.set(
                     "" if cutoff == 0.0 else f"{cutoff:g}")
                 self.nc_num_directions.set(str(nc['ndir']))
                 self.nc_multiphonon_num_directions.set(str(nc['mpdir']))
                 self.nc_auto_order_var.set(nc['auto_order'])
 
-            self._toggle_noncubic()
-
         # Grid (manual; populated from the deck)
-        lat_map = {0: "0 — alpha/beta in kT units",
-                   1: "1 — alpha/beta in kT_thermal (0.0253 eV)"}
-        self.lat.set(lat_map.get(st['lat'], str(st['lat'])))
+        self._set_code(self.lat, st['lat'])
         self.grid_mode.set("manual")
         self._toggle_grid_mode()
-        self.alpha_text.delete("1.0", tk.END)
-        self.alpha_text.insert(
-            "1.0", " ".join(f"{v:.6e}" for v in st['alpha']))
-        self.beta_text.delete("1.0", tk.END)
-        self.beta_text.insert(
-            "1.0", " ".join(f"{v:.6e}" for v in st['beta']))
+        _set_values(self.alpha_text, st['alpha'])
+        _set_values(self.beta_text, st['beta'])
 
         # Temperatures
         self.temps_var.set(
@@ -3551,57 +3356,31 @@ class EndfFormMixin:
             self.dos_source.set("manual")
             self._toggle_dos_source()
             self.dos_delta.set(f"{st['delta1']:.6e}")
-            self.dos_rho_text.delete("1.0", tk.END)
-            self.dos_rho_text.insert(
-                "1.0", " ".join(f"{v:.6e}" for v in st['rho']))
+            _set_values(self.dos_rho_text, st['rho'])
 
         # S(kappa) table and coherent fraction (Cards 17-19)
-        self.ska_text.delete("1.0", tk.END)
         if st['ska'] is not None:
             self.ska_dka.set(f"{st['dka']:.6e}")
-            self.ska_text.insert(
-                "1.0", " ".join(f"{v:.6e}" for v in st['ska']))
-        else:
-            self.ska_dka.set("0")
-        self.cfrac.set(
-            f"{st['cfrac']:g}" if st['cfrac'] is not None else "0")
+            _set_values(self.ska_text, st['ska'])
+        if st['cfrac'] is not None:
+            self.cfrac.set(f"{st['cfrac']:g}")
 
         # Oscillators
-        self.osc_energies.delete("1.0", tk.END)
-        self.osc_weights.delete("1.0", tk.END)
         if st['osc_e']:
-            self.osc_energies.insert(
-                "1.0", " ".join(f"{e:.6e}" for e in st['osc_e']))
-            self.osc_weights.insert(
-                "1.0", " ".join(f"{w:.6e}" for w in st['osc_w']))
+            _set_values(self.osc_energies, st['osc_e'])
+            _set_values(self.osc_weights, st['osc_w'])
 
         # Secondary phonon model (two-pass)
-        self.sec_dos_rho_text.delete("1.0", tk.END)
-        self.sec_osc_energies.delete("1.0", tk.END)
-        self.sec_osc_weights.delete("1.0", tk.END)
         if st['two_pass'] and st['sec_rho'] is not None:
             self.sec_dos_delta.set(f"{st['sec_delta']:.6e}")
-            self.sec_dos_rho_text.insert(
-                "1.0", " ".join(f"{v:.6e}" for v in st['sec_rho']))
+            _set_values(self.sec_dos_rho_text, st['sec_rho'])
             self.sec_twt.set(st['sec_twt'])
             self.sec_c_diff.set(st['sec_c'])
             self.sec_tbeta.set(st['sec_tbeta'])
             if st['sec_osc_e']:
-                self.sec_osc_energies.insert(
-                    "1.0", " ".join(f"{e:.6e}" for e in st['sec_osc_e']))
-                self.sec_osc_weights.insert(
-                    "1.0", " ".join(f"{w:.6e}" for w in st['sec_osc_w']))
-        else:
-            self.sec_dos_delta.set("0")
-            self.sec_twt.set("0.0")
-            self.sec_c_diff.set("0.0")
-            self.sec_tbeta.set("1.0")
+                _set_values(self.sec_osc_energies, st['sec_osc_e'])
+                _set_values(self.sec_osc_weights, st['sec_osc_w'])
 
         # Comment cards (MF1/MT451) — stored verbatim (whitespace preserved)
-        self.comments_text.clear()
         if st['comments']:
             self.comments_text.append("\n".join(st['comments']))
-
-        # Land on a consistent iel menu: a classic deck never reaches the
-        # _toggle_noncubic() call in the iel=10 branch above, so sync here.
-        self._sync_iel_choices()
