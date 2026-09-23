@@ -33,7 +33,6 @@ def _interp_T(temps, columns, T):
         if T <= ts[i]:
             f = (T - ts[i - 1]) / (ts[i] - ts[i - 1])
             return [a + f * (b - a) for a, b in zip(columns[i - 1], columns[i])]
-    return list(columns[-1])
 
 
 def coherent_edges(ev, T):
@@ -54,9 +53,8 @@ def incoherent_msd(ev, T):
     # LTHR=3 (mixed elastic) follows the SAME molecular convention: the IRMA MEF
     # writer stores SB = per-principal x npr like the classic and SEF/CEF writers
     # (resolved in the IRMA pre-release review), so the division is uniform.
-    if ev.lthr in (2, 3):
-        npr = float(ev.b_array[6]) if len(ev.b_array) > 6 and ev.b_array[6] > 0 else 1.0
-        sb /= npr
+    npr = float(ev.b_array[6]) if len(ev.b_array) > 6 and ev.b_array[6] > 0 else 1.0
+    sb /= npr
     return Wp * HBAR2_OVER_2MN_EV_A2, sb
 
 

@@ -14,7 +14,7 @@ TAPE = Path(__file__).parent / "data" / "graphite_cef_296K.endf"
 def test_coherent_only_tape_has_no_incoherent_block():
     ev = read_tsl(TAPE)
     assert ev.lthr == 1 and ev.incoh_Wp is None
-    pk = convert.build_pack(ev, 296.0, "graphite", "C", 12.0107)
+    pk = convert.build_pack(ev, 296.0, "graphite", 12.0107)
     assert pk.coh_edges_ev              # coherent present
     assert pk.elastic_msd_a2 is None    # incoherent zeroed out
 

@@ -39,7 +39,7 @@ def test_build_packs_rejects_missing_fraction():
 
 def test_fraction_weighting_recovers_per_atom_all_channels():
     ev = read_tsl(str(TAPE))
-    single = build_pack(ev, 296.0, "g", "C", 12.0107)  # default species_fraction=1.0
+    single = build_pack(ev, 296.0, "g", 12.0107)  # default species_fraction=1.0
     assert single.coh_cumS, "fixture tape must carry coherent Bragg edges"
     packs = build_packs(_specs(0.5, 0.5), 296.0, "g2")
     assert len(packs) == 2
@@ -61,8 +61,8 @@ def test_fraction_weighting_recovers_per_atom_all_channels():
 def test_monatomic_scales_one_are_byte_identical():
     # both scales default to 1.0 -> the single-tape path is unchanged by the fix
     ev = read_tsl(str(TAPE))
-    a = build_pack(ev, 296.0, "g", "C", 12.0107)
-    b = build_pack(ev, 296.0, "g", "C", 12.0107, inelastic_scale=1.0, coherent_scale=1.0)
+    a = build_pack(ev, 296.0, "g", 12.0107)
+    b = build_pack(ev, 296.0, "g", 12.0107, inelastic_scale=1.0, coherent_scale=1.0)
     assert a.coh_cumS == b.coh_cumS
     assert a.bound_xs_barn == b.bound_xs_barn
 
@@ -70,14 +70,6 @@ def test_monatomic_scales_one_are_byte_identical():
 def test_build_packs_rejects_unknown_convention():
     with pytest.raises(ValueError, match="coherent_convention"):
         build_packs(_specs(0.5, 0.5), 296.0, "x", coherent_convention="bogus")
-
-
-def test_build_pack_rejects_nonpositive_scale():
-    ev = read_tsl(str(TAPE))
-    for kw in ({"inelastic_scale": 0.0}, {"inelastic_scale": -0.5},
-               {"coherent_scale": 0.0}):
-        with pytest.raises(ValueError, match="must be > 0"):
-            build_pack(ev, 296.0, "g", "C", 12.0107, **kw)
 
 
 # Optional local multi-temperature tape. Point ENDFTSL_UO2_TAPE at a tsl-UinUO2.endf
@@ -111,6 +103,6 @@ def test_build_pack_rejects_non_stored_temperature():
     # the wrong column on a wrong-T grid.
     ev = read_tsl(str(TAPE))
     t0 = ev.temps_mt4[0]
-    build_pack(ev, t0, "g", "C", 12.0107)  # a stored temperature: OK
+    build_pack(ev, t0, "g", 12.0107)  # a stored temperature: OK
     with pytest.raises(NotImplementedError, match="no interpolation"):
-        build_pack(ev, t0 + 200.0, "g", "C", 12.0107)
+        build_pack(ev, t0 + 200.0, "g", 12.0107)

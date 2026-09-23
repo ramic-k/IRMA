@@ -22,7 +22,7 @@ pytest.importorskip("endf_parserpy", exc_type=ModuleNotFoundError)
 from ncrystal_plugin_ENDFTSL.reader import read_tsl                    # noqa: E402
 from ncrystal_plugin_ENDFTSL.convert import build_pack, build_packs, SpeciesSpec  # noqa: E402
 from ncrystal_plugin_ENDFTSL.pack import write_pack                    # noqa: E402
-from ncrystal_plugin_ENDFTSL.ncmat import multi_pack_ncmat, structure_free_ncmat  # noqa: E402
+from ncrystal_plugin_ENDFTSL.ncmat import multi_pack_ncmat  # noqa: E402
 
 HERE = Path(__file__).parent
 TAPE = HERE.parent / "examples" / "graphite" / "graphite_mef_296K.endf"
@@ -46,11 +46,11 @@ def cfgs(tmp_path_factory):
     ev = read_tsl(str(TAPE))
 
     # (a) single species, fraction 1.0 -> the per-atom graphite reference
-    single = build_pack(ev, 296.0, "g1", "C", 12.0107)
+    single = build_pack(ev, 296.0, "g1", 12.0107)
     sp = out / "g1.endftslpack"
     write_pack(single, sp)
     (out / "single.ncmat").write_text(
-        structure_free_ncmat("C", 2.26, str(sp.resolve())), encoding="utf-8")
+        multi_pack_ncmat([("C", 1.0)], 2.26, [str(sp.resolve())]), encoding="utf-8")
 
     # (b) two pseudo-species at fraction 0.5 each, BOTH the graphite tape. The second
     # symbol is a stand-in for a distinct principal scatterer; its @DYNINFO placeholder
