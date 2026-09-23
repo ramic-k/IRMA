@@ -7,7 +7,7 @@ ENDF/B-VIII.1 evaluation to overlay, it has a classic measured total cross
 section (Steyerl) below the first Bragg edge, and it can be driven through
 every one of IRMA's inelastic modes and both instrument geometries. The
 phonon calculation behind every directional result on this page is the published
-density-functional calculation of IG-110-type graphite: VASP with PAW potentials
+density-functional calculation of crystalline graphite: VASP with PAW potentials
 and the PBE functional, a 900 eV plane-wave cutoff, a 3×3×4 Monkhorst-Pack
 mesh, and force constants from the finite-displacement method on a 6×6×1
 (144-atom) supercell in phonopy. The page follows the validation ladder:
@@ -347,7 +347,7 @@ ARCS-100-1.5-AST package at 600 and 300 Hz for E_i = 130 and 30 meV.
 
 ![Measured ARCS S(Q,E) maps vs IRMA mode-2 single-scatter calculations](../assets/validation/graphite/fig_arcs_maps.png)
 
-*Measured ARCS S(Q,E) maps of IG-110 graphite at 300 K (left) and the IRMA
+*Measured ARCS S(Q,E) maps of G347A graphite at 300 K (left) and the IRMA
 mode-2 single-scatter calculations (right) for E_i = 300, 215, 130, and
 30 meV. Within each row the two maps share a logarithmic color scale after
 the calculation is scaled to the measured intensity over the 0.3–0.8 E_i
@@ -461,10 +461,10 @@ does not distinguish errors in the graphite multiphonon or Debye-Waller
 treatment, sample orientation, omitted sample-environment scattering, and
 the simulated multiple-scattering contribution. Second, at E_i = 30 and
 130 meV, neither simulation reproduces the tails of the measured elastic
-peak. A similar excess occurs in facility vanadium calibration runs with
-the same chopper settings, which supports an instrumental origin associated
-with the 100-series Fermi-chopper transmission rather than a
-graphite-scattering feature.
+peak. The cause could be the beamline model's source description, the
+modeled transmission of the 100-series Fermi-chopper package, or
+quasi-elastic scattering from hydrogen in the sample; the comparison cannot
+distinguish them.
 
 ---
 
@@ -473,9 +473,10 @@ graphite-scattering feature.
 The classic kernels reproduce the published tape to 3.4×10⁻⁵ across ten
 temperatures. The directional one-phonon term agrees with Euphonic to a
 shared-domain integral ratio of 1.00001 (coherent component against
-coherent component), and the high-Q suppression in isotropic codes is
-attributed to the isotropic Debye-Waller approximation, an attribution
-supported by a controlled mode-0 comparison. The full mode-2 S(α,β) tracks
+coherent component), and the high-Q suppression in the released OCLIMAX
+and in IRMA mode 0 is attributed to their approximate Debye-Waller factors
+(first-order anisotropic and isotropic), an attribution supported by a
+controlled mode-0 comparison. The full mode-2 S(α,β) tracks
 order-matched OCLIMAX to 4%, with the residual in the high-Q multiphonon
 tail, where the Debye-Waller conventions differ. The processed cross
 sections track OCLIMAX to about 3% at the inelastic minimum, the processing
@@ -485,6 +486,6 @@ that lies in the physical inputs and that this comparison alone cannot
 narrow further. Finally, the same phonon calculation, driven through the
 forward model and through McStas transport, reproduces the measured VISION
 peak positions to about 1 meV and the measured ARCS map morphology,
-with the coherent one-phonon treatment (mode 2) measurably closer to the
-data than the incoherent approximation in backscattering and in the
+with the coherent one-phonon treatment (mode 2) closer to the data, in the
+qualitative comparison, than the incoherent approximation in backscattering and in the
 transport cuts.
