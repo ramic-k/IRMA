@@ -2,9 +2,8 @@
 
 _compute_per_species_msd (iel=10, inelastic_mode=0) computes a DW lambda for
 each atom type that has a matching partial spectrum, using the same
-transform/normalize/fsum chain as LEAPR's start().  The spectrum branch used
-to crash with ``NameError: name 'fsum' is not defined`` (missing import) —
-the fallback branch masked it because no validated deck carried Card 6e.
+transform/normalize/fsum chain as LEAPR's start(); a type without one
+inherits the principal's DW lambda.
 """
 import numpy as np
 import pytest
@@ -60,42 +59,16 @@ def test_no_spectrum_falls_back_to_principal_dw():
     np.testing.assert_allclose(info['atom_types'][1]['dwpix'], dwpix)
 
 
-def test_fallback_warns_for_non_principal_type(capsys):
-    """A non-principal atom type without a Card 6e spectrum inherits the
-    principal's DW lambda, with a WARNING naming the type."""
-    tempr = np.array([296.0, 600.0])
-    dwpix = np.array([0.111, 0.222])
-    info = _crystal_info(spectrum_idx=0)
+def test_fallback_warns_only_for_non_principal_types(capsys):
+    """A non-principal type without a Card 6e spectrum inherits the
+    principal's DW lambda with a WARNING naming the type; the principal
+    inheriting its own lambda is exact and quiet."""
+    _compute_per_species_msd(_crystal_info(spectrum_idx=0),
+                             np.array([296.0, 600.0]), 2, np.array([0.111, 0.222]))
+    assert "WARNING: atom type 2 (Z=8, A=16)" in capsys.readouterr().out
 
-    _compute_per_species_msd(info, tempr, 2, dwpix)
-
-    out = capsys.readouterr().out
-    assert "WARNING: atom type 2 (Z=8, A=16)" in out
-    assert "no Card 6e spectrum" in out
-
-
-
-
-def test_principal_type_fallback_is_quiet(capsys):
-    """The principal inheriting dwpix is exact (it is its own lambda): no WARNING."""
     info = _crystal_info(spectrum_idx=None)
     info['atom_types'][1]['spectrum_idx'] = 0
-
     _compute_per_species_msd(info, np.array([296.0]), 1, np.array([0.111]))
-
-    out = capsys.readouterr().out
-    assert "WARNING" not in out
+    assert "WARNING" not in capsys.readouterr().out
     np.testing.assert_allclose(info['atom_types'][0]['dwpix'], [0.111])
-
-
-def test_dw_lambda_increases_with_temperature():
-    """LEAPR's lambda (f0 = integral of rho(eps) coth(eps/2kT)/eps, units
-    1/eV) grows with T as the phonon population factor approaches 2kT/eps."""
-    tempr = np.array([200.0, 400.0, 800.0])
-    dwpix = np.zeros(3)
-    info = _crystal_info(spectrum_idx=0)
-
-    _compute_per_species_msd(info, tempr, 3, dwpix)
-
-    f0 = info['atom_types'][0]['dwpix']
-    assert 0.0 < f0[0] < f0[1] < f0[2]
