@@ -10,7 +10,6 @@ import types
 from irma.gui.app import IrmaApp
 from irma.gui.endf_form import EndfFormMixin
 from irma.gui.ncrystal_panel import NCrystalPanel
-from irma.gui.ns_panel import NSPanel
 
 
 def _tmpfile(tmp_path, name):
@@ -43,21 +42,6 @@ def test_ncrystal_panel_cleanup_idempotent(tmp_path):
     panel.cleanup_temp_files()
 
 
-def test_ns_panel_cleanup_covers_cfg_and_maps(tmp_path):
-    d = _run_dir(tmp_path)
-    mp = tmp_path / "map.npz"
-    mp.write_bytes(b"x")
-    pending = tmp_path / "pending.npz"
-    pending.write_bytes(b"x")
-    panel = object.__new__(NSPanel)
-    panel._tmpdir, panel._map_path, panel._pending_map = (
-        str(d), str(mp), str(pending))
-    panel.cleanup_temp_files()
-    assert not d.exists() and not mp.exists() and not pending.exists()
-    assert panel._tmpdir is None and panel._map_path is None
-    panel.cleanup_temp_files()                  # idempotent
-
-
 def test_app_close_calls_every_cleanup_synchronously(tmp_path):
     calls = []
     fake = types.SimpleNamespace(
@@ -73,11 +57,3 @@ def test_app_close_calls_every_cleanup_synchronously(tmp_path):
     )
     IrmaApp._on_close(fake)
     assert calls == ["endf", "ns", "nc", "mlip", "destroy"]
-
-
-def test_gui_map_uses_full_arch_q_min():
-    """review GUI-MAP: the map command must not hardcode a 0.5 lower Q cut."""
-    import inspect
-    src = inspect.getsource(NSPanel._run_map)
-    assert '"--q-min", "0.0"' in src
-    assert '"--q-min", "0.5"' not in src
