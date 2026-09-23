@@ -88,7 +88,7 @@ def test_cryo_delta_line_beyond_1000_lands_in_nearest_bin(monkeypatch):
     with np.errstate(divide="raise"):  # promote the pre-fix inf to an error
         dwpix, tempf = discre(ssm, np.array([2000.0]), beta, 1, nbeta, 0,
                               1.0, tev, 0.0, 0.5, 1, np.array([bdeln * tev]),
-                              np.array([0.1]), 0.0, 20.0, 20.0, 0)
+                              np.array([0.1]), 0.0, 20.0, 20.0)
 
     t, expect = _nearest_deposit(beta, bdeln, w_line)
     assert t == 10  # betan[10] = 1050 is the nearest point to 1056
@@ -118,7 +118,7 @@ def test_cryo_real_oscillator_on_grid_beyond_1000():
     ssm = np.zeros((nbeta, 1))
     dwpix, tempf = discre(ssm, np.array([al]), beta, 1, nbeta, 0, 1.0, tev,
                           0.0, 0.5, 1, np.array([bdeln * tev]),
-                          np.array([adel]), 0.0, 20.0, 20.0, 0)
+                          np.array([adel]), 0.0, 20.0, 20.0)
 
     _, w1, w2 = _osc_terms(al, adel, bdeln)
     assert w2 > w1  # the trim keeps the two-phonon line
@@ -145,7 +145,7 @@ def test_ordinary_deck_delta_binning_unchanged():
     ssm = np.zeros((nbeta, 1))
     dwpix, tempf = discre(ssm, np.array([al]), beta, 1, nbeta, 0, 1.0, tev,
                           0.0, 0.8, 2, np.array([b * tev for b in bdeln]),
-                          np.array(adel), 0.0, 296.0, 296.0, 0)
+                          np.array(adel), 0.0, 296.0, 296.0)
 
     bz2, _, _ = _osc_terms(al, adel[1], bdeln[1])
     _, w1_first, _ = _osc_terms(al, adel[0], bdeln[0])

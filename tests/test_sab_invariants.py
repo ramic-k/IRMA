@@ -44,7 +44,7 @@ def _run_contin(temperature_K, tbeta=1.0, nphon=30):
     tev = BK * temperature_K
     ssm = np.zeros((len(beta), len(alpha)))
     f0, tbar, deltab = contin(ssm, alpha, beta, len(alpha), len(beta),
-                              1, 1.0, tev, p1, ni, delta1, tbeta, nphon, 0)
+                              1, 1.0, tev, p1, ni, delta1, tbeta, nphon)
     return ssm, alpha, beta, tev, f0, tbar, deltab
 
 
@@ -117,7 +117,7 @@ def test_discrete_oscillators_raise_dw_and_teff(law_300K):
     adel = np.array([0.3])             # weight 0.3 (tbeta=0.7)
     dw_new, teff_new = discre(ssm, alpha, beta, len(alpha), len(beta),
                               1, 1.0, tev, 0.0, 0.7, 1, bdel, adel,
-                              f0, teff0, 300.0, 0)
+                              f0, teff0, 300.0)
     assert dw_new > f0
     assert teff_new > teff0
     assert np.all(np.isfinite(ssm)) and np.all(ssm >= 0.0)
@@ -130,7 +130,7 @@ def test_translational_component_restores_full_normalization():
     ssm0, alpha, beta, tev, f0, tbar, deltab = _run_contin(300.0, tbeta=0.7)
     ssm = ssm0.copy()
     trans(ssm, alpha, beta, len(alpha), len(beta), 1, 1.0, tev,
-          0.3, 0.0, 0.7, f0, deltab, tbar, 0)
+          0.3, 0.0, 0.7, f0, deltab, tbar)
     integrals = _downscatter_integral(ssm, beta, tev)
     # quasi-elastic peak is hard to resolve at the smallest alpha; check the
     # moderate/large-alpha points where the grid resolves it.
@@ -157,12 +157,12 @@ def test_discre_convolves_every_in_range_delta_line():
     tbeta, twt = 0.5, 0.0
     ssm = np.zeros((len(beta), len(alpha)))
     f0, tbar, _ = contin(ssm, alpha, beta, len(alpha), len(beta),
-                         1, 1.0, tev, p1, ne, delta1, tbeta, 30, 0)
+                         1, 1.0, tev, p1, ne, delta1, tbeta, 30)
     bdel = np.array([0.137, 0.250])             # two oscillators, both in range
     adel = np.array([0.3, 0.2])
     ssm_d = ssm.copy()
     discre(ssm_d, alpha, beta, len(alpha), len(beta), 1, 1.0, tev,
-           twt, tbeta, 2, bdel, adel, f0, tbar * T, T, 0)
+           twt, tbeta, 2, bdel, adel, f0, tbar * T, T)
     assert np.all(np.isfinite(ssm_d)) and np.all(ssm_d >= 0.0)
 
     # each oscillator's delta line lands on the beta row nearest bdel/tev

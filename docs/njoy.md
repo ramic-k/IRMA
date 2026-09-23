@@ -258,8 +258,8 @@ own source, and each entry names its consequence for users.
   root* of that quantity. The missing square root is NJOY's own
   (`leapr.f90:1892`), and IRMA reproduces it deliberately for byte
   parity with the reference tapes. It affects only the SCT tail reached
-  from `discre` and `coldh`. Tagged at all three implementations
-  (`sint`, `sint_vec`, `_sint_batch_exact`), which are kept in lockstep.
+  from `discre` and `coldh`. Tagged at both implementations
+  (`sint_vec`, `_sint_batch_exact`), which are kept in lockstep.
 
 The first two have been reported upstream:
 [njoy/NJOY2016#402](https://github.com/njoy/NJOY2016/issues/402) (`discre`
