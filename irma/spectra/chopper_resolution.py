@@ -544,7 +544,7 @@ INSTRUMENT_DB = {
         "dd": 0.025, "sy": 0.010, "sample_scale": 1.0 / 8.0,     # isam=2
         "disk_chpfac_k": 0.190,                       # reference-calibrated disk lever-arm K
         "max_frequency": 300, "default_frequency": 300,
-        "packages": {"Standard": {"C_us_hz": 7503.3}},
+        "packages": {"High-Flux": {"C_us_hz": 7503.3}},
     },
     "LET": {
         "chopper_type": "disk",
@@ -553,7 +553,7 @@ INSTRUMENT_DB = {
         "dd": None, "sy": None,                       # LET: moderator + chopper only
         "disk_chpfac_k": 0.379,                       # reference-calibrated disk lever-arm K
         "max_frequency": 300, "default_frequency": 240,
-        "packages": {"High-Resolution": {"C_us_hz": 3231.9}},
+        "packages": {"High-Flux": {"C_us_hz": 3231.9}},
     },
 }
 
