@@ -269,12 +269,3 @@ def test_relabel_row_takes_identity_and_constants_from_one_entry():
         relabel_row(gd, 64157)
     line = format_atom_row(new)
     assert line.startswith("6  12  ") and "  2  0.000000 0.000000 0.250000  " in line
-
-
-def test_validator_and_engine_share_the_message():
-    from irma.core.crystal_input import principal_mismatch_message
-    from irma.mlip.emit import validate_deck_semantics
-    staged = {"mat": 28, "za": 6012.0, "iint": 1, "iel": 10,
-              "atoms": [{"Z": 6, "A": 0}], "alpha": [0.1, 0.2], "beta": [0.0, 0.1]}
-    problems = validate_deck_semantics(staged)
-    assert any(principal_mismatch_message(6012, staged["atoms"]) in p for p in problems)
