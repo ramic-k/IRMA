@@ -182,8 +182,7 @@ def test_identical_tensors_keep_old_path_bit_for_bit():
 
 # ---- driver flag + site ordering ----------------------------------------------
 def _driver_crystal_info(mesh_positions):
-    from irma.core.crystal import _order_site_groups_by_card6d_positions
-    ci = {
+    return {
         'inelastic_mode': 2,
         'nc_mesh_data': types.SimpleNamespace(
             atom_positions=np.asarray(mesh_positions, dtype=float),
@@ -194,11 +193,6 @@ def _driver_crystal_info(mesh_positions):
             'positions': [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0)],
         }],
     }
-    # the deck reader pairs the Card 6d positions with the phonopy sites
-    ci['nc_ordered_site_groups'] = _order_site_groups_by_card6d_positions(
-        ci['atom_types'], ci['nc_atom_type_site_groups'],
-        ci['nc_mesh_data'].atom_positions)
-    return ci
 
 
 def test_driver_stores_site_tensors_in_card6d_order_and_flags_nonuniform():
@@ -264,6 +258,18 @@ def test_driver_pairs_sites_modulo_shared_origin_shift():
     # deck (0,0,0) <-> phonopy atom 0 at (0,0,0.75); deck (0.5,0,0) <-> atom 1
     assert np.array_equal(F_sites[0], F_a)
     assert np.array_equal(F_sites[1], F_b)
+
+
+def test_driver_raises_when_nonuniform_sites_cannot_be_paired():
+    from irma.core.driver import _store_directional_species_dw
+    # mesh positions match NO Card 6d position (under any shared shift) -> no
+    # 1:1 pairing; with non-uniform tensors this must be a hard error, not a
+    # silent mispairing
+    ci = _driver_crystal_info([[0.1234, 0.2, 0.3], [0.7, 0.8, 0.9]])
+    with pytest.raises(ValueError, match="cannot pair"):
+        _store_directional_species_dw(
+            ci, 0, 1,
+            np.array([np.diag([1.0, 2.0, 3.0]), np.diag([4.0, 5.0, 6.0])]))
 
 
 def test_resolver_carries_site_tensors():
