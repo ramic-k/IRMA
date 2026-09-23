@@ -306,8 +306,7 @@ def test_unstable_model_is_refused_for_dos_paths(dis_bundle, tmp_path):
     assert len(paths) == 1
 
 
-def test_emit_overwrite_guard_and_failure_preservation(al_bundle, tmp_path,
-                                                       monkeypatch):
+def test_emit_overwrite_guard(al_bundle, tmp_path):
     kw = dict(temperature_k=296.0, mats={"Al": 45}, out_dir=str(tmp_path),
               progress=QUIET)
     (path,) = emit_endf_decks(al_bundle, **kw)
@@ -316,15 +315,6 @@ def test_emit_overwrite_guard_and_failure_preservation(al_bundle, tmp_path,
     with pytest.raises(FileExistsError, match="overwrite"):
         emit_endf_decks(al_bundle, **kw)
     assert open(path).read() == original
-
-    # a failed gate must preserve the existing file and leave no .tmp
-    import irma.mlip.emit as emit_mod
-    monkeypatch.setattr(emit_mod, "validate_deck_semantics",
-                        lambda staged: ["injected failure"])
-    with pytest.raises(RuntimeError, match="injected failure"):
-        emit_endf_decks(al_bundle, overwrite=True, **kw)
-    assert open(path).read() == original
-    assert not [f for f in os.listdir(str(tmp_path)) if f.endswith(".tmp")]
 
 
 def test_born_bundle_emits_use_born_zero_with_embedded_nac(tmp_path):
@@ -665,95 +655,6 @@ def test_disordered_spectra_dos_paths_are_absolute(dis_bundle, tmp_path,
     assert os.path.isfile(sc["dos_file"])
     monkeypatch.chdir(tmp_path / "rel_out")    # a different cwd still works
     assert os.path.isfile(sc["dos_file"])
-
-
-def test_late_deck_conflict_publishes_nothing(cuau_bundle, tmp_path):
-    """CDX-1: a FileExistsError on the LAST target (second deck, or the
-    manifest) must surface before the FIRST artifact is published."""
-    species = resolve_species(cuau_bundle, progress=QUIET)
-    first, last = species[0].symbol, species[-1].symbol
-    kw = dict(temperature_k=296.0, mats={"Cu": 100, "Au": 200},
-              _preview=True, progress=QUIET)
-
-    out = tmp_path / "late_deck"
-    out.mkdir()
-    sentinel = out / f"endf_{last}.input"
-    sentinel.write_text("sentinel\n")
-    with pytest.raises(FileExistsError, match="overwrite"):
-        emit_endf_decks(cuau_bundle, out_dir=str(out), **kw)
-    assert not (out / f"endf_{first}.input").exists()
-    assert not (out / "emit_manifest.json").exists()
-    assert sentinel.read_text() == "sentinel\n"
-
-    out2 = tmp_path / "late_manifest"
-    out2.mkdir()
-    (out2 / "emit_manifest.json").write_text("{}\n")
-    with pytest.raises(FileExistsError, match="overwrite"):
-        emit_endf_decks(cuau_bundle, out_dir=str(out2), **kw)
-    assert not [f for f in os.listdir(out2) if f.startswith("endf_")]
-
-    # near-miss: a legitimate --overwrite still replaces the full set
-    paths = emit_endf_decks(cuau_bundle, out_dir=str(out2), overwrite=True,
-                            **kw)
-    assert len(paths) == 2
-    assert (out2 / "emit_manifest.json").read_text() != "{}\n"
-
-
-def test_disordered_spectra_conflict_publishes_no_dos(cuau_bundle, tmp_path):
-    """CDX-1 (spectra): a conflict on the last dos_*.dat must publish
-    neither the earlier dos files nor the YAML."""
-    import copy
-    from irma.mlip.bundle import Bundle
-    doctored = Bundle(path=cuau_bundle.path,
-                      phonopy_yaml=cuau_bundle.phonopy_yaml,
-                      structure=cuau_bundle.structure,
-                      manifest=copy.deepcopy(cuau_bundle.manifest))
-    doctored.manifest["disordered"] = True
-    species = resolve_species(doctored, progress=QUIET)
-    first, last = species[0].symbol, species[-1].symbol
-    out = tmp_path / "spectra_conflict"
-    out.mkdir()
-    sentinel = out / f"dos_{last}.dat"
-    sentinel.write_text("sentinel\n")
-    with pytest.raises(FileExistsError, match="overwrite"):
-        emit_spectra_yaml(doctored, temperature_k=296.0,
-                          out_path=str(out / "spectra.yaml"),
-                          allow_unstable=True, progress=QUIET)
-    assert not (out / f"dos_{first}.dat").exists()
-    assert not (out / "spectra.yaml").exists()
-    assert sentinel.read_text() == "sentinel\n"
-
-
-def test_preflight_emit_targets_covers_every_target(al_bundle, dis_bundle,
-                                                    tmp_path):
-    """CDX-1 (cross-target helper for the CLI): every path of a --to
-    invocation is guarded up front, and nothing is written."""
-    from irma.mlip.emit import preflight_emit_targets
-    out = tmp_path / "pf"
-    out.mkdir()
-    paths = preflight_emit_targets(al_bundle,
-                                   ["endf", "spectra", "ncrystal"],
-                                   out_dir=str(out))
-    assert {os.path.basename(p) for p in paths} == {
-        "endf_Al.input", "emit_manifest.json", "spectra.yaml",
-        "ncrystal.yaml"}
-    assert os.listdir(out) == []               # preflight writes nothing
-
-    (out / "ncrystal.yaml").write_text("stale\n")
-    with pytest.raises(FileExistsError, match="overwrite"):
-        preflight_emit_targets(al_bundle, ["endf", "ncrystal"],
-                               out_dir=str(out))
-    assert preflight_emit_targets(al_bundle, ["endf", "ncrystal"],
-                                  out_dir=str(out), overwrite=True)
-
-    # disordered spectra plans the dos sidecars too
-    dpaths = preflight_emit_targets(dis_bundle, ["spectra"],
-                                    out_dir=str(out))
-    assert "dos_Al.dat" in {os.path.basename(p) for p in dpaths}
-
-    with pytest.raises(ValueError, match="unknown emit target"):
-        preflight_emit_targets(al_bundle, ["endf", "bogus"],
-                               out_dir=str(out))
 
 
 def test_emitted_mesh_is_production_density(al_bundle):

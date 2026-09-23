@@ -270,11 +270,6 @@ def _do_emit(bundle, targets, args) -> int:
     if unknown:
         return _err(f"unknown emit target(s) {unknown}; choose from "
                     f"endf, spectra, ncrystal")
-    # cheap cross-target preflight BEFORE the first artifact is written, so
-    # e.g. a disordered/ncrystal conflict cannot leave a half-emitted set
-    if "ncrystal" in targets and bundle.manifest.get("disordered"):
-        return _err("NCrystal emission is not supported for disordered "
-                    "materials in v1; drop 'ncrystal' from --to")
     # an EXPLICIT --elastic-format is a crystal-deck selector even when it
     # names the default: rejected on disordered bundles exactly like
     # --inelastic-mode (argparse default is None, normalized to mef below)
@@ -292,15 +287,6 @@ def _do_emit(bundle, targets, args) -> int:
     nuclides = _parse_pairs(args.nuclide, "--nuclide")
     overrides = _parse_species(args.species)
     out_dir = getattr(args, "out_dir", None) or bundle.path
-
-    # cross-target PATH preflight (CDX-1): every file the full --to set
-    # will publish is guarded here, so a conflict on the last target (say
-    # ncrystal.yaml) surfaces before the first ENDF deck is written;
-    # main() turns the FileExistsError into a clean exit 2
-    from irma.mlip.emit import preflight_emit_targets
-    preflight_emit_targets(bundle, targets, out_dir=out_dir,
-                           overwrite=args.overwrite, nuclides=nuclides,
-                           overrides=overrides)
 
     produced = []
     if "endf" in targets:

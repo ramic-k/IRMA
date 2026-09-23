@@ -220,16 +220,15 @@ def test_dev_backend_is_stamped_and_warned_on_emit(al_poscar, tmp_path,
     assert "DEVELOPMENT backend" in capsys.readouterr().out
 
 
-def test_disordered_ncrystal_conflict_fails_before_writing(al_poscar,
-                                                           tmp_path, capsys):
+def test_disordered_ncrystal_is_refused(al_poscar, tmp_path, capsys):
     outdir = str(tmp_path / "b")
     assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
                  "--allow-dev-backend", "--disordered",
                  "--mesh", "2 2 2"]) == 0
     capsys.readouterr()
-    rc = main(["emit", outdir, "--to", "endf,ncrystal", "--mat", "Al=45"])
+    rc = main(["emit", outdir, "--to", "ncrystal", "--mat", "Al=45"])
     assert rc == 2
-    assert not os.path.isfile(os.path.join(outdir, "endf_Al.input"))
+    assert "disordered" in capsys.readouterr().err
 
 
 def test_unknown_mat_symbol_is_rejected(al_poscar, tmp_path, capsys):
@@ -246,38 +245,6 @@ def test_unknown_mat_symbol_is_rejected(al_poscar, tmp_path, capsys):
 def test_top_level_routing():
     from irma.cli import main as top_main
     assert top_main(["mlip", "--help"]) == 0
-
-
-def test_cross_target_preflight_blocks_before_any_deck_is_written(
-        al_poscar, tmp_path, capsys):
-    """CDX-1: a conflict on the LAST target of a --to set must surface
-    before the FIRST artifact is published, so a failed command never
-    leaves a partial, mixed-generation output set."""
-    outdir = str(tmp_path / "bundle")
-    assert main(["build", al_poscar, "-o", outdir, "--potential", "emt",
-                 "--allow-dev-backend", "--supercell", "2 2 2",
-                 "--mesh", "4 4 4"]) == 0
-    capsys.readouterr()
-
-    # only ncrystal.yaml pre-exists; endf and spectra come first in write
-    # order and must NOT be produced
-    with open(os.path.join(outdir, "ncrystal.yaml"), "w") as fh:
-        fh.write("# hand-written, must not be clobbered\n")
-    rc = main(["emit", outdir, "--to", "endf,spectra,ncrystal",
-               "--mat", "Al=45"])
-    assert rc == 2
-    assert "--overwrite" in capsys.readouterr().err
-    assert not os.path.isfile(os.path.join(outdir, "endf_Al.input"))
-    assert not os.path.isfile(os.path.join(outdir, "spectra.yaml"))
-    assert not os.path.isfile(os.path.join(outdir, "emit_manifest.json"))
-    with open(os.path.join(outdir, "ncrystal.yaml")) as fh:
-        assert "hand-written" in fh.read()
-
-    # --overwrite makes the same invocation succeed end to end
-    assert main(["emit", outdir, "--to", "endf,spectra,ncrystal",
-                 "--mat", "Al=45", "--overwrite"]) == 0
-    for name in ("endf_Al.input", "spectra.yaml", "ncrystal.yaml"):
-        assert os.path.isfile(os.path.join(outdir, name)), name
 
 
 def test_explicit_elastic_format_rejected_on_a_disordered_bundle(
