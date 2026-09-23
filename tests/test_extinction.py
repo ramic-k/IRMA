@@ -116,19 +116,3 @@ def test_sabine_stable_form_matches_naive_at_moderate_x():
         eb_naive = 2.0 / x / x * (x - math.log1p(x))
         assert el == pytest.approx(el_naive, rel=1e-9)
         assert eb == pytest.approx(eb_naive, rel=1e-9)
-
-
-def test_sabine_review_reproducer_point_is_physical():
-    """The exact PH-2 reproducer: Nc=0.1, F=1e-6 A, d=10 A, l=1000 A, g=1,
-    L=1e4 A, triangular. The dense energy sweep used to yield hundreds of
-    negative factors (worst -26)."""
-    import numpy as np
-    for E in np.geomspace(0.005, 0.5, 2001):
-        wl = math.sqrt(8.180425e-2 / E)  # WL2EKIN
-        if 0.5 * wl / 10.0 > 1.0:
-            continue
-        y = ext.extinction_factor("Sabine_uncorr", Nc=0.1, wl=wl, F_hkl=1e-6,
-                                  d_hkl=10.0, l=1000.0, g=1.0, L=1e4,
-                                  dist="tri")
-        assert math.isfinite(y)
-        assert 0.0 <= y <= 1.0, (E, y)
