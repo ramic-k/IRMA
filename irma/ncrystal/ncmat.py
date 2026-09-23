@@ -9,9 +9,11 @@ structure straight from the phonopy primitive cell the pack was built from, so
 the two match by construction and the anisotropic-DW elastic line works.
 
 The plugin takes over the inelastic channel (and the coherent/incoherent elastic
-when the pack owns it), disabling those base channels — so the base ``@DYNINFO``
-is a placeholder (``freegas``) that NCrystal needs only to construct a valid
-material; it never contributes to the cross section.
+when the pack owns it), disabling those base channels. The base ``@DYNINFO`` is a
+``vdosdebye`` placeholder that NCrystal needs to construct a valid material. With
+``elastic: true`` it never reaches the cross section; with ``elastic: false``
+NCrystal's own elastic uses it, so its Debye temperature reproduces the engine's
+mean-squared displacement in NCrystal's Debye model.
 """
 from __future__ import annotations
 
@@ -23,28 +25,54 @@ import numpy as np
 
 from irma.core.crystal import lattice_to_cell_params
 
-# SI constants for the high-temperature Debye-Waller MSD <-> Debye-temperature map.
+# SI constants for the Debye MSD <-> Debye-temperature map.
 _HBAR_J_S = 1.054571817e-34
 _KB_J_PER_K = 1.380649e-23
 _AMU_KG = 1.66053906660e-27
 _ANG2_M2 = 1.0e-20
 
 
+def debye_msd(theta_K: float, mass_amu: float, temperature_K: float) -> float:
+    """Mean-squared displacement [Angstrom^2] of the Debye model, as NCrystal
+    computes it (NCDebyeMSD.cc):
+    ``<u^2> = 3 hbar^2 / (m kB theta) [1/4 + (T/theta)^2 int_0^{theta/T} x/(e^x-1) dx]``.
+    """
+    scale = 3.0 * _HBAR_J_S ** 2 / (float(mass_amu) * _AMU_KG * _KB_J_PER_K
+                                    * float(theta_K)) / _ANG2_M2
+    if temperature_K <= 0.0:
+        return scale * 0.25
+    y = float(theta_K) / float(temperature_K)
+    # x/(e^x - 1) is below 1e-24 past x = 60, so the integral stops there
+    x = np.linspace(0.0, min(y, 60.0), 4001)
+    f = np.ones_like(x)
+    f[1:] = x[1:] / np.expm1(x[1:])
+    integral = (x[1] - x[0]) / 3.0 * (f[0] + f[-1] + 4.0 * f[1:-1:2].sum()
+                                      + 2.0 * f[2:-1:2].sum())
+    return scale * (0.25 + integral / (y * y))
+
+
 def debye_temperature_from_msd(msd_a2: float, mass_amu: float,
                                temperature_K: float) -> float:
-    """High-T Debye temperature reproducing a mean-squared displacement.
+    """Debye temperature whose :func:`debye_msd` equals ``msd_a2``.
 
-    From the harmonic high-temperature limit ``<u^2> = 3 hbar^2 T / (m kB
-    theta_D^2)`` → ``theta_D = hbar * sqrt(3 T / (m kB <u^2>))``. Used only to give
-    NCrystal a valid MSD source so the crystalline material constructs; for an
-    elastic export the plugin overrides the base elastic with the pack's
-    anisotropic tensors, so the exact value does not reach the cross section.
-    Clamped to a sane [1, 1e5] K range.
+    Bisection on the full Debye formula (the MSD falls as theta rises), so
+    NCrystal's ``vdosdebye`` reproduces the engine's MSD. Clamped to
+    [1, 1e5] K.
     """
-    u2 = float(msd_a2) * _ANG2_M2
-    m = float(mass_amu) * _AMU_KG
-    theta = _HBAR_J_S * math.sqrt(3.0 * float(temperature_K) / (m * _KB_J_PER_K * u2))
-    return float(min(1.0e5, max(1.0, theta)))
+    lo, hi = 1.0, 1.0e5
+    if debye_msd(lo, mass_amu, temperature_K) <= msd_a2:
+        return lo
+    if debye_msd(hi, mass_amu, temperature_K) >= msd_a2:
+        return hi
+    for _ in range(100):
+        mid = math.sqrt(lo * hi)
+        if debye_msd(mid, mass_amu, temperature_K) > msd_a2:
+            lo = mid
+        else:
+            hi = mid
+        if hi / lo - 1.0 < 1e-13:
+            break
+    return float(math.sqrt(lo * hi))
 
 
 def _fmt(value: float) -> str:

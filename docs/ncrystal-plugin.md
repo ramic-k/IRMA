@@ -202,11 +202,12 @@ built from, so the per-site Debye-Waller tensors match the material's atom
 sites exactly (the plugin pairs them by fractional position, tolerance
 1e-6). A stock stdlib NCMAT for the same compound usually has a different
 crystallographic origin and will not match. The placeholder `@DYNINFO` (a Debye VDOS
-back-derived from the phonopy MSD) only lets NCrystal construct the
-crystal; the plugin overrides the inelastic component with the exported
-`S(α,β)` and, on the coherent-bearing data file, the coherent/incoherent
-elastic with the anisotropic-DW line, so the placeholder never reaches the
-cross section. The material temperature is set at load via `;temp=...` and
+whose Debye temperature reproduces the phonopy MSD in NCrystal's Debye model)
+lets NCrystal construct the crystal; the plugin overrides the inelastic
+component with the exported `S(α,β)` and, on the coherent-bearing data file,
+the coherent/incoherent elastic with the anisotropic-DW line. With
+`elastic: true` the placeholder never reaches the cross section; with
+`elastic: false` NCrystal's own elastic uses it. The material temperature is set at load via `;temp=...` and
 must match the export temperature; a mismatch is a hard error (see
 [How NCrystal uses the data](#how-ncrystal-uses-the-data)).
 
