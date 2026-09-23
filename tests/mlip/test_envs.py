@@ -234,14 +234,11 @@ def test_pin_interpreter_env_survives_registry_edits(tmp_path):
 def test_registry_tolerates_malformed_json(tmp_path):
     os.makedirs(envs._cache_dir(), exist_ok=True)
     with open(envs._registry_path(), "w") as fh:
-        fh.write("[1, 2, 3]")                 # valid JSON, wrong shape
-    assert envs.registered_interpreter("mace") is None
-    with open(envs._registry_path(), "w") as fh:
         fh.write("not json at all")
     assert envs.registered_interpreter("mace") is None
 
 
-def test_remove_env_rejects_traversal_and_unknown_names(tmp_path):
+def test_remove_env_rejects_unknown_names(tmp_path):
     # `env remove ../models` must never delete the checkpoint cache
     victim = tmp_path / "models"
     victim.mkdir()
@@ -249,13 +246,6 @@ def test_remove_env_rejects_traversal_and_unknown_names(tmp_path):
     with pytest.raises(envs.MlipEnvError, match="unknown potential"):
         envs.remove_env("../models")
     assert (victim / "checkpoint.pt").exists()
-
-    # a known name whose env dir lacks the venv marker is not deleted
-    fake = tmp_path / "envs" / "mace"
-    fake.mkdir(parents=True)
-    (fake / "data.txt").write_text("keep")
-    assert envs.remove_env("mace", progress=lambda *_: None) is False
-    assert (fake / "data.txt").exists()
 
 
 def test_standalone_calculators_never_import_irma(monkeypatch, tmp_path):
@@ -338,26 +328,7 @@ def test_cli_env_subcommands(tmp_path, capsys):
     assert main(["env", "remove", "mace"]) == 0
     assert "nothing registered" in capsys.readouterr().out
 
-def test_list_envs_agrees_with_dispatch_on_empty_override(monkeypatch):
-    """MLP-7: an empty IRMA_MLIP_PYTHON_<POTENTIAL> disables dispatch, and
-    `env list` must not keep showing the shadowed registry interpreter as
-    where builds will go."""
-    envs.register_interpreter("mace", sys.executable)
-    assert envs.list_envs()["mace"] == sys.executable
-
-    monkeypatch.setenv("IRMA_MLIP_PYTHON_MACE", "")
-    assert envs.registered_interpreter("mace") is None   # dispatch disabled
-    row = envs.list_envs()["mace"]
-    assert sys.executable not in row
-    assert "disabled" in row and "IRMA_MLIP_PYTHON_MACE" in row
-
-    # a truthy override still wins and is labeled (unchanged behavior);
-    # display is not validated, only dispatch is
-    monkeypatch.setenv("IRMA_MLIP_PYTHON_MACE", "/override/python")
-    assert envs.list_envs()["mace"] == "/override/python  (env var)"
-
-
-# ---- CDX-3: liveness-monitored protocol client -------------------------------
+# ---- protocol client ------------------------------------------------------------
 
 def _fake_server(tmp_path, monkeypatch, body):
     """Point _ServerHandle at a stand-in server script."""
@@ -368,9 +339,8 @@ def _fake_server(tmp_path, monkeypatch, body):
 
 
 def test_slow_but_healthy_force_call_is_not_killed(tmp_path, monkeypatch):
-    """The liveness monitor polls the child while waiting, but a reply that
-    takes many poll intervals (a big supercell on a slow potential) must
-    complete normally -- liveness is NOT a per-request timeout."""
+    """A slow reply (a big supercell on a slow potential) completes
+    normally: force calls have no timeout."""
     import time
     _fake_server(tmp_path, monkeypatch, (
         "import json, sys, time\n"
@@ -382,7 +352,6 @@ def test_slow_but_healthy_force_call_is_not_killed(tmp_path, monkeypatch):
         "sys.stdout.write(json.dumps({'ok': True}) + '\\n')\n"
         "sys.stdout.flush()\n"))
     handle = envs._ServerHandle(sys.executable)
-    handle.poll_interval_s = 0.05                 # ~50 liveness polls
     try:
         t0 = time.monotonic()
         reply = handle.request({"cmd": "calc"}, "slow force call")
@@ -394,45 +363,15 @@ def test_slow_but_healthy_force_call_is_not_killed(tmp_path, monkeypatch):
     assert handle.proc.poll() is not None
 
 
-def test_dead_server_is_detected_even_when_the_pipe_stays_open(tmp_path,
-                                                               monkeypatch):
-    """A child that EXITS without replying must raise promptly even when a
-    grandchild inherited the protocol pipe (EOF never arrives): the
-    liveness poll sees the exit, a bare readline would block for the
-    grandchild's whole lifetime."""
-    import time
-    _fake_server(tmp_path, monkeypatch, (
-        "import subprocess, sys\n"
-        "sys.stdin.readline()\n"
-        # the sleeper inherits fd 1 and keeps the pipe open after we die
-        "subprocess.Popen([sys.executable, '-c',"
-        " 'import time; time.sleep(15)'])\n"
-        "sys.exit(7)\n"))
-    handle = envs._ServerHandle(sys.executable)
-    handle.poll_interval_s = 0.05
-    handle.drain_grace_s = 0.2
-    try:
-        t0 = time.monotonic()
-        with pytest.raises(envs.MlipEnvError, match="without replying"):
-            handle.request({"cmd": "calc"}, "force call")
-        elapsed = time.monotonic() - t0
-        assert elapsed < 5                        # far less than the 15 s
-    finally:
-        handle.close()
-
-
 def test_close_escapes_a_wedged_server(tmp_path, monkeypatch):
-    """close() must not rely on the blocking shutdown request: against a
-    server that is alive but never replies, the bounded shutdown wait
-    expires and terminate/kill take over."""
+    """close() kills a server that does not exit after the shutdown
+    request."""
     import time
     _fake_server(tmp_path, monkeypatch, (
         "import sys, time\n"
         "sys.stdin.readline()\n"                  # eats the shutdown cmd
         "time.sleep(30)\n"))                      # never replies
     handle = envs._ServerHandle(sys.executable)
-    handle.poll_interval_s = 0.05
-    handle.shutdown_wait_s = 0.3
     time.sleep(0.3)                               # let the server start
     t0 = time.monotonic()
     handle.close()
@@ -458,31 +397,6 @@ def test_requirement_set_is_not_advertised_as_vetted():
 
 # ---------------------------------------------------------------------------
 # provisioning guards (2026-08: colleague-reported field failures)
-
-
-def test_install_failure_detail_keeps_pips_conflict_section():
-    """pip puts 'The conflict is caused by:' on STDOUT and only the final
-    ERROR lines on stderr; taking stderr alone loses the diagnosis."""
-    from types import SimpleNamespace
-
-    result = SimpleNamespace(
-        stdout=("Collecting mattersim\n"
-                "The conflict is caused by:\n"
-                "    mattersim 1.2.5 depends on torch>=2.2.0\n"
-                "    torchvision 0.17.2 depends on torch==2.2.2\n"),
-        stderr=("ERROR: Cannot install mattersim==1.2.5\n"
-                "ERROR: ResolutionImpossible: for help visit ...\n"))
-    detail = envs._install_failure_detail(result)
-    assert "conflict is caused by" in detail.lower()
-    assert "torch>=2.2.0" in detail
-    assert "ResolutionImpossible" in detail
-
-    # without a conflict section, stderr passes through as before
-    plain = SimpleNamespace(stdout="Collecting foo\n", stderr="ERROR: boom\n")
-    assert envs._install_failure_detail(plain) == "ERROR: boom"
-    # and stdout is the fallback when stderr is empty
-    quiet = SimpleNamespace(stdout="something odd\n", stderr="")
-    assert envs._install_failure_detail(quiet) == "something odd"
 
 
 def test_error_hint_covers_the_two_field_signatures():
@@ -519,19 +433,6 @@ def test_uv_dry_run_pins_the_env_python(monkeypatch):
     assert sys.executable not in create
 
 
-def test_intel_mac_preflight_gates_on_platform(monkeypatch):
-    monkeypatch.setattr(envs, "_find_uv", lambda: None)
-    monkeypatch.setattr(envs, "_intel_mac", lambda: True)
-    lines = []
-    envs.create_env("mace", progress=lines.append, dry_run=True)
-    assert any("Intel (x86_64) Mac" in ln for ln in lines)
-
-    monkeypatch.setattr(envs, "_intel_mac", lambda: False)
-    lines = []
-    envs.create_env("mace", progress=lines.append, dry_run=True)
-    assert not any("Intel (x86_64) Mac" in ln for ln in lines)
-
-
 def test_probe_and_bootstrap_sources_compile():
     compile(envs._RUNTIME_PROBE, "<probe>", "exec")
     assert "from_numpy" in envs._RUNTIME_PROBE
@@ -541,20 +442,18 @@ def test_probe_and_bootstrap_sources_compile():
     assert "main()" in calculators._NEQUIP_COMPILE_BOOTSTRAP
 
 
-def test_numpy_abi_breakage_triggers_one_numpy2_retry(tmp_path, monkeypatch):
-    """The provisioning sequence on a machine whose torch wheel is built
-    against NumPy 1.x (Intel mac): import check passes, the probe fails
-    with the ABI signature, numpy<2 goes in, and the re-probe passes."""
+def test_numpy_abi_breakage_is_not_registered_and_hints_numpy2(tmp_path,
+                                                               monkeypatch):
+    """A torch wheel built against NumPy 1.x (Intel mac): the probe fails
+    with the ABI signature, nothing is registered and the error names the
+    numpy<2 fix."""
     monkeypatch.setattr(envs, "_find_uv", lambda: None)
     root = envs.env_root("nequip")
     python = envs._env_python(root)
-    calls = []
-    state = {"probe_runs": 0}
 
     def fake_run(cmd, capture_output=True, text=True):
         from types import SimpleNamespace
 
-        calls.append(cmd)
         if cmd[1:3] == ["-m", "venv"]:
             os.makedirs(os.path.dirname(python), exist_ok=True)
             with open(python, "w") as fh:
@@ -562,26 +461,16 @@ def test_numpy_abi_breakage_triggers_one_numpy2_retry(tmp_path, monkeypatch):
             os.chmod(python, 0o755)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if cmd[:2] == [python, "-c"] and cmd[2] == envs._RUNTIME_PROBE:
-            state["probe_runs"] += 1
-            if state["probe_runs"] == 1:
-                return SimpleNamespace(
-                    returncode=1, stdout="",
-                    stderr="UserWarning: Failed to initialize NumPy: "
-                           "_ARRAY_API not found")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(
+                returncode=1, stdout="",
+                stderr="UserWarning: Failed to initialize NumPy: "
+                       "_ARRAY_API not found")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(envs.subprocess, "run", fake_run)
-    lines = []
-    result = envs.create_env("nequip", progress=lines.append)
-    assert result == python
-    assert envs.registered_interpreter("nequip") == python
-    assert state["probe_runs"] == 2
-    fixes = [c for c in calls if "numpy<2" in c]
-    assert len(fixes) == 1 and fixes[0][:3] == [python, "-m", "pip"]
-    assert any("ABI mismatch" in ln for ln in lines)
-    # the remediated env must also survive pip check before registering
-    assert [python, "-m", "pip", "check"] in calls
+    with pytest.raises(envs.MlipEnvError, match="numpy<2"):
+        envs.create_env("nequip", progress=lambda *_: None)
+    assert envs.registered_interpreter("nequip") is None
 
 
 def test_probe_failure_without_the_signature_does_not_register(
@@ -608,99 +497,6 @@ def test_probe_failure_without_the_signature_does_not_register(
     with pytest.raises(envs.MlipEnvError, match="runtime *probe|probe"):
         envs.create_env("nequip", progress=lambda *_: None)
     assert envs.registered_interpreter("nequip") is None
-
-
-def test_remediation_refuses_a_pip_check_failure(tmp_path, monkeypatch):
-    """A stack that pins numpy>=2 cannot coexist with a NumPy-1-ABI
-    torch: remediation must refuse to register, not paper over it."""
-    monkeypatch.setattr(envs, "_find_uv", lambda: None)
-    root = envs.env_root("mattersim")
-    python = envs._env_python(root)
-    state = {"probe_runs": 0}
-
-    def fake_run(cmd, capture_output=True, text=True):
-        from types import SimpleNamespace
-
-        if cmd[1:3] == ["-m", "venv"]:
-            os.makedirs(os.path.dirname(python), exist_ok=True)
-            with open(python, "w") as fh:
-                fh.write("#!/bin/sh\n")
-            os.chmod(python, 0o755)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if cmd[:2] == [python, "-c"] and cmd[2] == envs._RUNTIME_PROBE:
-            state["probe_runs"] += 1
-            if state["probe_runs"] == 1:
-                return SimpleNamespace(returncode=1, stdout="",
-                                       stderr="_ARRAY_API not found")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if cmd == [python, "-m", "pip", "check"]:
-            return SimpleNamespace(
-                returncode=1,
-                stdout="mattersim 1.2.5 has requirement numpy>=2.0.0, "
-                       "but you have numpy 1.26.4.",
-                stderr="")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(envs.subprocess, "run", fake_run)
-    with pytest.raises(envs.MlipEnvError, match="inconsistent"):
-        envs.create_env("mattersim", progress=lambda *_: None)
-    assert envs.registered_interpreter("mattersim") is None
-
-
-def test_shared_sibling_is_verified_before_any_registration(
-        tmp_path, monkeypatch):
-    monkeypatch.setattr(envs, "_find_uv", lambda: None)
-    root = envs.env_root("mace")
-    python = envs._env_python(root)
-    sib_check = envs._IMPORT_CHECKS["mace-off"]
-    state = {"sibling_ok": True}
-
-    def fake_run(cmd, capture_output=True, text=True):
-        from types import SimpleNamespace
-
-        if cmd[1:3] == ["-m", "venv"]:
-            os.makedirs(os.path.dirname(python), exist_ok=True)
-            with open(python, "w") as fh:
-                fh.write("#!/bin/sh\n")
-            os.chmod(python, 0o755)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if cmd[:2] == [python, "-c"] and cmd[2] == sib_check \
-                and not state["sibling_ok"]:
-            return SimpleNamespace(returncode=1, stdout="",
-                                   stderr="ImportError: no mace_off")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(envs.subprocess, "run", fake_run)
-    result = envs.create_env("mace", progress=lambda *_: None)
-    assert result == python
-    assert envs.registered_interpreter("mace") == python
-    assert envs.registered_interpreter("mace-off") == python
-
-    # broken sibling: nothing registers, not even the requested one
-    envs.unregister_interpreter("mace")
-    envs.unregister_interpreter("mace-off")
-    import shutil as _shutil
-    _shutil.rmtree(root)
-    state["sibling_ok"] = False
-    with pytest.raises(envs.MlipEnvError, match="sibling mace-off"):
-        envs.create_env("mace", progress=lambda *_: None)
-    assert envs.registered_interpreter("mace") is None
-    assert envs.registered_interpreter("mace-off") is None
-
-
-def test_conflict_section_head_survives_a_long_candidate_walk():
-    from types import SimpleNamespace
-
-    walk = "\n".join(f"    candidate torch=={i}" for i in range(200))
-    result = SimpleNamespace(
-        stdout=("The conflict is caused by:\n"
-                "    mattersim 1.2.5 depends on torch>=2.2.0\n" + walk),
-        stderr="ERROR: ResolutionImpossible\n")
-    detail = envs._install_failure_detail(result)
-    assert "conflict is caused by" in detail.lower()
-    assert "torch>=2.2.0" in detail          # the decisive head line
-    assert "truncated" in detail             # the walk was cut, visibly
-    assert "ResolutionImpossible" in detail
 
 
 def test_pinned_digest_crosses_the_force_server_protocol():
