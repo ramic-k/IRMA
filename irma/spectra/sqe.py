@@ -388,18 +388,8 @@ def elastic_line(E_out, area, width, shape="gaussian"):
         line = np.exp(-0.5 * (E_out / w0) ** 2) / (np.sqrt(2 * np.pi) * w0)
     else:
         line = (w0 / np.pi) / (E_out ** 2 + w0 ** 2)
-    # Grid-normalize exactly as resolution_convolve column-normalizes, so the
-    # elastic and inelastic channels conserve flux identically: with the
-    # analytic infinite-domain norm, the default e_min=0 grid kept only the
-    # E>=0 half of the peak (elastic under-counted ~2x against the convolved
-    # inelastic). Renormalize only when the peak CENTER lies inside the
-    # window: a window that deliberately excludes E=0 (e_min in (0, 4*w0]
-    # is the standard crop to drop the elastic line) must keep the vanishing
-    # analytic tail -- renormalizing it would pile the full elastic area
-    # against the window edge (observed up to ~1000x amplification) and be
-    # discontinuous at e_min = 4*w0.
-    # (>= 2 points: a single-point grid has zero trapezoid weight, so the
-    # analytic amplitude is the only meaningful value there)
+    # Grid-normalize like the inelastic kernel when E=0 is inside the window
+    # (a window that excludes E=0 keeps the analytic tail).
     if E_out.size >= 2 and E_out[0] <= 0.0 <= E_out[-1]:
         norm = np.trapezoid(line, E_out)
         if norm > 0.0:
