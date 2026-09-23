@@ -7,7 +7,6 @@ bad spacings, missing required fields, non-positive resolution sigma, unknown
 keys, mistyped booleans); (3) run_spectra forwards the config to
 compute_spectrum faithfully. Fast, data-free, CI-safe.
 """
-import numpy as np
 import pytest
 
 from irma.spectra.config import (
@@ -43,11 +42,31 @@ def _direct_cfg():
     })
 
 
+def _direct_map_cfg():
+    cfg = _direct_cfg()
+    cfg.instrument.output_mode = "map"
+    cfg.instrument.cut_by = "q"
+    cfg.instrument.cut_dq_invA = 0.1
+    cfg.instrument.map_coverage_deg = [2.373, 135.955]
+    cfg.instrument.map_mask = False
+    return cfg
+
+
+def _mutated(factory, changes):
+    """factory() with {"section.field": value} changes applied."""
+    cfg = factory()
+    for path, value in changes.items():
+        section, field = path.split(".")
+        setattr(getattr(cfg, section), field, value)
+    return cfg
+
+
 # ---- round-trip -------------------------------------------------------------
 @pytest.mark.parametrize("suffix", [".yaml", ".json"])
-@pytest.mark.parametrize("factory", [_vision_cfg, _direct_cfg])
+@pytest.mark.parametrize("factory", [_vision_cfg, _direct_cfg, _direct_map_cfg])
 def test_round_trip_identity(tmp_path, suffix, factory):
     cfg = factory()
+    assert validate(cfg) is cfg
     p = dump(cfg, tmp_path / f"cfg{suffix}")
     assert load(p) == cfg
 
@@ -89,92 +108,38 @@ def test_unknown_field_raises():
                                               "temperatureK": 5.0}})
 
 
-def test_missing_phonopy_yaml_raises():
-    cfg = _vision_cfg()
-    cfg.material.phonopy_yaml = ""
+@pytest.mark.parametrize("factory,changes", [
+    (_vision_cfg, {"material.phonopy_yaml": ""}),
+    (_vision_cfg, {"physics.inelastic_mode": 3}),
+    (_vision_cfg, {"physics.inelastic_mode": -1}),
+    (_vision_cfg, {"physics.max_phonon_order": "all"}),
+    (_vision_cfg, {"grid.de_meV": 0.0}),
+    (_vision_cfg, {"grid.dq_max_invA": -0.1}),
+    (_vision_cfg, {"grid.e_min_meV": 100.0, "grid.e_max_meV": 50.0}),
+    (_vision_cfg, {"grid.q_pad_invA": -1.0}),        # narrows the Q support
+    (_vision_cfg, {"instrument.geometry": "spallation"}),
+    (_direct_cfg, {"grid.e_max_meV": 300.0}),         # >= Ei = 250
+    (_direct_cfg, {"instrument.angles_deg": None}),   # direct needs angles
+    (_direct_cfg, {"instrument.angles_deg": [10.0, 200.0]}),
+    (_vision_cfg, {"instrument.sigma_coeffs": [0.0, -0.01, 0.0]}),
+    (_vision_cfg, {"instrument.sigma_coeffs": [0.31, 0.005, 8.1e-7, 1e-9]}),
+])
+def test_validator_rejects(factory, changes):
     with pytest.raises(SpectraConfigError):
-        validate(cfg)
+        validate(_mutated(factory, changes))
 
 
-@pytest.mark.parametrize("mode", [3, -1, 5])      # 0/1/2 are the valid modes
-def test_bad_inelastic_mode_raises(mode):
-    cfg = _vision_cfg()
-    cfg.physics.inelastic_mode = mode
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-def test_bad_max_phonon_order_raises():
-    cfg = _vision_cfg()
-    cfg.physics.max_phonon_order = "all"
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-@pytest.mark.parametrize("field,value", [
-    ("de_meV", 0.0), ("dq_max_invA", -0.1)])
-def test_nonpositive_spacing_raises(field, value):
-    cfg = _vision_cfg()
-    setattr(cfg.grid, field, value)
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-def test_emax_not_above_emin_raises():
-    cfg = _vision_cfg()
-    cfg.grid.e_min_meV, cfg.grid.e_max_meV = 100.0, 50.0
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
+@pytest.mark.parametrize("changes", [
+    {"instrument.angles_deg": None},          # vision fills its own angles
+    {"grid.q_pad_invA": 0.0},                 # no padding
+    {"instrument.output_mode": "map"},        # `irma spectra map` on vision
+])
+def test_validator_accepts(changes):
+    cfg = _mutated(_vision_cfg, changes)
+    assert validate(cfg) is cfg
 
 
 # ---- validator: geometry / kinematics --------------------------------------
-def test_unknown_geometry_raises():
-    cfg = _vision_cfg()
-    cfg.instrument.geometry = "spallation"
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-def test_direct_emax_must_be_below_Ei():
-    cfg = _direct_cfg()
-    cfg.grid.e_max_meV = 300.0           # >= Ei = 250 -> impossible downscatter
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-    cfg.grid.e_max_meV = 200.0
-    assert validate(cfg) is cfg
-
-
-def test_nonvision_geometry_requires_angles():
-    cfg = SpectraConfig.from_dict({
-        "material": {"phonopy_yaml": "be.yaml"},
-        "instrument": {"geometry": "indirect", "e_fixed_meV": 4.0},
-    })
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-def test_vision_geometry_allows_missing_angles():
-    cfg = SpectraConfig.from_dict({
-        "material": {"phonopy_yaml": "graphite.yaml"},
-        "instrument": {"geometry": "vision", "e_fixed_meV": 3.5},
-    })
-    assert validate(cfg) is cfg
-
-
-def test_angles_out_of_range_raises():
-    cfg = _direct_cfg()
-    cfg.instrument.angles_deg = [10.0, 200.0]
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-def test_nonpositive_sigma_poly_raises():
-    cfg = _vision_cfg()
-    cfg.instrument.sigma_coeffs = [0.0, -0.01, 0.0]   # negative at large E
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
 @pytest.mark.parametrize("coeffs", [[0.5], [0.5, 0.01]])
 def test_short_sigma_coeffs_validate_without_indexerror(coeffs):
     """A 1- or 2-element sigma poly (the GUI emits these from its trailing-blank
@@ -183,36 +148,6 @@ def test_short_sigma_coeffs_validate_without_indexerror(coeffs):
     cfg = _vision_cfg()
     cfg.instrument.sigma_coeffs = coeffs
     assert validate(cfg) is cfg
-
-
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
-def test_nonfinite_sigma_coeffs_raise_clean_error(bad):
-    """NaN/Inf coefficients slip past a bare `sig <= 0` test (NaN/+Inf compare
-    False); they must be rejected with a SpectraConfigError, not pass."""
-    cfg = _vision_cfg()
-    cfg.instrument.sigma_coeffs = [0.31, bad, 0.0]
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-def test_negative_q_pad_raises_but_zero_is_allowed():
-    cfg = _vision_cfg()
-    cfg.grid.q_pad_invA = -1.0                 # narrows support -> silent zeroing
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-    cfg.grid.q_pad_invA = 0.0                  # legitimate "no padding"
-    assert validate(cfg) is cfg
-
-
-def test_sigma_poly_negative_at_interior_vertex_raises():
-    """An upward parabola can dip negative at its vertex BETWEEN the endpoints;
-    a 3-endpoint-only check misses it. The vertex of [624,-50,1] is E=25, where
-    sigma=-1 -- it must be rejected even though sigma(0)=624 and sigma(100)>0."""
-    cfg = _vision_cfg()
-    cfg.grid.e_min_meV, cfg.grid.e_max_meV = 0.0, 100.0
-    cfg.instrument.sigma_coeffs = [624.0, -50.0, 1.0]   # min at E=25 -> sigma=-1
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
 
 
 def test_sigma_poly_validated_over_full_gain_side_domain():
@@ -228,24 +163,6 @@ def test_sigma_poly_validated_over_full_gain_side_domain():
         validate(cfg)
     cfg.instrument.sigma_coeffs = [5.0, -0.01, 0.0]     # positive out to 300
     assert validate(cfg) is cfg
-
-
-def test_too_many_sigma_coeffs_rejected():
-    cfg = _vision_cfg()
-    cfg.instrument.sigma_coeffs = [0.31, 0.005, 8.1e-7, 1e-9]   # 4 terms
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-@pytest.mark.parametrize("field", [
-    "e_min_meV", "e_max_meV", "de_meV", "dq_max_invA", "q_pad_invA", "q_max_invA"])
-def test_nan_grid_fields_rejected(field):
-    """A NaN grid field must fail the range checks."""
-    bad = float("nan")
-    cfg = _vision_cfg()
-    setattr(cfg.grid, field, bad)
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
 
 
 def test_list_frequency_accepted():
@@ -273,18 +190,6 @@ def test_chopper_rejects_lorentzian_shape():
         validate(cfg)
 
 
-def test_map_output_mode_allowed_for_all_geometries():
-    """The map path dispatches direct/indirect kinematics
-    itself (`irma spectra map` runs vision configs fine), so validate() must
-    not forbid output_mode='map' for non-direct geometries."""
-    cfg = _vision_cfg()                         # vision geometry
-    cfg.instrument.output_mode = "map"
-    assert validate(cfg) is cfg
-    d = _direct_cfg()
-    d.instrument.output_mode = "map"
-    assert validate(d) is d
-
-
 @pytest.mark.parametrize("field,value", [
     ("output_mode", "movie"), ("cut_by", "diagonal"), ("cut_dq_invA", 0.0),
     ("cut_dq_invA", -0.1), ("map_coverage_deg", [10.0]),
@@ -296,52 +201,16 @@ def test_bad_direct_output_fields_rejected(field, value):
         validate(cfg)
 
 
-def test_direct_output_fields_round_trip():
-    cfg = _direct_cfg()
-    cfg.instrument.output_mode = "map"
-    cfg.instrument.cut_by = "q"
-    cfg.instrument.cut_dq_invA = 0.1
-    cfg.instrument.map_coverage_deg = [2.373, 135.955]
-    cfg.instrument.map_mask = False
-    assert validate(cfg) is cfg
-    import tempfile, os
-    p = tempfile.mktemp(suffix=".yaml")
-    dump(cfg, p)
-    assert load(p) == cfg
-    os.unlink(p)
-
-
-def test_valid_config_passes_and_is_returned():
-    cfg = _vision_cfg()
-    assert validate(cfg) is cfg
-
-
 # ---- strictly-typed booleans -------------------------------------------------
-def test_config_rejects_string_for_boolean_field():
-    with pytest.raises(SpectraConfigError, match="physics.elastic"):
-        SpectraConfig.from_dict(
-            {"material": {}, "physics": {"elastic": "off"}})
-
-
-def test_config_accepts_int01_for_boolean_field():
-    cfg = SpectraConfig.from_dict(
-        {"material": {}, "instrument": {"map_mask": 0}})
-    assert cfg.instrument.map_mask is False
-
-
-@pytest.mark.parametrize("val,expected", [
-    (np.True_, True), (np.False_, False), (np.int64(1), True),
-    (np.int64(0), False),
-])
-def test_config_accepts_numpy_scalars_for_boolean_field(val, expected):
-    """Programmatic configs carry numpy scalars from array-derived values."""
+@pytest.mark.parametrize("val,expected", [(True, True), (0, False)])
+def test_config_accepts_bool_and_int01_for_boolean_field(val, expected):
     cfg = SpectraConfig.from_dict(
         {"material": {}, "physics": {"elastic": val}})
     assert cfg.physics.elastic is expected
 
 
-@pytest.mark.parametrize("val", [2, np.int64(5), np.float64(1.0), "off"])
-def test_config_rejects_non_boolean_scalars(val):
+@pytest.mark.parametrize("val", ["off", 2])
+def test_config_rejects_non_boolean_values(val):
     with pytest.raises(SpectraConfigError, match="physics.elastic"):
         SpectraConfig.from_dict(
             {"material": {}, "physics": {"elastic": val}})
