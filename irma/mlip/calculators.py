@@ -692,6 +692,11 @@ def fingerprint_identity(spec: CalculatorSpec) -> tuple[str, str]:
     return resolved_checkpoint_identity(spec), _package_version(spec.potential)
 
 
+# SevenNet checkpoints trained on several fidelities (SevenNetCalculator
+# refuses them without a modal)
+_SEVENNET_MULTI_FIDELITY = ("7net-mf-ompa", "7net-omni")
+
+
 def make_calculator(spec: CalculatorSpec):
     """Build (ase_calculator, meta) from a spec. CPU only; lazy imports.
 
@@ -778,8 +783,10 @@ def make_calculator(spec: CalculatorSpec):
     elif spec.potential == "sevennet":
         from sevenn.calculator import SevenNetCalculator
         torch.set_default_dtype(torch.float32)
-        if spec.model is None:
+        if str(model) in _SEVENNET_MULTI_FIDELITY:
+            # these checkpoints need a fidelity; IRMA uses the MPtrj+sAlex one
             calc = SevenNetCalculator(model=model, modal="mpa", device="cpu")
+            extra_meta = {"modal": "mpa"}
         else:
             calc = SevenNetCalculator(model=model, device="cpu")
     elif spec.potential in MACE_FAMILY:
