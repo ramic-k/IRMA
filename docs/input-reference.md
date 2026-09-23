@@ -317,7 +317,7 @@ ndir  mpdir  [auto_order]  /
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `ndir` | — | Coherent powder-average directions (golden-spiral quadrature; `≥ 1`). |
+| `ndir` | — | One-phonon powder-average directions, for the coherent and the incoherent term (golden-spiral quadrature; `≥ 1`). |
 | `mpdir` | — | Multiphonon powder-average directions (`≥ 1`). Converged by ~50–100; the GUI/production default 1000 (the validation-campaign sampling) carries ample margin. Cost is linear in `mpdir`. |
 | `auto_order` | `0` | `0` = honor Card 3 `nphon` verbatim; `1` = auto-size the multiphonon order from the anisotropic Debye-Waller physics. |
 

@@ -196,7 +196,8 @@ def _add_common(p):
                         "below this value (meV) from all terms; 0 = the automatic "
                         "floors only (default: 0)")
     p.add_argument("--directions", type=int,
-                   help="modes 1/2 -- coherent powder-average directions "
+                   help="modes 1/2 -- one-phonon (coherent and incoherent) "
+                        "powder-average directions "
                         "(default: 10000)")
     p.add_argument("--mp-directions", type=int,
                    help="modes 1/2 -- multiphonon powder-average directions "

@@ -92,7 +92,7 @@ The multiphonon powder average converges quickly: for graphite-like crystals it 
 
 The coherent one-phonon powder averaging always uses the golden-spiral direction quadrature; it is not user-selectable.
 
-The GUI defaults produce Card 6g `10000 1000 1`: 10000 coherent directions, 1000 multiphonon directions, auto-sized multiphonon order, the same sampling the validation campaign ran and `irma mlip emit` writes. (The powder averages converge well below these counts, so entering `4000 200` gives a faster exploratory run.)
+The GUI defaults produce Card 6g `10000 1000 1`: 10000 one-phonon directions, 1000 multiphonon directions, auto-sized multiphonon order, the same sampling the validation campaign ran and `irma mlip emit` writes. (The powder averages converge well below these counts, so entering `4000 200` gives a faster exploratory run.)
 
 ### Elastic Scattering Mode (`iel`)
 

@@ -181,7 +181,7 @@ ndir  mpdir  [auto_order]  /
 
 | Field | Name | Meaning |
 |-------|------|---------|
-| 1 | `ndir` | Coherent powder-average directions (golden-spiral quadrature). Must be ≥ 1 |
+| 1 | `ndir` | One-phonon powder-average directions, for the coherent and the incoherent term (golden-spiral quadrature). Must be ≥ 1 |
 | 2 | `mpdir` | Multiphonon powder-average directions. The powder average converges by ~50–100; the recommended 1000 keeps headroom against residual azimuthal asymmetry from incomplete averaging over symmetry-equivalent directions (cost is linear in `mpdir`). Must be ≥ 1 |
 | 3 | `auto_order` *(optional)* | `0` = honor the Card 3 `nphon` multiphonon order verbatim (default); `1` = auto-size the multiphonon order |
 
@@ -197,7 +197,7 @@ is:
 10000 1000 1 /
 ```
 
-That is 10000 coherent powder directions, 1000 multiphonon directions, and
+That is 10000 one-phonon powder directions, 1000 multiphonon directions, and
 auto-sized multiphonon order: the same sampling the validation campaign
 ran. The powder averages converge well below these counts, so a faster
 exploratory run at `4000 200 1` is fine; the default carries the
