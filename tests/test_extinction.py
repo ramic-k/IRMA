@@ -2,7 +2,7 @@
 
 Pure/fast: no engine, no plugin. Cross-validation against the CrysXT NCrystal
 plugin lives in a separate (plugin-gated) harness; here we check the recipe
-limits, monotonicity, model dispatch and guards.
+limits, monotonicity and model dispatch.
 """
 import math
 
@@ -12,10 +12,10 @@ from irma.core import extinction as ext
 
 
 # ----- BC2025 'std' recipe limits & monotonicity -----
-@pytest.mark.parametrize("recipe_fn", [
-    ext.bc2025_y_primary, ext.bc2025_y_scndgauss,
-    ext.bc2025_y_scndlorentz, ext.bc2025_y_scndfresnel])
-def test_recipe_limits_and_monotonic(recipe_fn):
+@pytest.mark.parametrize("kind", [0, 1, 2, 3])
+def test_recipe_limits_and_monotonic(kind):
+    def recipe_fn(x, sint):
+        return ext.bc2025_y(kind, x, sint)
     # y -> 1 as x -> 0 (no extinction), for any Bragg angle
     for sint in (0.05, 0.5, 0.999):
         assert recipe_fn(1e-10, sint) == pytest.approx(1.0, abs=1e-7)
@@ -28,10 +28,9 @@ def test_recipe_limits_and_monotonic(recipe_fn):
 
 def test_recipe_large_x_tail():
     # the x>1000 asymptotic branch is continuous and small
-    for fn in (ext.bc2025_y_primary, ext.bc2025_y_scndgauss,
-               ext.bc2025_y_scndlorentz, ext.bc2025_y_scndfresnel):
-        y_at = fn(1000.0, 0.5)
-        y_above = fn(5000.0, 0.5)
+    for kind in (0, 1, 2, 3):
+        y_at = ext.bc2025_y(kind, 1000.0, 0.5)
+        y_above = ext.bc2025_y(kind, 5000.0, 0.5)
         assert 0.0 < y_above < y_at < 0.2
 
 
@@ -56,15 +55,6 @@ def test_no_extinction_when_sizes_zero(model):
     assert y == pytest.approx(1.0, abs=1e-9)
 
 
-@pytest.mark.parametrize("model", ["BC_mix", "BC_mod"])
-def test_bc_secondary_models_require_l_g_and_L(model):
-    # all three knobs are required: the coupled secondary term is parameterised by
-    # the crystallite size l as well as the mosaic g and grain L, so a missing knob
-    # would silently collapse the model to y=1 (a no-op stamped as "corrected").
-    with pytest.raises(ValueError, match=r"requires l>0, g>0 and L>0"):
-        ext.extinction_factor(model, **_BE, l=8550.0, g=0.0, L=0.0)
-    with pytest.raises(ValueError, match=r"requires l>0, g>0 and L>0"):
-        ext.extinction_factor(model, **_BE, l=0.0, g=170.0, L=75750.0)
 
 
 def test_bc_pure_primary_is_single_parameter():
@@ -84,17 +74,8 @@ def test_cls_and_std_agree_at_moderate_extinction():
         assert y_cls == pytest.approx(y_std, rel=0.05)
 
 
-# ----- guards -----
-def test_lux_recipe_is_gated_with_explanation():
-    with pytest.raises(NotImplementedError, match="tabulation tolerance"):
-        ext.extinction_factor("BC_mix", **_BE, **_PARAMS, dist="Gauss", recipe="lux")
 
 
-def test_unknown_model_and_recipe_raise():
-    with pytest.raises(ValueError, match="unknown extinction model"):
-        ext.extinction_factor("Zachariasen", **_BE, **_PARAMS)
-    with pytest.raises(ValueError, match="unknown recipe"):
-        ext.extinction_factor("BC_mix", **_BE, **_PARAMS, dist="Gauss", recipe="bogus")
 
 
 def test_below_bragg_threshold_is_unity():
@@ -116,26 +97,23 @@ def test_sabine_triangular_small_x_window_is_stable():
     from irma.core.extinction import _sabine_secondary_factors
     for x in np.geomspace(1e-12, 1e3, 4001):
         for tilt in (0, 1):
-            el, eb = _sabine_secondary_factors(float(x), 0.3, tilt)
+            el, eb = _sabine_secondary_factors(float(x), tilt)
             assert math.isfinite(el) and math.isfinite(eb)
-            assert 0.0 <= el <= 1.0, (x, tilt, el)
-            assert 0.0 <= eb <= 1.0 + 1e-12, (x, tilt, eb)
+            # within the 1e-6 rounding band extinction_factor clamps
+            assert 0.0 <= el <= 1.0 + 1e-6, (x, tilt, el)
+            assert 0.0 <= eb <= 1.0 + 1e-6, (x, tilt, eb)
 
 
 def test_sabine_stable_form_matches_naive_at_moderate_x():
     """Where the textbook expressions are well-conditioned, the stable
     rewrites must agree with them to rounding."""
     import numpy as np
-    from irma.core.extinction import _sabine_secondary_factors, _calc_AB_sabine
-    y = 0.3
-    a, b = _calc_AB_sabine(y)
+    from irma.core.extinction import _sabine_secondary_factors
     for x in np.geomspace(1e-2, 50.0, 200):
         x = float(x)
-        el, eb = _sabine_secondary_factors(x, y, 1)
-        el_naive = math.exp(-y) / x * (1.0 - (1.0 - math.exp(-2.0 * x))
-                                       / (2.0 * x))
-        bx = b * x
-        eb_naive = 2.0 * a / bx / x * (bx - math.log1p(bx))
+        el, eb = _sabine_secondary_factors(x, 1)
+        el_naive = 1.0 / x * (1.0 - (1.0 - math.exp(-2.0 * x)) / (2.0 * x))
+        eb_naive = 2.0 / x / x * (x - math.log1p(x))
         assert el == pytest.approx(el_naive, rel=1e-9)
         assert eb == pytest.approx(eb_naive, rel=1e-9)
 

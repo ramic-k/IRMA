@@ -30,71 +30,38 @@ uniform-tensor materials keep the original loop verbatim.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import exp
-
-import numpy as np
 
 from irma.core.constants import BK
 
 
+@dataclass
 class SpeciesDW:
     """Resolved per-species DW state shared by the iel=10 SEF/MEF builders.
 
     ``use_dir_dw`` selects the directional kernel, ``use_ps`` the per-species
     isotropic kernel; if both are false the caller falls back to the scalar
-    isotropic form and no SpeciesDW is built. Fields carry exactly the
-    per-species inputs the elastic builders and the on-demand elastic
-    (P5) consume.
+    isotropic form and no SpeciesDW is built.
 
-    ``F_sites_per_temp``/``dir_tensors_uniform`` (review finding P3) carry the
-    per-SITE displacement tensors -- a list over species of
-    ``[n_sites_in_group, 3, 3]`` arrays per temperature, in the same site
-    order as crystal.py's per-plane ``site_terms`` -- and the exact-uniformity
-    flag that keeps the species-averaged fast path (and its byte-pinned
-    accumulation order) whenever every group's site tensors are identical.
+    ``F_sites_per_temp[itemp]`` is the ``[n_sites, 3, 3]`` array of per-site
+    displacement tensors in crystal.py's ``site_terms`` order (species, then
+    position); ``dir_tensors_uniform`` keeps the species-averaged path when
+    every group's site tensors are identical.
     """
 
-    __slots__ = ("use_dir_dw", "use_ps", "nsp", "b_sqb", "awr_sp", "sc",
-                 "W_ps", "F_species_per_temp", "bragg_dir_terms", "atom_types",
-                 "F_sites_per_temp", "dir_tensors_uniform",
-                 "_F_sites_flat_cache")
-
-    def __init__(self, *, use_dir_dw, use_ps, nsp, b_sqb, awr_sp, sc, W_ps,
-                 F_species_per_temp, bragg_dir_terms, atom_types,
-                 F_sites_per_temp=None, dir_tensors_uniform=True):
-        self.use_dir_dw = use_dir_dw
-        self.use_ps = use_ps
-        self.nsp = nsp
-        self.b_sqb = b_sqb
-        self.awr_sp = awr_sp
-        self.sc = sc
-        self.W_ps = W_ps
-        self.F_species_per_temp = F_species_per_temp
-        self.bragg_dir_terms = bragg_dir_terms
-        self.atom_types = atom_types
-        self.F_sites_per_temp = F_sites_per_temp
-        self.dir_tensors_uniform = dir_tensors_uniform
-        self._F_sites_flat_cache = {}
-
-
-def _flatten_site_tensors(F_sites):
-    """Flatten a per-species list of ``[n_sites, 3, 3]`` tensor arrays into one
-    ``[n_total_sites, 3, 3]`` array in crystal.py's ``site_terms`` order
-    (species, then position order within each species)."""
-    return np.concatenate([np.asarray(g, dtype=float).reshape(-1, 3, 3)
-                           for g in F_sites], axis=0)
-
-
-def _site_tensors_flat(sdw, itemp):
-    """Per-site tensors for one temperature, flattened (cached on SpeciesDW;
-    synthetic namespaces without the cache attribute just rebuild)."""
-    cache = getattr(sdw, "_F_sites_flat_cache", None)
-    F_flat = cache.get(itemp) if cache is not None else None
-    if F_flat is None:
-        F_flat = _flatten_site_tensors(sdw.F_sites_per_temp[itemp])
-        if cache is not None:
-            cache[itemp] = F_flat
-    return F_flat
+    use_dir_dw: bool
+    use_ps: bool
+    nsp: int
+    b_sqb: list
+    awr_sp: list
+    sc: object
+    W_ps: object
+    F_species_per_temp: object
+    bragg_dir_terms: object
+    atom_types: list
+    F_sites_per_temp: object = None
+    dir_tensors_uniform: bool = True
 
 
 def resolve_species_dw(crystal_info, tempr, ntempr):
@@ -107,17 +74,12 @@ def resolve_species_dw(crystal_info, tempr, ntempr):
     ``W_ps`` is the per-temperature ENDF DW integral (1/eV) -- byte-identically to
     the originals.
     """
-    F_species_per_temp = (crystal_info.get('F_species_per_temp')
-                          if crystal_info is not None else None)
-    bragg_dir_terms = (crystal_info.get('bragg_dir_terms')
-                       if crystal_info is not None else None)
-    use_dir_dw = (F_species_per_temp is not None and
-                  bragg_dir_terms is not None and
-                  all(v is not None for v in F_species_per_temp))
-    use_ps = (not use_dir_dw and
-              crystal_info is not None and
-              'species_corr' in crystal_info and
-              crystal_info['species_corr'] is not None)
+    if crystal_info is None:
+        return None
+    F_species_per_temp = crystal_info.get('F_species_per_temp')
+    bragg_dir_terms = crystal_info.get('bragg_dir_terms')
+    use_dir_dw = F_species_per_temp is not None and bragg_dir_terms is not None
+    use_ps = not use_dir_dw and crystal_info.get('species_corr') is not None
     if not (use_dir_dw or use_ps):
         return None
 
@@ -133,25 +95,14 @@ def resolve_species_dw(crystal_info, tempr, ntempr):
     if use_ps:
         W_ps = [[at['dwpix'][it] / (at['awr'] * tempr[it] * BK)
                  for it in range(ntempr)] for at in atom_types]
-    # Site-resolved directional DW (review finding P3): the per-site tensors
-    # and the exact-uniformity flag stored by _store_directional_species_dw.
-    # Absent keys default to the uniform (species-averaged) fast path, which
-    # is exact when every group's site tensors are identical.
-    F_sites_per_temp = crystal_info.get('F_sites_per_temp')
-    dir_tensors_uniform = bool(crystal_info.get('dir_tensors_uniform', True))
-    if use_dir_dw and not dir_tensors_uniform:
-        if F_sites_per_temp is None or any(v is None for v in F_sites_per_temp):
-            raise ValueError(
-                "crystal_info marks the directional Debye-Waller tensors as "
-                "non-uniform but carries no complete F_sites_per_temp; the "
-                "site-resolved coherent-elastic path needs per-site tensors "
-                "for every temperature")
+    # Absent keys mean the uniform (species-averaged) path.
     return SpeciesDW(
         use_dir_dw=use_dir_dw, use_ps=use_ps, nsp=nsp, b_sqb=b_sqb,
         awr_sp=awr_sp, sc=sc, W_ps=W_ps,
         F_species_per_temp=F_species_per_temp, bragg_dir_terms=bragg_dir_terms,
-        atom_types=atom_types, F_sites_per_temp=F_sites_per_temp,
-        dir_tensors_uniform=dir_tensors_uniform)
+        atom_types=atom_types,
+        F_sites_per_temp=crystal_info.get('F_sites_per_temp'),
+        dir_tensors_uniform=bool(crystal_info.get('dir_tensors_uniform', True)))
 
 
 def isotropic_edge_delta(w, e, bragg_amp, scale=1.0):
@@ -209,7 +160,7 @@ def directional_edge_delta(e, sdw, itemp, dir_terms_j, kT_j, scale=1.0):
                     delta += b_sqb[si] * b_sqb[ti] * dw * D_st_plane[si, ti]
         return delta * scale
 
-    F_flat = _site_tensors_flat(sdw, itemp)
+    F_flat = sdw.F_sites_per_temp[itemp]
     delta = 0.0
     for plane in dir_terms_j:
         G_hat = plane[0]

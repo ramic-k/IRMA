@@ -145,7 +145,8 @@ def _store_directional_species_dw(crystal_info, itemp, ntempr, F_matrix_all):
                 f"phonopy sites of its group, and the per-site Debye-Waller "
                 f"tensors differ; check that the Card 6d positions match the "
                 f"phonopy primitive cell.")
-    crystal_info.setdefault('F_sites_per_temp', [None] * ntempr)[itemp] = F_sites
+    crystal_info.setdefault('F_sites_per_temp', [None] * ntempr)[itemp] = (
+        np.concatenate(F_sites, axis=0))
     crystal_info['dir_tensors_uniform'] = (
         crystal_info.get('dir_tensors_uniform', True) and uniform)
 

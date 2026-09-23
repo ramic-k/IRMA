@@ -96,10 +96,6 @@ def _parse_extinction_card(reader, elastic_mode):
                        f"extinction {nm} must be finite and >= 0, got {v}")
     reader.require(recipe in RECIPES,
                    f"extinction rec must be one of {RECIPES}, got {recipe!r}")
-    reader.require(
-        recipe != "lux",
-        "extinction rec=lux is not implemented (its 1e-6 precision is far below the "
-        "tape tolerance); use rec=std (default) or rec=cls")
     reader.require(rmse_tol > 0.0 and np.isfinite(rmse_tol),
                    f"extinction rmse_tol must be a positive, finite number, "
                    f"got {rmse_tol}")

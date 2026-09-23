@@ -607,7 +607,7 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
             # construction above (which fixes crystal.py's site_terms order),
             # plus the uniformity flag that keeps the species-averaged fast
             # path when every group's tensors are identical (up to bit noise).
-            "F_sites_per_temp": [[F_atom[list(g)] for g in groups]],
+            "F_sites_per_temp": [F_atom[np.concatenate(groups)]],
             "dir_tensors_uniform": all(
                 _site_tensors_uniform(F_atom, list(g)) for g in groups),
         }
