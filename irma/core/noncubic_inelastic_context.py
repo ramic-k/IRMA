@@ -69,84 +69,15 @@ def build_model_context(
     When given, the duplicate full-mesh eigensolve is skipped;
     the symmetry-reduced mode-sum mesh is always run fresh.
     """
-    import phonopy
-
-    from irma.core.phonopy_io import validate_min_phonon_energy_mev
+    from irma.core.phonopy_io import load_phonopy, validate_min_phonon_energy_mev
     min_phonon_energy_mev = validate_min_phonon_energy_mev(
         getattr(args, "min_phonon_energy_mev", 0.0))
 
-    # Non-analytical-term correction (Born effective charges): applied to
-    # BOTH mesh runs so LO-TO splitting reaches the coherent one-phonon,
-    # incoherent one-phonon, and multiphonon mode sums alike. An explicit
-    # BORN path (Card 6f use_born=1) wins; otherwise NAC embedded in the
-    # named phonopy.yaml is honored; phonopy's fallback of auto-reading
-    # ./BORN from the process working directory is disabled (is_nac=False)
-    # so the applied physics never depends on the run cwd.
-    import os
-
-    from irma.core.phonopy_io import (
-        isolated_phonopy_cwd,
-        phonopy_yaml_embeds_nac,
-        pinned_primitive_matrix_kwargs,
-        reject_unsafe_phonopy_yaml,
-        resolve_force_constants_source,
-    )
-
-    # Absolutize before the isolated_phonopy_cwd pin below.
-    phonopy_yaml = os.path.abspath(str(args.phonopy_yaml))
-    # TRUST BOUNDARY (SEC-1): refuse a phonopy.yaml carrying code-executing
-    # YAML tags BEFORE anything (embeds_nac scan aside, phonopy.load below)
-    # touches it with phonopy's unsafe YAML loader.
-    reject_unsafe_phonopy_yaml(phonopy_yaml)
-    born_path = getattr(args, "born", None)
-    if born_path is not None:
-        born_path = os.path.abspath(str(born_path))
-    embeds_nac = phonopy_yaml_embeds_nac(phonopy_yaml)
-    apply_nac = (born_path is not None) or embeds_nac
-    # Force constants: honor explicit caller paths; otherwise discover them
-    # next to the yaml (embedded, else hdf5 > text > FORCE_SETS). phonopy's
-    # fallback of searching the process working directory must never decide
-    # which model gets computed — isolated_phonopy_cwd pins cwd to an empty
-    # scratch directory during the loads because phonopy probes the cwd
-    # even when explicit paths are given.
-    fc_filename = getattr(args, "force_constants", None)
-    fs_filename = getattr(args, "force_sets", None)
-    if fc_filename is None and fs_filename is None:
-        fc_kwargs = resolve_force_constants_source(phonopy_yaml)
-        fc_filename = fc_kwargs.get("force_constants_filename")
-        fs_filename = fc_kwargs.get("force_sets_filename")
-    else:
-        fc_filename = None if fc_filename is None else os.path.abspath(str(fc_filename))
-        fs_filename = None if fs_filename is None else os.path.abspath(str(fs_filename))
-    if born_path is not None:
-        print(f"Loading phonopy object with NAC (BORN: {born_path})...")
-    elif embeds_nac:
-        print("Loading phonopy object with NAC (embedded in phonopy.yaml)...")
-    else:
-        print("Loading phonopy object...")
-    # Same (C) backend as load_phonopy_mesh, so both loaders give identical arrays.
-    with isolated_phonopy_cwd():
-        phonon = phonopy.load(
-            phonopy_yaml,
-            force_constants_filename=fc_filename,
-            force_sets_filename=fs_filename,
-            born_filename=born_path,
-            is_nac=apply_nac,
-            **pinned_primitive_matrix_kwargs(phonopy_yaml),
-            lang="C",
-        )
-    if born_path is not None and phonon.nac_params is None:
-        raise RuntimeError(
-            f"BORN corrections were requested but phonopy.load returned no "
-            f"NAC parameters from {born_path}."
-        )
-    if born_path is None and embeds_nac and phonon.nac_params is None:
-        # NAC keys declared in the yaml but unusable: refuse to guess.
-        raise RuntimeError(
-            f"{phonopy_yaml} embeds NAC keys but phonopy could not "
-            f"parse NAC parameters from them; fix the file or supply an "
-            f"explicit BORN file (Card 6f use_born=1)."
-        )
+    # NAC, when present, reaches both mesh runs and so every mode sum.
+    print("Loading phonopy object...")
+    phonon = load_phonopy(args.phonopy_yaml, born_path=args.born,
+                          force_constants_filename=args.force_constants,
+                          force_sets_filename=args.force_sets)
     # Full Monkhorst-Pack mesh with eigenvectors. The MT2 path (load_phonopy_mesh)
     # runs the identical mesh and passes it in as preloaded_full_mesh, which
     # skips the duplicate eigensolve.
@@ -180,22 +111,10 @@ def build_model_context(
         )
     incoherent_one_phonon_mesh = phonon.mesh
 
-    # UNITS. phonopy keeps the cell in the CALCULATOR's native length unit and
-    # phonopy.load never converts it, so `phonon.primitive.cell` is bohr for a
-    # qe/abinit/siesta/wien2k/... model. angstrom_primitive() is the single
-    # conversion point (irma.core.phonopy_io): it returns an IRMA-owned COPY of
-    # the geometry with the lattice in Angstrom, leaving the live phonopy
-    # object's native-unit cell alone -- phonopy pairs that cell with force
-    # constants in the same native units and with the calculator's frequency
-    # factor, so mutating it would corrupt the frequencies. Everything that
-    # reads context["primitive"] downstream (masses, symbols, fractional
-    # positions, and the `primitive_lattice_ang` of the elastic state) is
-    # therefore genuinely in the units its name claims, and rec_lat_no_2pi is
-    # genuinely 1/Angstrom -- which matters because q_red (the reduced q at
-    # which the dynamical matrix and the structure-factor phases are evaluated)
-    # is |Q|[1/A] x cell/2pi.
+    # An Angstrom copy of the geometry; the live phonon object keeps its
+    # calculator-unit cell, which its force constants are paired with.
     from irma.core.phonopy_io import angstrom_primitive
-    primitive = angstrom_primitive(phonon, phonopy_yaml)
+    primitive = angstrom_primitive(phonon)
     rec_lat_no_2pi = np.linalg.inv(primitive.cell)
 
     mesh_frequencies = _full_frequencies

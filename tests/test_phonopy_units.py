@@ -77,56 +77,6 @@ def _bohr():
 
 # ------------------------------------------------------------------ units ---
 
-def test_the_twins_really_are_written_in_different_units(twins):
-    """Fixture self-check: without it a passing suite would prove nothing."""
-    ang, bohr_yaml = twins
-    from irma.core.phonopy_io import phonopy_yaml_length_unit
-    assert phonopy_yaml_length_unit(ang) == "angstrom"
-    assert phonopy_yaml_length_unit(bohr_yaml) == "au"
-
-
-def test_length_factor_prefers_the_recorded_unit(twins):
-    from irma.core.phonopy_io import phonopy_model_length_to_angstrom
-    ang, bohr_yaml = twins
-    assert phonopy_model_length_to_angstrom(ang, None) == (1.0, "angstrom")
-    factor, name = phonopy_model_length_to_angstrom(bohr_yaml, "qe")
-    assert name == "au"
-    assert factor == pytest.approx(_bohr(), rel=1e-12)
-
-
-def test_length_factor_falls_back_to_the_calculator_table(tmp_path):
-    """A yaml with no physical_unit block: the calculator is the authority."""
-    pytest.importorskip("phonopy")
-    from irma.core.phonopy_io import phonopy_model_length_to_angstrom
-    p = tmp_path / "phonopy.yaml"
-    p.write_text('phonopy:\n  version: "2.48.0"\n  calculator: "qe"\n')
-    factor, name = phonopy_model_length_to_angstrom(p, "qe")
-    assert name == "au" and factor == pytest.approx(0.529177, abs=1e-5)
-    assert phonopy_model_length_to_angstrom(p, "vasp")[0] == 1.0
-
-
-def test_unrecognized_recorded_unit_is_refused(tmp_path):
-    """The rejection that SURVIVES: a unit name with no known factor cannot
-    be converted, and guessing one would be the original bug with extra
-    steps."""
-    from irma.core.phonopy_io import phonopy_model_length_to_angstrom
-    p = tmp_path / "phonopy.yaml"
-    p.write_text('phonopy:\n  version: "2.48.0"\nphysical_unit:\n'
-                 '  length: "furlong"\n')
-    with pytest.raises(ValueError, match="not a length unit"):
-        phonopy_model_length_to_angstrom(p, None)
-
-
-def test_unknown_calculator_is_refused(tmp_path):
-    """The other surviving rejection: phonopy's units table has no entry, so
-    neither the length unit nor the frequency factor is knowable."""
-    pytest.importorskip("phonopy")
-    from irma.core.phonopy_io import phonopy_model_length_to_angstrom
-    p = tmp_path / "phonopy.yaml"
-    p.write_text('phonopy:\n  version: "2.48.0"\n')
-    with pytest.raises(ValueError, match="no physical-units entry"):
-        phonopy_model_length_to_angstrom(p, "not-a-calculator")
-
 
 # ------------------------------------------------------- geometry readers ---
 
@@ -255,9 +205,7 @@ def test_coherent_one_phonon_frequencies_agree_across_calculators(twins):
 # --------------------------------------------------- Angstrom regression ---
 
 def test_angstrom_models_are_untouched():
-    """The committed Angstrom model must come through the conversion
-    bit-for-bit: the factor is exactly 1.0, not 1.0 +- an epsilon, so tapes
-    stay byte-identical."""
+    """The committed Angstrom model comes through the conversion bit for bit."""
     pytest.importorskip("phonopy")
     import phonopy
     from irma.core.phonopy_io import (angstrom_primitive, isolated_phonopy_cwd,
@@ -267,7 +215,6 @@ def test_angstrom_models_are_untouched():
         ph = phonopy.load(phonopy_yaml=path, is_nac=False, log_level=0,
                           produce_fc=False,
                           **pinned_primitive_matrix_kwargs(path))
-    prim = angstrom_primitive(ph, path)
-    assert prim.length_to_angstrom == 1.0
+    prim = angstrom_primitive(ph)
     raw = np.array(ph.primitive.cell, dtype=float)
     assert np.array_equal(prim.cell, raw)      # identical bytes, no rescale

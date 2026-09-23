@@ -85,29 +85,6 @@ unit_cell:
 _UNIT_BLOCK = 'physical_unit:\n  atomic_mass: "AMU"\n  length: "au"\n'
 
 
-def test_yaml_length_unit_is_read_without_parsing():
-    from irma.core.phonopy_io import phonopy_yaml_length_unit
-    assert phonopy_yaml_length_unit(GRAPHITE_YAML) == "angstrom"
-
-
-def test_yaml_length_unit_none_when_absent(tmp_path):
-    from irma.core.phonopy_io import phonopy_yaml_length_unit
-    p = tmp_path / "phonopy.yaml"
-    p.write_text(_QE_YAML.format(unit_block=""))
-    assert phonopy_yaml_length_unit(p) is None
-
-
-def test_calculator_length_units_table_matches_phonopy():
-    pytest.importorskip("phonopy")
-    from irma.core.phonopy_io import phonopy_calculator_length_units
-    assert phonopy_calculator_length_units(None)[0] == pytest.approx(1.0)
-    assert phonopy_calculator_length_units("vasp")[0] == pytest.approx(1.0)
-    # bohr, not Angstrom -- the whole point of the conversion below
-    factor, name = phonopy_calculator_length_units("qe")
-    assert factor == pytest.approx(0.529177, abs=1e-5)
-    assert name == "au"
-
-
 # The cell in _QE_YAML is 7.5589 bohr = 4.00046 Angstrom.
 _QE_CELL_ANG = 7.5589 * 0.5291772
 
@@ -135,15 +112,8 @@ def test_non_angstrom_yaml_is_converted_by_calculator(tmp_path):
 
 
 def test_unconvertible_unit_is_still_rejected(tmp_path):
-    """The one case that stays fatal: a recorded unit name with no known
-    conversion factor. Loading it would be the silent-units bug again.
-
-    Which layer refuses depends on the phonopy: phonopy 4 cross-checks the
-    recorded units against its calculator table and raises during the parse,
-    phonopy 2/3 does not and IRMA's own resolver raises. Both name the unit,
-    and both are ValueError -- that is what this pins. The resolver's own
-    message is asserted directly in test_phonopy_units.py.
-    """
+    """A recorded length unit with no known factor is refused (by phonopy,
+    which cross-checks it against its calculator table)."""
     pytest.importorskip("phonopy")
     from irma.core.phonopy_io import load_phonopy_primitive_structure
     p = tmp_path / "phonopy.yaml"

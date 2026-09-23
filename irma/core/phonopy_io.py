@@ -24,8 +24,6 @@ Phonopy eigenvector convention (np.linalg.eigh):
     Correct reshape: .transpose(0,2,1).reshape(N_q, N_branches, N_atoms, 3).
 """
 
-import inspect
-
 import numpy as np
 from dataclasses import dataclass, field
 from typing import List
@@ -260,198 +258,94 @@ def resolve_force_constants_source(phonopy_yaml_path) -> dict:
 
 
 # -------------------------------------------------- primitive structure ----
-#
-# UNITS. phonopy does NOT keep cells in Angstrom. Each calculator interface
-# has a native length unit (phonopy.physical_units.get_calculator_physical_units:
-# `distance_to_A`), and the readers keep the cell in THAT unit -- the Quantum
-# ESPRESSO reader even converts an Angstrom CELL_PARAMETERS block *to* bohr
-# (phonopy/interface/qe.py, `factor = 1.0 / Bohr`). phonopy.load builds its
-# Phonopy object straight from the yaml's `unit_cell` with no conversion
-# (phonopy/cui/load.py reads the units table only for `factor` and
-# `nac_factor`); `distance_to_A` is applied only by the structure-file
-# CONVERTER (phonopy/interface/calculator.py) and the random-displacement
-# writer (phonopy/api_phonopy.py). So a phonopy.yaml written from a qe /
-# abinit / elk / siesta / wien2k / DFTB+ / TURBOMOLE / fleur / abacus / qlm run
-# carries `physical_unit: length: "au"` and a cell in BOHR, and
-# `phonopy.load(...).primitive.cell` hands that bohr cell straight back.
-#
-# IRMA is Angstrom throughout, so every phonopy load path converts the cell
-# ONCE, here, through `angstrom_primitive()`. Downstream modules
-# (noncubic_inelastic_context, noncubic_engine, irma.spectra, irma.ncrystal)
-# then genuinely receive Angstrom and never need to know about calculator
-# units -- the `_ang` suffixes they use are true.
-#
-# WHAT IS NOT CONVERTED, because phonopy already reports it in fixed units for
-# every calculator:
-#   - frequencies: phonopy applies the calculator's own `factor` (VaspToTHz,
-#     PwscfToTHz, ...) inside the dynamical-matrix solve, so `mesh.frequencies`
-#     is THz everywhere. This is also why the LIVE phonopy object must keep its
-#     native-unit cell: `angstrom_primitive` returns a converted COPY of the
-#     geometry and never mutates `phonon.primitive`.
-#   - masses: amu everywhere (there is no mass factor in the units table, and
-#     phonopy skips the yaml's `atomic_mass` key when cross-checking units).
-#   - scaled (fractional) positions and mesh q-points: dimensionless.
-#   - eigenvectors: unit-norm, dimensionless; their Cartesian directions are
-#     invariant under a uniform cell rescale.
-#   - thermal-displacement tensors U_ij: built here from eigenvectors, masses
-#     and mode energies with an explicit hbar^2/(2 M E) constant -- the cell
-#     never enters, so they are Angstrom^2 for every calculator already.
-
-_ANGSTROM_UNIT_NAMES = ("angstrom", "angstroms", "ang", "a")
-_BOHR_UNIT_NAMES = ("au", "a.u.", "bohr", "bohrs")
-
-
-def phonopy_calculator_length_units(calculator):
-    """``(factor_to_angstrom, unit_name)`` for a phonopy calculator name.
-
-    ``calculator`` is phonopy's interface mode (``None`` == vasp). Reads
-    phonopy's own table, so a new calculator interface is picked up
-    automatically. Supports the phonopy 4 dataclass and the phonopy 2/3
-    dict form of the same table.
-    """
-    try:
-        from phonopy.physical_units import get_calculator_physical_units as _get
-    except ImportError:                                  # phonopy 2/3
-        from phonopy.interface.calculator import (
-            get_default_physical_units as _get)
-    units = _get(calculator)
-    if isinstance(units, dict):
-        return (float(units["distance_to_A"]),
-                str(units.get("length_unit", "") or ""))
-    return (float(units.distance_to_A),
-            str(getattr(units, "length_unit", "") or ""))
-
-
-def _length_unit_factor_from_name(unit_name):
-    """Angstrom per unit for a phonopy ``length_unit`` string, or None.
-
-    phonopy only ever writes ``"angstrom"`` or ``"au"``; the spellings below
-    are the tolerant superset. The bohr number is read out of phonopy's own
-    calculator table (``qe`` is ``au`` in every phonopy version) rather than
-    hardcoded, so there is exactly one numeric authority for the conversion.
-    """
-    name = (unit_name or "").strip().lower()
-    if name in _ANGSTROM_UNIT_NAMES:
-        return 1.0
-    if name in _BOHR_UNIT_NAMES:
-        return phonopy_calculator_length_units("qe")[0]
-    return None
-
-
-def phonopy_yaml_length_unit(phonopy_yaml_path):
-    """The ``physical_unit: length:`` value recorded in the yaml, or None.
-
-    Cheap streaming scan (no YAML parse, compressed files supported), so a
-    yaml with embedded force constants is not materialized to answer a
-    one-key question. Returns ``None`` when the file records no length unit
-    (hand-written yamls and very old phonopy versions); the calculator table
-    is then the authority.
-    """
-    in_block = False
-    with _open_phonopy_yaml(phonopy_yaml_path, errors="replace") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            if not line[0].isspace():
-                in_block = line.startswith("physical_unit:")
-                continue
-            if in_block:
-                stripped = line.strip()
-                if stripped.startswith("length:"):
-                    return stripped.split(":", 1)[1].strip().strip("\"'")
-    return None
-
-
-def phonopy_model_length_to_angstrom(phonopy_yaml_path, calculator):
-    """``(factor, unit_name)``: multiply this model's lengths to get Angstrom.
-
-    The yaml's own ``physical_unit: length:`` wins when it names a unit we
-    recognize -- it is what the writer declared the numbers to be, it needs no
-    phonopy import, and it stays right even if a future phonopy retunes its
-    table. Otherwise the calculator table is the authority (hand-written and
-    pre-``physical_unit`` yamls record nothing).
-
-    Raises ``ValueError`` for the two genuinely unusable cases: a recorded unit
-    name we cannot map to a factor, and a calculator interface phonopy's own
-    table does not know (phonopy raises that one; it is re-raised with the file
-    named).
-    """
-    recorded = phonopy_yaml_length_unit(phonopy_yaml_path)
-    if recorded is not None:
-        factor = _length_unit_factor_from_name(recorded)
-        if factor is None:
-            raise ValueError(
-                f"{phonopy_yaml_path}: the file records 'physical_unit: "
-                f"length: {recorded}', which is not a length unit IRMA "
-                f"recognizes (expected 'angstrom' or 'au'). Refusing to guess "
-                f"a conversion factor -- fix the file, or rewrite the model "
-                f"through phonopy's structure converter.")
-        return factor, recorded.strip()
-    try:
-        return phonopy_calculator_length_units(calculator)
-    except ValueError as exc:
-        raise ValueError(
-            f"{phonopy_yaml_path}: phonopy has no physical-units entry for "
-            f"the '{calculator}' calculator interface recorded in this file, "
-            f"so the length unit of its cell is unknown ({exc}).") from exc
-
 
 @dataclass
 class AngstromPrimitiveCell:
     """A phonopy primitive cell with its lattice converted to Angstrom.
 
-    Stands in for phonopy's ``Primitive`` wherever IRMA reads GEOMETRY only
-    (``cell``, ``scaled_positions``, ``symbols``, ``masses``) -- the mode-1/2
-    model context stores one of these so every consumer downstream of the load
-    gets Angstrom without knowing that calculator units exist. It deliberately
-    is NOT a phonopy object: the live ``phonon.primitive`` must keep its
-    native-unit cell, because phonopy's dynamical matrix pairs that cell with
-    force constants in the same native units and with the calculator's
-    frequency ``factor``.
+    phonopy keeps cells in the calculator's length unit (bohr for qe, abinit,
+    siesta, ...); IRMA works in Angstrom and converts once, here. The live
+    phonopy object keeps its native cell, which its force constants and
+    frequency factor are paired with.
     """
 
     cell: np.ndarray                # (3, 3) row vectors, ANGSTROM
     scaled_positions: np.ndarray    # (N_sites, 3) fractional
     symbols: List[str]
     masses: np.ndarray              # (N_sites,) amu
-    length_to_angstrom: float = 1.0
-    length_unit: str = "angstrom"
 
 
-def angstrom_primitive(phonon, phonopy_yaml_path) -> AngstromPrimitiveCell:
-    """Geometry of a loaded phonopy object's primitive cell, lattice in Angstrom.
-
-    THE single unit-conversion point for the whole package: every IRMA path
-    that needs a phonopy cell goes through here, so a bohr-native model
-    (qe/abinit/siesta/wien2k/...) and its Angstrom twin produce identical
-    downstream physics. ``phonon`` is left untouched.
-    """
-    factor, unit_name = phonopy_model_length_to_angstrom(
-        phonopy_yaml_path, getattr(phonon, "calculator", None))
+def angstrom_primitive(phonon) -> AngstromPrimitiveCell:
+    """Geometry of a loaded phonopy object's primitive cell, lattice in Angstrom."""
+    from phonopy.physical_units import get_calculator_physical_units
+    units = get_calculator_physical_units(phonon.calculator)
     prim = phonon.primitive
-    if hasattr(prim, "get_scaled_positions"):            # older phonopy API
-        scaled = np.array(prim.get_scaled_positions(), dtype=float)
-        symbols = [str(s) for s in prim.get_chemical_symbols()]
-        masses = np.array(prim.get_masses(), dtype=float)
-        cell = np.array(prim.get_cell(), dtype=float)
-    else:
-        scaled = np.array(prim.scaled_positions, dtype=float)
-        symbols = [str(s) for s in prim.symbols]
-        masses = np.array(prim.masses, dtype=float)
-        cell = np.array(prim.cell, dtype=float)
-    if factor != 1.0:
-        # Printed only when it fires, so Angstrom models keep byte-identical logs.
-        print(f"  Converting the phonopy cell from {unit_name} to Angstrom "
-              f"(1 {unit_name} = {factor:.9f} A)", flush=True)
-        cell = cell * factor
+    cell = np.array(prim.cell, dtype=float)
+    if units.distance_to_A != 1.0:
+        # Printed only when it fires, so Angstrom models keep their logs.
+        print(f"  Converting the phonopy cell from {units.length_unit} to Angstrom "
+              f"(1 {units.length_unit} = {units.distance_to_A:.9f} A)", flush=True)
+        cell = cell * units.distance_to_A
     return AngstromPrimitiveCell(
         cell=cell,
-        scaled_positions=scaled,
-        symbols=symbols,
-        masses=masses,
-        length_to_angstrom=float(factor),
-        length_unit=str(unit_name or "angstrom"),
+        scaled_positions=np.array(prim.scaled_positions, dtype=float),
+        symbols=[str(x) for x in prim.symbols],
+        masses=np.array(prim.masses, dtype=float),
     )
+
+
+def load_phonopy(phonopy_yaml_path, born_path=None, force_constants_filename=None,
+                 force_sets_filename=None, geometry_only=False):
+    """Load a phonopy model the way every IRMA path does.
+
+    The yaml is checked for unsafe tags first, the primitive matrix is pinned,
+    and phonopy's C backend is used (the Rust backend's thread pool ignores
+    the worker thread pinning). phonopy runs in an empty scratch directory,
+    because it probes ./FORCE_CONSTANTS, ./FORCE_SETS and ./BORN even when
+    explicit paths are given. Force constants: the explicit paths, else
+    ``resolve_force_constants_source``. NAC: the explicit BORN file, else NAC
+    embedded in the yaml, never ./BORN. ``geometry_only`` reads neither.
+    """
+    import os
+
+    import phonopy
+
+    path = os.path.abspath(str(phonopy_yaml_path))
+    reject_unsafe_phonopy_yaml(path)
+    kwargs = dict(pinned_primitive_matrix_kwargs(path), lang="C")
+    embeds_nac = False
+    if geometry_only:
+        kwargs.update(produce_fc=False, is_nac=False, log_level=0)
+    else:
+        if force_constants_filename is None and force_sets_filename is None:
+            kwargs.update(resolve_force_constants_source(path))
+        else:
+            if force_constants_filename is not None:
+                kwargs["force_constants_filename"] = os.path.abspath(
+                    str(force_constants_filename))
+            if force_sets_filename is not None:
+                kwargs["force_sets_filename"] = os.path.abspath(str(force_sets_filename))
+        born = None
+        if born_path is not None:
+            born = os.path.abspath(str(born_path))
+            if not os.path.isfile(born):
+                raise FileNotFoundError(
+                    f"BORN corrections were requested but the BORN file does "
+                    f"not exist: {born}")
+            print(f"  NAC from {born}", flush=True)
+        else:
+            embeds_nac = phonopy_yaml_embeds_nac(path)
+            if embeds_nac:
+                print(f"  NAC embedded in {path}", flush=True)
+        kwargs.update(born_filename=born, is_nac=born is not None or embeds_nac)
+    with isolated_phonopy_cwd():
+        ph = phonopy.load(phonopy_yaml=path, **kwargs)
+    if embeds_nac and ph.nac_params is None:
+        raise RuntimeError(
+            f"{path} embeds NAC keys but phonopy could not parse NAC parameters "
+            f"from them; fix the file or supply an explicit BORN file (Card 6f "
+            f"use_born=1).")
+    return ph
 
 
 def _cell_parameters(lattice):
@@ -493,49 +387,18 @@ def load_phonopy_primitive_structure(phonopy_yaml_path
     block is whatever the model's author last wrote there, and the stored
     ``primitive_matrix`` is applied to ``unit_cell`` at load time.
 
-    No force constants are read (``produce_fc=False``, no explicit FC
-    path, isolated cwd), so this is a cheap geometry-only load; NAC is off
-    for the same reason. phonopy is imported lazily, so callers that never
-    click this path (classic decks) need not have it installed.
-
-    A model whose cell is in the calculator's native unit (bohr, for
-    qe/abinit/siesta/wien2k/...) is CONVERTED to Angstrom, not refused: the
-    mode-1/2 engine converts at the same boundary, so the filled Card 6c/6d
-    describe the same cell the engine will run.
-
+    A geometry-only load (no force constants, no NAC); the cell is
+    converted to Angstrom as the mode-1/2 engine does.
     Raises ``ImportError`` without phonopy, ``ValueError`` for an unsafe
-    yaml or an unresolvable length unit, and whatever phonopy raises for an
-    unreadable file.
+    yaml, and whatever phonopy raises for an unreadable file.
     """
-    import os
-
     try:
-        import phonopy
+        ph = load_phonopy(phonopy_yaml_path, geometry_only=True)
     except ImportError:
         raise ImportError(
             "phonopy is required to read a phonopy model's crystal "
             "structure. Install with: pip install phonopy")
-
-    path = os.path.abspath(str(phonopy_yaml_path))
-
-    # TRUST BOUNDARY (SEC-1): the path can name any file the user picked;
-    # scan for code-executing YAML tags BEFORE phonopy's unsafe loader runs.
-    reject_unsafe_phonopy_yaml(path)
-
-    load_params = inspect.signature(phonopy.load).parameters
-    kwargs = dict(pinned_primitive_matrix_kwargs(path))
-    if "produce_fc" in load_params:
-        # Geometry only: never build force constants for a structure read.
-        kwargs["produce_fc"] = False
-    if "log_level" in load_params:
-        kwargs["log_level"] = 0
-    # isolated_phonopy_cwd: phonopy probes the process cwd for
-    # FORCE_CONSTANTS / FORCE_SETS / BORN; the structure it reports must
-    # depend only on the named yaml, never on where IRMA runs.
-    with isolated_phonopy_cwd():
-        ph = phonopy.load(phonopy_yaml=path, is_nac=False, **kwargs)
-
-    prim = angstrom_primitive(ph, path)
+    prim = angstrom_primitive(ph)
     return PhonopyPrimitiveStructure(
         cellpar=_cell_parameters(prim.cell),
         lattice_ang=prim.cell,
@@ -769,11 +632,8 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
                       min_phonon_energy_mev=0.0):
     """Load phonon eigenvectors from phonopy and return a PhonopyMeshData.
 
-    Force constants: explicit caller paths win; otherwise they are read from
-    the yaml itself if embedded, else from the same directory as
-    phonopy_yaml_path (force_constants.hdf5, FORCE_CONSTANTS, then
-    FORCE_SETS, in that order) -- the same priority the mode-1/2 engine
-    context applies.
+    The model is loaded by :func:`load_phonopy` (force constants and NAC as
+    described there).
 
     Parameters
     ----------
@@ -792,108 +652,16 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
     -------
     PhonopyMeshData
     """
-    import os
-
     min_phonon_energy_mev = validate_min_phonon_energy_mev(
         min_phonon_energy_mev)
-
     try:
-        import phonopy
+        ph = load_phonopy(phonopy_yaml_path, born_path=born_path,
+                          force_constants_filename=force_constants_filename,
+                          force_sets_filename=force_sets_filename)
     except ImportError:
         raise ImportError(
             "phonopy is required for non-cubic inelastic calculations. "
             "Install with: pip install phonopy")
-
-
-    # Absolutize before the isolated_phonopy_cwd pin below.
-    phonopy_yaml_path = os.path.abspath(str(phonopy_yaml_path))
-    if born_path is not None:
-        born_path = os.path.abspath(str(born_path))
-
-    # TRUST BOUNDARY (SEC-1): refuse a phonopy.yaml carrying code-executing
-    # YAML tags BEFORE phonopy's unsafe loader parses it. This is the widest
-    # entry point -- Card 6f / iel=10 decks and irma.spectra.dos_from_phonopy
-    # all funnel through here.
-    reject_unsafe_phonopy_yaml(phonopy_yaml_path)
-
-    # Locate the force constants belonging to the named model: an explicit
-    # caller path wins; else discovery (embedded in the yaml, else hdf5 >
-    # text FORCE_CONSTANTS > FORCE_SETS next to it). phonopy.load() would
-    # otherwise search the CURRENT WORKING DIRECTORY, which must never
-    # decide the model.
-    if force_constants_filename is None and force_sets_filename is None:
-        fc_kwargs = resolve_force_constants_source(phonopy_yaml_path)
-    else:
-        fc_kwargs = {}
-        if force_constants_filename is not None:
-            fc_kwargs["force_constants_filename"] = os.path.abspath(
-                str(force_constants_filename))
-        if force_sets_filename is not None:
-            fc_kwargs["force_sets_filename"] = os.path.abspath(
-                str(force_sets_filename))
-
-    # NAC policy: an explicit BORN path (Card 6f use_born=1) wins; otherwise
-    # NAC embedded in the named phonopy.yaml is honored; phonopy's fallback
-    # of auto-reading ./BORN from the process working directory is disabled
-    # (is_nac=False) so the applied physics never depends on the run cwd.
-    embeds_nac = phonopy_yaml_embeds_nac(phonopy_yaml_path)
-    # Force phonopy's C/OpenMP backend, NOT the Rust `phonors` backend. phonopy>=4
-    # defaults to lang="Rust" when `phonors` is installed; phonors uses a rayon
-    # global thread pool that limit_native_threads_to_one() cannot pin. The
-    # mode-1/2 engine runs a spawn ProcessPool (Card 6f ncpu>1), so an
-    # uncontrolled rayon pool in every worker oversubscribes the cores (and
-    # deadlocked workers outright under the fork start method used previously;
-    # observed on phonopy 4.2.1 + Python 3.14 macOS). The C backend is pinned to
-    # one OMP thread by limit_native_threads_to_one() and is safe in the worker
-    # pool. Only pass `lang` when this phonopy accepts it: older phonopy predates
-    # phonors and has no such parameter (would raise TypeError otherwise).
-    backend_kwargs = (
-        {"lang": "C"}
-        if "lang" in inspect.signature(phonopy.load).parameters
-        else {}
-    )
-    try:
-        # isolated_phonopy_cwd: phonopy probes the cwd for FORCE_CONSTANTS/
-        # FORCE_SETS/BORN even when explicit paths are given; with every
-        # wanted source passed as an absolute path, the fallbacks must find
-        # nothing.
-        with isolated_phonopy_cwd():
-            ph = phonopy.load(
-                phonopy_yaml=phonopy_yaml_path,
-                born_filename=born_path,
-                is_nac=(born_path is not None) or embeds_nac,
-                **pinned_primitive_matrix_kwargs(phonopy_yaml_path),
-                **backend_kwargs,
-                **fc_kwargs,
-            )
-    except Exception as exc:
-        if born_path is not None:
-            # BORN was explicitly requested: degrading silently to a NAC-less
-            # calculation would corrupt the physics unnoticed.
-            raise RuntimeError(
-                f"BORN corrections were requested but the BORN file could "
-                f"not be loaded from {born_path}: {exc}"
-            ) from exc
-        raise
-    if born_path is not None:
-        if ph.nac_params is None:
-            raise RuntimeError(
-                f"BORN corrections were requested but phonopy.load returned "
-                f"no NAC parameters from {born_path}."
-            )
-        print(f"  Loaded NAC parameters from {born_path}", flush=True)
-    elif embeds_nac:
-        if ph.nac_params is None:
-            # The yaml declares NAC keys that phonopy could not parse into
-            # parameters. Refusing to guess: continuing NAC-less (or letting
-            # phonopy fall back to a ./BORN in the cwd) would silently change
-            # the physics.
-            raise RuntimeError(
-                f"{phonopy_yaml_path} embeds NAC keys but phonopy could not "
-                f"parse NAC parameters from them; fix the file or supply an "
-                f"explicit BORN file (Card 6f use_born=1)."
-            )
-        print(f"  Using NAC parameters embedded in {phonopy_yaml_path}", flush=True)
 
     # Use is_mesh_symmetry=False (full Monkhorst-Pack mesh, all weights=1).
     # The symmetrized (irreducible BZ) mesh gives WRONG per-atom DOS tensors
@@ -907,83 +675,19 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
           f"with eigenvectors (full mesh)...", flush=True)
     with openmp_unpinned_serial_setup():
         ph.run_mesh(mesh_dim, with_eigenvectors=True, is_mesh_symmetry=False)
-    # ph.mesh (Mesh object) replaces get_mesh_dict(): the accessor is
-    # deprecated in phonopy 4 and the property exists on every supported
-    # version with identical array contents.
     mesh_obj = ph.mesh
-
-    # Frequencies: (N_q, N_branches) in THz → eV (negative = imaginary)
-    freq_ev = mesh_obj.frequencies * THZ_TO_EV  # (N_q, N_branches)
-
-    n_q = freq_ev.shape[0]
-    n_branches = freq_ev.shape[1]
-    # n_atoms: support both old API (get_number_of_atoms) and new (len/masses)
     prim = ph.primitive
-    if hasattr(prim, 'get_number_of_atoms'):
-        n_atoms = prim.get_number_of_atoms()
-    else:
-        n_atoms = len(prim.masses)
-
-    # Eigenvectors: phonopy uses np.linalg.eigh convention throughout.
-    # Mesh.eigenvectors, shape (N_q, 3*N_atoms, N_branches):
-    #   axis 0 = q-points
-    #   axis 1 = component index 3*d+i  (ATOM-FIRST: d=atom index, i=0,1,2 for x,y,z)
-    #   axis 2 = mode/branch index ν
-    # i.e., eigs_raw[q, 3*d+i, ν] = component of atom d, direction i, mode ν.
-    # To get our target shape (N_q, N_branches, N_atoms, 3) — eigs[q, ν, d, i]:
-    #   transpose(0,2,1) swaps axes 1↔2 → (N_q, N_branches, 3*N_atoms)
-    #   reshape to (N_q, N_branches, N_atoms, 3) using atom-first split.
-    eigs_raw = mesh_obj.eigenvectors
-    expected_last = n_atoms * 3
-
-    if eigs_raw.ndim == 3 and eigs_raw.shape == (n_q, n_branches, expected_last):
-        # SANITY GUARD, not a layout discriminator: phonopy's Mesh
-        # eigenvectors are ALWAYS the np.linalg.eigh 3D array
-        # (N_q, 3*N_atoms, N_branches), atom-first. Because
-        # n_branches == expected_last == 3*n_atoms for a phonon problem, this
-        # shape test cannot distinguish atom-first from a hypothetical
-        # mode-first layout; it just confirms the expected dimensions before the
-        # (correct, for the sole atom-first convention) transpose below.
-        eigs = eigs_raw.transpose(0, 2, 1).reshape(n_q, n_branches, n_atoms, 3)
-    elif eigs_raw.ndim == 3 and eigs_raw.shape == (expected_last, n_branches, n_q):
-        # Older phonopy: (3*N_atoms, N_branches, N_q), atom-first.
-        # .T → (N_q, N_branches, 3*N_atoms) with [q, ν, 3*d+i] indexing.
-        eigs = eigs_raw.T.reshape(n_q, n_branches, n_atoms, 3)
-    else:
-        raise ValueError(
-            f"Unexpected eigenvector shape from phonopy: {eigs_raw.shape}. "
-            f"Expected (N_q={n_q}, N_branches={n_branches}, N_atoms*3={expected_last}).")
-
+    freq_ev = mesh_obj.frequencies * THZ_TO_EV  # (N_q, N_branches), negative = imaginary
+    n_q, n_branches = freq_ev.shape
+    n_atoms = len(prim.masses)
+    # phonopy eigenvectors are [q, 3*atom+xyz, mode]; reorder to [q, mode, atom, xyz].
+    eigs = mesh_obj.eigenvectors.transpose(0, 2, 1).reshape(n_q, n_branches, n_atoms, 3)
     weights = mesh_obj.weights
-    if weights is None:
-        weights = np.ones(n_q, dtype=int)
-    # Support both old API (get_masses/get_chemical_symbols) and new (masses/symbols)
-    if hasattr(prim, 'get_masses'):
-        masses_amu = np.array(prim.get_masses(), dtype=float)
-        symbols = list(prim.get_chemical_symbols())
-    else:
-        masses_amu = np.array(prim.masses, dtype=float)
-        symbols = list(prim.symbols)
-
-    n_total = int(np.sum(weights))
+    masses_amu = np.array(prim.masses, dtype=float)
+    symbols = list(prim.symbols)
+    atom_positions = np.array(prim.scaled_positions, dtype=float)
     print(f"  Loaded {n_q} q-points, {n_branches} branches, {n_atoms} atoms "
-          f"(total BZ weight = {n_total})", flush=True)
-
-    # Primitive cell geometry.
-    # atom_positions: fractional coordinates in primitive cell (N_atoms, 3).
-    # UNITS: nothing PhonopyMeshData carries has a length dimension -- q-points
-    # and positions are fractional, frequencies are THz->eV, masses are amu,
-    # eigenvectors are unit-norm -- so this loader needs no cell conversion.
-    # The paths that DO need the lattice call angstrom_primitive() instead.
-    # NOTE: the reciprocal lattice is intentionally NOT stored here. The live
-    # noncubic path derives its own b-matrix WITHOUT the 2π factor (see
-    # noncubic_inelastic_context: rec_lat_no_2pi = inv(primitive.cell), and the
-    # /2π applied in noncubic_engine when going to reduced coords). A stored
-    # 2π·(A⁻¹)ᵀ field would carry the opposite convention — a latent trap.
-    if hasattr(prim, 'get_scaled_positions'):
-        atom_positions = np.array(prim.get_scaled_positions(), dtype=float)
-    else:
-        atom_positions = np.array(prim.scaled_positions, dtype=float)
+          f"(total BZ weight = {int(np.sum(weights))})", flush=True)
 
     return PhonopyMeshData(
         qpoints=mesh_obj.qpoints,
