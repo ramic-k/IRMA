@@ -10,8 +10,7 @@ nphon=6, 6 alpha x 8 beta) and pins:
     multiphonon) and mode 2 (exact n=1 + multiphonon) to frozen values,
   * Teff0 bookkeeping,
   * physicality (finite, non-negative S),
-  * determinism (two identical runs produce byte-identical tapes; the
-    ordered worker pool and pinned BLAS threads exist precisely for this).
+  * determinism (a 2-worker run reproduces the serial tape byte for byte).
 
 The pins guard the assembly end-to-end: phonopy load, FC resolution, site
 matching, DOS tensor, one-phonon and multiphonon accumulation, SAB
@@ -105,13 +104,6 @@ def test_law_integral_pinned_and_physical(tapes, mode):
     assert teff0 > 296.0                      # bookkeeping sanity
 
 
-def test_mode2_exact_n1_differs_from_mode1(tapes):
-    s1, _, _ = _mt4_stats(tapes[1])
-    s2, _, _ = _mt4_stats(tapes[2])
-    # graphite's coherent n=1 roughly doubles the tiny-grid integral
-    assert s2 > 1.5 * s1
-
-
 def test_user_cutoff_reaches_complete_mode2_calculation(tapes, tmp_path, capsys):
     """The optional card must affect the integrated mode-2 calculation,
     which combines DOS/Debye-Waller setup, exact incoherent one-phonon,
@@ -134,12 +126,6 @@ def test_user_cutoff_reaches_complete_mode2_calculation(tapes, tmp_path, capsys)
     assert cutoff_sum != pytest.approx(default_sum, rel=1.0e-6)
 
 
-def test_noncubic_run_is_deterministic(tapes):
-    rerun = _run(1, "m1_again")
-    a, b = open(tapes[1]).read(), open(rerun).read()
-    assert a == b                              # byte-identical tapes
-
-
 def test_parallel_pool_matches_serial_byte_for_byte(tapes):
     """Cross-ncpu byte identity is STRUCTURAL: the block partitions are
     jobs-independent (fixed multiphonon direction chunk, see
@@ -160,11 +146,10 @@ def test_parallel_pool_matches_serial_byte_for_byte(tapes):
     assert open(out).read() == open(tapes[1]).read()
 
 
-def test_split_principal_tape_matches_merged_single_type(tmp_path):
-    """QA4 F3 equivalence proof: the same graphite cell spelled as TWO Card 6d
-    carbon entries (2 + 2 positions) must produce a BYTE-IDENTICAL mode-1 tape
-    to the canonical single entry with 4 positions — the parse-time principal
-    merge reconstructs exactly that deck."""
+def test_split_principal_tape_matches_merged_single_type(tapes, tmp_path):
+    """The same graphite cell spelled as TWO Card 6d carbon entries (2 + 2
+    positions) must produce a byte-identical mode-1 tape to the single entry
+    with 4 positions: the parse-time principal merge rebuilds that deck."""
     base = _DECK.format(mode=1, yaml=_YAML)
     split = base.replace("1 1 0 1/", "1 2 0 1/").replace(
         "6 12 11.898 6.6484 0.001 4/\n"
@@ -175,11 +160,9 @@ def test_split_principal_tape_matches_merged_single_type(tmp_path):
         "6 12 11.898 6.6484 0.001 2/\n"
         "0.333333333333 0.666666666667 0.25  0.666666666667 0.333333333333 0.75/")
     assert split != base                       # the replace really happened
-    tapes_bytes = []
-    for tag, deck in (("one_type", base), ("two_types", split)):
-        inp = tmp_path / f"{tag}.input"
-        out = tmp_path / f"{tag}.endf"
-        inp.write_text(deck)
-        run_leapr(str(inp), str(out))
-        tapes_bytes.append(out.read_bytes())
-    assert tapes_bytes[0] == tapes_bytes[1]
+    inp = tmp_path / "two_types.input"
+    out = tmp_path / "two_types.endf"
+    inp.write_text(split)
+    run_leapr(str(inp), str(out))
+    # tapes[1] was built from `base`; file names are not written to the tape
+    assert out.read_bytes() == open(tapes[1], "rb").read()

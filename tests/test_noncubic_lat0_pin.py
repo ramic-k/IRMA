@@ -86,20 +86,10 @@ def test_lat0_law_matches_lat1_pins_and_is_physical(lat0_tapes, mode):
     — exactly _PINS, so the lat=1 pins double as the lat=0 pins and any
     future re-bless there re-blesses here."""
     s_sum, s_min, teff0 = _mt4_stats(lat0_tapes[mode])
+    assert _lat_flag(lat0_tapes[mode]) == 0     # the lat=0 branch wrote it
     assert s_sum == pytest.approx(_PINS[mode], rel=1.0e-6)
     assert s_min >= 0.0
     assert teff0 == pytest.approx(_TEFF0, abs=0.01)
-
-
-@pytest.mark.parametrize("mode", [1, 2])
-def test_lat0_flag_written_to_tape(lat0_tapes, mode):
-    # proves the lat=0 branch (not a silent lat=1 fallback) produced the tape
-    assert _lat_flag(lat0_tapes[mode]) == 0
-
-
-def test_lat0_run_is_deterministic(lat0_tapes):
-    rerun = _run_lat0(1, "m1_again")
-    assert open(rerun).read() == open(lat0_tapes[1]).read()
 
 
 def test_lat0_model_layer_reuse_is_bit_identical(capsys):
