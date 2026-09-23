@@ -83,29 +83,25 @@ def test_output_resolvers_match_the_writers(tmp_path):
         tmp_path / "OUT.json")
 
 
-def test_map_preflight_catches_writer_target(tmp_path, capsys):
+def test_map_preflight_catches_writer_target(tmp_path):
     """A map `-o out.json` writes out.json.npz; an existing DIRECTORY there
     used to pass the raw-path preflight and fail only after the compute
     (review SP-2a)."""
-    from irma.spectra.cli import (_check_output_path,
-                                  resolve_map_output_path)
+    from irma.spectra.cli import resolve_map_output_path
 
     (tmp_path / "out.json.npz").mkdir()
-    rc = _check_output_path(resolve_map_output_path(tmp_path / "out.json"))
-    assert rc == 2
-    assert "directory, not a file" in capsys.readouterr().err
+    msg = validate_output_path(resolve_map_output_path(tmp_path / "out.json"))
+    assert msg is not None and "directory, not a file" in msg
 
 
 def test_cuts_preflight_ignores_unrelated_npz_sibling(tmp_path):
     """An extensionless CUTS output writes CSV at the raw path; the old
     mode-blind candidate set also preflighted rawout.npz, so an unrelated
     directory there falsely rejected a valid run (review SP-2b)."""
-    from irma.spectra.cli import (_check_output_path,
-                                  resolve_spectrum_output_path)
+    from irma.spectra.cli import resolve_spectrum_output_path
 
     (tmp_path / "rawout.npz").mkdir()
-    assert _check_output_path(
-        resolve_spectrum_output_path(tmp_path / "rawout")) is None
+    assert validate_output_path(resolve_spectrum_output_path(tmp_path / "rawout")) is None
 
 
 # ---- review S11: routine ncrystal exporter errors exit cleanly -------------

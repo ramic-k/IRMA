@@ -297,7 +297,10 @@ def _parse(text: str, suffix: str) -> dict:
         raise SpectraConfigError(
             "PyYAML is required to read YAML configs; install pyyaml or use "
             "a .json / .toml config") from e
-    return yaml.safe_load(text)
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise SpectraConfigError(f"config could not be parsed: {exc}") from None
 
 
 def load(path, validate_cfg: bool = True) -> SpectraConfig:

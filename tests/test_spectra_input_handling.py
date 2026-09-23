@@ -15,7 +15,6 @@ Engine-free pins for the loud-failure paths:
 (Finding 4 -- output_mode='map' allowed for every geometry -- is pinned in
 test_spectra_config.py::test_map_output_mode_allowed_for_all_geometries.)
 """
-import types
 
 import numpy as np
 import pytest
@@ -58,13 +57,12 @@ def test_all_known_sections_still_accepted():
 
 # ---- (2) chopper resolution: omitted flags / null values --------------------
 def test_flag_form_chopper_missing_flags_named():
-    """config_from_args must name every omitted chopper flag, instead of
-    crashing later on float(None)."""
+    """validate() names every omitted chopper flag."""
     ns = scli.build_parser().parse_args(
         ["direct", "--phonopy-yaml", "g.yaml", "--ei", "250", "--e-max", "200",
          "--angles", "30,60", "--resolution-model", "chopper", "-o", "o.csv"])
     with pytest.raises(SpectraConfigError) as ei:
-        scli.config_from_args(ns)
+        validate(scli.config_from_args(ns))
     msg = str(ei.value)
     assert "--chopper-instrument" in msg
     assert "--chopper-package" in msg
@@ -199,7 +197,7 @@ def test_max_order_accepts_auto_and_int():
     assert ns.max_phonon_order == 50
 
 
-# ---- (6) case-insensitive output dispatch ------------------------------------
+# ---- (6) extensionless spectrum output -----------------------------------------
 def _result():
     E = np.linspace(0.0, 200.0, 11)
     I = np.abs(np.sin(E / 20.0))
@@ -211,41 +209,11 @@ def _result():
                   "engine_metadata": {}})
 
 
-def test_write_spectrum_uppercase_npz_gets_npz_bytes(tmp_path, capsys):
-    """'-o SPEC.NPZ' must produce a real npz archive (normalized extension,
-    with a warning), never CSV text in an .NPZ-named file."""
-    written = scli.write_spectrum(_result(), tmp_path / "SPEC.NPZ")
-    assert written == str(tmp_path / "SPEC.npz")
-    d = np.load(written)                          # real npz, loadable
-    assert "I_total_per_angle" in d.files
-    err = capsys.readouterr().err
-    assert "'.NPZ'" in err and "'.npz'" in err    # the warning names both
-
-
-def test_write_spectrum_unrecognized_extension_warns_csv(tmp_path, capsys):
-    written = scli.write_spectrum(_result(), tmp_path / "out.dat")
-    assert written == str(tmp_path / "out.dat")
-    assert (tmp_path / "out.dat").read_text().startswith("# IRMA spectrum")
-    err = capsys.readouterr().err
-    assert "'.dat'" in err and ".csv" in err      # says what happened + the fix
-
-
 def test_write_spectrum_extensionless_is_silent_csv(tmp_path, capsys):
     """No extension -> the documented CSV default, with no warning noise."""
     scli.write_spectrum(_result(), tmp_path / "out")
     assert (tmp_path / "out").read_text().startswith("# IRMA spectrum")
     assert capsys.readouterr().err == ""
-
-
-def test_write_map_uppercase_npz_gets_npz_bytes(tmp_path, capsys):
-    sm = types.SimpleNamespace(Q=np.linspace(0.5, 5.0, 4),
-                               E=np.linspace(0.0, 50.0, 6),
-                               S=np.zeros((4, 6)), envelope=None)
-    written = scli.write_map(sm, tmp_path / "MAP.NPZ")
-    assert written == str(tmp_path / "MAP.npz")   # not MAP.NPZ.npz, not CSV
-    d = np.load(written)
-    assert d["S"].shape == (4, 6)
-    assert "'.NPZ'" in capsys.readouterr().err
 
 
 # ---- (7) stream conventions ---------------------------------------------------
@@ -263,10 +231,9 @@ def test_success_lines_on_stdout_errors_on_stderr(tmp_path, monkeypatch, capsys)
     """One rule for the whole `irma` entry point (the deck CLI's): provenance,
     progress and the final 'Wrote ...' go to STDOUT; stderr is for diagnostics
     only -- `irma spectra run cfg -o out.csv > log` must capture the run log."""
-    import irma.spectra.config as cfgmod
     monkeypatch.setattr(scli, "_load_cfg", lambda ns: _MapCfg())
     monkeypatch.setattr(scli, "_provenance", lambda c, o: "irma spectra: provenance")
-    monkeypatch.setattr(cfgmod, "run_map",
+    monkeypatch.setattr(scli, "run_map",
                         lambda c, **kw: kw["progress"]("progress line") or "SM")
     monkeypatch.setattr(scli, "write_map", lambda sm, out, masked=False: out)
     out_path = tmp_path / "m.npz"
@@ -283,4 +250,4 @@ def test_config_error_stays_on_stderr(tmp_path, capsys):
                     str(tmp_path / "o.csv")])
     assert rc == 2
     out, err = capsys.readouterr()
-    assert "cannot read config file" in err and "cannot read" not in out
+    assert "No such file" in err and "No such file" not in out

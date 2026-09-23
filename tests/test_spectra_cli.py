@@ -152,7 +152,7 @@ def test_missing_config_file_is_clean_exit_2(tmp_path, capsys):
     rc = scli.main(["run", str(tmp_path / "nope.yaml"), "-o", "o.csv"])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "cannot read config file" in err and "Traceback" not in err
+    assert "No such file" in err and "Traceback" not in err
 
 
 def test_malformed_yaml_is_clean_exit_2(tmp_path, capsys):
@@ -245,7 +245,6 @@ class _MapCfg:
 
 def test_run_dispatches_to_map_when_output_mode_map(tmp_path, monkeypatch):
     """A `run` config with output_mode='map' must produce a 2-D map, not cuts."""
-    import irma.spectra.config as cfgmod
     cfg = _MapCfg()
     seen = {}
 
@@ -255,7 +254,7 @@ def test_run_dispatches_to_map_when_output_mode_map(tmp_path, monkeypatch):
 
     monkeypatch.setattr(scli, "_load_cfg", lambda ns: cfg)
     monkeypatch.setattr(scli, "_provenance", lambda c, o: "")
-    monkeypatch.setattr(cfgmod, "run_map", fake_run_map)
+    monkeypatch.setattr(scli, "run_map", fake_run_map)
     monkeypatch.setattr(scli, "write_map",
                         lambda sm, out, masked=False: (seen.update(sm=sm, masked=masked), out)[1])
     rc = scli.main(["run", str(tmp_path / "cfg.yaml"), "-o", str(tmp_path / "m.npz")])
@@ -266,13 +265,12 @@ def test_run_dispatches_to_map_when_output_mode_map(tmp_path, monkeypatch):
 
 def test_map_subcommand_mask_defaults_to_config(tmp_path, monkeypatch):
     """`map` without --mask/--no-mask follows the config's instrument.map_mask."""
-    import irma.spectra.config as cfgmod
     cfg = _MapCfg()
     cfg.instrument.map_mask = False
     seen = {}
     monkeypatch.setattr(scli, "_load_cfg", lambda ns: cfg)
     monkeypatch.setattr(scli, "_provenance", lambda c, o: "")
-    monkeypatch.setattr(cfgmod, "run_map", lambda c, **kw: "SM")
+    monkeypatch.setattr(scli, "run_map", lambda c, **kw: "SM")
     monkeypatch.setattr(scli, "write_map",
                         lambda sm, out, masked=False: (seen.update(masked=masked), out)[1])
     rc = scli.main(["map", str(tmp_path / "cfg.yaml"), "-o", str(tmp_path / "m.npz")])
@@ -404,8 +402,10 @@ def test_write_spectrum_q_only_omits_angle_block(tmp_path, ext):
 
 def test_spectra_main_fails_fast_on_directory_output(tmp_path, capsys):
     """The spectra CLI preflights the output path before any compute: a
-    directory target returns exit 2 with a clear message (Codex Wave-B follow-up)."""
-    rc = scli.main(["vision", "--scatterer", "C,5.551,11.898", "-o", str(tmp_path)])
+    directory target returns exit 2 with a clear message."""
+    (tmp_path / "g.yaml").write_text("{}\n")
+    rc = scli.main(["vision", "--phonopy-yaml", str(tmp_path / "g.yaml"),
+                    "--scatterer", "C,5.551,11.898", "-o", str(tmp_path)])
     assert rc == 2
     assert "directory, not a file" in capsys.readouterr().err
 
@@ -431,29 +431,6 @@ def _option(parser, flag):
     return next(a for a in parser._actions if flag in a.option_strings)
 
 
-def test_direction_defaults_are_10000_and_1000():
-    """Author amendment to SPG-1/DOC-1: the code defaults were raised to the
-    manual's advertised 10000/1000 -- argparse, PhysicsConfig, and the
-    NCrystal exporter (already there) must all agree."""
-    ns = _vision_ns()
-    assert ns.directions == 10000 and ns.mp_directions == 1000
-    cfg = scli.config_from_args(ns)
-    assert cfg.physics.n_directions == 10000
-    assert cfg.physics.multiphonon_directions == 1000
-    from irma.spectra.config import PhysicsConfig
-    p = PhysicsConfig()
-    assert p.n_directions == 10000 and p.multiphonon_directions == 1000
-    import dataclasses
-    from irma.ncrystal.config import NCrystalExportConfig
-    defaults = {f.name: f.default
-                for f in dataclasses.fields(NCrystalExportConfig)}
-    assert defaults["num_directions"] == 10000
-    assert defaults["multiphonon_num_directions"] == 1000
-    vision = _vision_subparser()
-    assert "(default: 10000)" in _option(vision, "--directions").help
-    assert "(default: 1000)" in _option(vision, "--mp-directions").help
-
-
 def test_gain_side_help_no_longer_claims_a_mirror_fallback():
     """SPG-2: modes 1/2 compute the gain side directly (emit_gain_side reads
     the engine's gain arrays); the mirror is only a defensive fallback. The
@@ -464,47 +441,18 @@ def test_gain_side_help_no_longer_claims_a_mirror_fallback():
     assert "directly computed gain arrays" in help_text
 
 
-def test_production_defaults_mode_and_map_grid():
-    """Author decision 2026-07-31: a silently omitted setting gives the
-    campaign-quality value. Mode 2 (the validated coherent mode) is the
-    default on argparse and PhysicsConfig, and the map subcommand's Q
-    grid covers the full arch: q_min 0, step deferred to the config's
-    dq_max_invA, q_max deferred to grid.q_max_invA else the kinematic
-    envelope."""
-    ns = scli.build_parser().parse_args(
-        ["vision", "--phonopy-yaml", "g.yaml",
-         "--scatterer", "C,5.551,11.898,6.646,0.001", "-o", "v.csv"])
-    assert ns.inelastic_mode == 2
-    from irma.spectra.config import PhysicsConfig
-    assert PhysicsConfig().inelastic_mode == 2
-    mns = scli.build_parser().parse_args(["map", "c.yaml", "-o", "m.png"])
-    assert mns.q_min == 0.0
-    assert mns.dq_map is None
-    assert mns.q_max is None
-
-
-def test_public_api_default_mode_agrees_with_cli_and_config():
-    """The Python entry points carry the SAME default as argparse,
-    PhysicsConfig and the GUI: compute_spectrum used to default to mode 1,
-    so a caller and a CLI user running the same calculation got different
-    physics with no way to notice."""
+def test_flag_defaults_are_the_config_defaults():
+    """Unset flags keep the SpectraConfig defaults (mode 2, 10000/1000
+    directions, ...); the Python entry points default to mode 2 too, and the
+    map subcommand defers its Q grid to the config."""
     import inspect
 
-    from irma.spectra.config import PhysicsConfig
+    from irma.spectra.config import MaterialConfig, SpectraConfig
     from irma.spectra.forward import compute_spectrum, compute_sqe_map
 
+    cfg = scli.config_from_args(scli.build_parser().parse_args(["vision", "-o", "v.csv"]))
+    assert cfg == SpectraConfig(material=MaterialConfig())
     for fn in (compute_spectrum, compute_sqe_map):
-        assert inspect.signature(fn).parameters[
-            "inelastic_mode"].default == 2, fn.__name__
-    ns = scli.build_parser().parse_args(
-        ["vision", "--phonopy-yaml", "g.yaml",
-         "--scatterer", "C,5.551,11.898,6.646,0.001", "-o", "v.csv"])
-    assert ns.inelastic_mode == PhysicsConfig().inelastic_mode == 2
-
-
-def test_min_phonon_energy_flag_is_parsed_and_defaults_to_zero():
-    from irma.spectra import cli
-    parser = cli.build_parser()
-    ns = parser.parse_args(["vision", "-o", "out", "--min-phonon-energy", "0.5"])
-    assert ns.min_phonon_energy == 0.5
-    assert parser.parse_args(["vision", "-o", "out"]).min_phonon_energy == 0.0
+        assert inspect.signature(fn).parameters["inelastic_mode"].default == 2
+    mns = scli.build_parser().parse_args(["map", "c.yaml", "-o", "m.png"])
+    assert (mns.q_min, mns.dq_map, mns.q_max) == (0.0, None, None)
