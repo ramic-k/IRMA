@@ -226,7 +226,7 @@ def test_driver_stores_site_tensors_in_card6d_order_and_flags_nonuniform():
     ci = _driver_crystal_info([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]])
     F_half = np.diag([1.0, 2.0, 3.0])
     F_zero = np.diag([4.0, 5.0, 6.0])
-    _store_directional_species_dw(ci, 0, 1, None, None, 0,
+    _store_directional_species_dw(ci, 0, 1,
                                   np.array([F_half, F_zero]))
     assert ci['dir_tensors_uniform'] is False
     F_sites = ci['F_sites_per_temp'][0][0]
@@ -241,7 +241,7 @@ def test_driver_flags_uniform_for_identical_tensors():
     from irma.core.driver import _store_directional_species_dw
     ci = _driver_crystal_info([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]])
     F = np.diag([1.0, 2.0, 3.0])
-    _store_directional_species_dw(ci, 0, 1, None, None, 0, np.array([F, F]))
+    _store_directional_species_dw(ci, 0, 1, np.array([F, F]))
     assert ci['dir_tensors_uniform'] is True
 
 
@@ -254,12 +254,12 @@ def test_driver_flags_uniform_through_eigensolver_bit_noise():
     F = np.diag([1.0, 2.0, 3.0])
     F_noise = F.copy()
     F_noise[0, 2] = F_noise[2, 0] = 4.0e-16
-    _store_directional_species_dw(ci, 0, 1, None, None, 0,
+    _store_directional_species_dw(ci, 0, 1,
                                   np.array([F, F_noise]))
     assert ci['dir_tensors_uniform'] is True
     # a real (graphite-sublattice-scale, ~0.1%) difference DOES flag
     ci2 = _driver_crystal_info([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    _store_directional_species_dw(ci2, 0, 1, None, None, 0,
+    _store_directional_species_dw(ci2, 0, 1,
                                   np.array([F, F * 1.001]))
     assert ci2['dir_tensors_uniform'] is False
 
@@ -273,7 +273,7 @@ def test_driver_pairs_sites_modulo_shared_origin_shift():
     ci = _driver_crystal_info([[0.0, 0.0, 0.75], [0.5, 0.0, 0.75]])
     F_a = np.diag([1.0, 2.0, 3.0])
     F_b = np.diag([4.0, 5.0, 6.0])
-    _store_directional_species_dw(ci, 0, 1, None, None, 0,
+    _store_directional_species_dw(ci, 0, 1,
                                   np.array([F_a, F_b]))
     assert ci['dir_tensors_uniform'] is False
     F_sites = ci['F_sites_per_temp'][0][0]
@@ -290,7 +290,7 @@ def test_driver_raises_when_nonuniform_sites_cannot_be_paired():
     ci = _driver_crystal_info([[0.1234, 0.2, 0.3], [0.7, 0.8, 0.9]])
     with pytest.raises(ValueError, match="cannot pair"):
         _store_directional_species_dw(
-            ci, 0, 1, None, None, 0,
+            ci, 0, 1,
             np.array([np.diag([1.0, 2.0, 3.0]), np.diag([4.0, 5.0, 6.0])]))
 
 

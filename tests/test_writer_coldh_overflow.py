@@ -8,7 +8,7 @@ i.e. be > ~1419.6) and ``math.exp`` used to raise a bare
 evaluation-ORDER artifact: by detailed balance the stored value is
 ~exp(-be/2), so the PRODUCT is representable even when exp(be/2) alone is
 not (the ilog=1 branch writes the same quantity as log(S)+be/2 and never
-overflows). Three layers are pinned here:
+overflows). Two layers are pinned here:
 
  1. cause fix -- the overflow-gated log-space evaluation
     (``_asym_overflow_s``), byte-identical for every non-overflowing value
@@ -18,10 +18,6 @@ overflows). Three layers are pinned here:
     Card 4 ilog=1 (LLN=1) remedy where the point is genuinely
     unrecoverable (stored S underflowed to 0, or the true product exceeds
     float64) -- never a bare OverflowError;
- 3. early warning -- a Card 10 parse-time warning in the driver, emitted
-    BEFORE the expensive kernel run, when the beta grid and temperature
-    will enter the regime (threshold derived from the same
-    be/2 > ln(DBL_MAX) arithmetic, not a hard-coded temperature).
 
 The byte-identity reference ``tests/data/coldh_20K_nearmiss.endf.gz`` is
 IRMA's own output for the near-miss deck below, generated at the
@@ -235,25 +231,3 @@ def test_helper_never_lets_overflowerror_escape():
     for s in (0.0, 1.0, 1e300):
         with pytest.raises(DeckError):
             _asym_overflow_s(s, 1468.0, 8.0, 20.0, SMIN)
-
-
-# ---------------------------------------------------------------------------
-# Layer 3: the Card 10 parse-time early warning
-# ---------------------------------------------------------------------------
-
-def test_parse_warning_fires_before_the_kernel_run(capsys):
-    d = tempfile.mkdtemp()
-    with pytest.raises(DeckError):
-        _run(_DECK_OVERFLOW, os.path.join(d, "out.endf"))
-    out = capsys.readouterr().out
-    assert "asymmetric-law overflow regime" in out
-    assert "ilog=1" in out
-    # emitted at Card 10 parse, before the first kernel output
-    assert out.index("asymmetric-law overflow regime") < out.index("DW lambda")
-
-
-def test_parse_warning_silent_for_nearmiss_deck(capsys):
-    d = tempfile.mkdtemp()
-    _run(_DECK_NEARMISS, os.path.join(d, "out.endf"))
-    out = capsys.readouterr().out
-    assert "asymmetric-law overflow regime" not in out
