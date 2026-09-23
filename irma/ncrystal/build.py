@@ -126,7 +126,7 @@ def _group_grids(cfg, awr, auto_beta, t_ref):
 
 
 # -- primitive-cell geometry --------------------------------------------------
-def load_primitive_info(phonopy_yaml: str | Path, born: str | Path | None = None):
+def load_primitive_info(phonopy_yaml: str | Path):
     """Return ``(symbols, masses_amu, scaled_positions, lattice_ang)`` for the
     phonopy primitive cell, without a mesh eigensolve.
 
@@ -137,47 +137,9 @@ def load_primitive_info(phonopy_yaml: str | Path, born: str | Path | None = None
     one place in the package that converts it -- the same call the mode-1/2
     engine context makes, so the base NCMAT cell and the packs agree.
     """
-    import inspect
-
-    from phonopy import load as phonopy_load
-
-    # Route this load through the same C-backend guard as the mesh loaders
-    # (phonopy_io.load_phonopy_mesh, noncubic_inelastic_context.build_model_context)
-    # so all phonopy loading uses one pattern. This call only reads primitive
-    # geometry (no eigensolve, so no rayon threadpool is spun up), but pinning the
-    # C backend keeps the loading path uniform and fork-safe on phonopy>=4. Only
-    # pass `lang` when this phonopy accepts it.
-    backend_kwargs = (
-        {"lang": "C"}
-        if "lang" in inspect.signature(phonopy_load).parameters
-        else {}
-    )
-    # isolated_phonopy_cwd: only primitive GEOMETRY is consumed here (symbols,
-    # masses, positions, lattice -- none of which depend on force constants or
-    # NAC), but phonopy.load still probes the process cwd for FORCE_SETS/
-    # FORCE_CONSTANTS/BORN as a fallback. Pinning to an empty scratch dir keeps
-    # the invariant every other phonopy load in the tree holds: what gets
-    # loaded never depends on where IRMA runs. Absolutize first, as the pin
-    # changes the cwd relative paths would resolve against.
-    from irma.core.phonopy_io import (
-        angstrom_primitive,
-        isolated_phonopy_cwd,
-        pinned_primitive_matrix_kwargs,
-        reject_unsafe_phonopy_yaml,
-    )
-    import os as _os
-    phonopy_yaml_abs = _os.path.abspath(str(phonopy_yaml))
-    born_abs = _os.path.abspath(str(born)) if born is not None else None
-    # TRUST BOUNDARY (SEC-1): refuse a phonopy.yaml carrying code-executing
-    # YAML tags BEFORE phonopy's unsafe loader parses it below.
-    reject_unsafe_phonopy_yaml(phonopy_yaml_abs)
-    with isolated_phonopy_cwd():
-        ph = phonopy_load(phonopy_yaml_abs, log_level=0,
-                          is_nac=born is not None,
-                          born_filename=born_abs,
-                          **pinned_primitive_matrix_kwargs(phonopy_yaml_abs),
-                          **backend_kwargs)
-    prim = angstrom_primitive(ph, phonopy_yaml_abs)
+    from irma.core.phonopy_io import angstrom_primitive, load_phonopy
+    ph = load_phonopy(phonopy_yaml, geometry_only=True)
+    prim = angstrom_primitive(ph)
     return (list(prim.symbols), np.asarray(prim.masses, float),
             np.asarray(prim.scaled_positions, float),
             np.asarray(prim.cell, float))
@@ -211,8 +173,7 @@ def resolve_principal_groups(cfg: NCrystalExportConfig):
     line and the coherent partition.
     """
     mat = cfg.material
-    symbols, masses, scaled_positions, lattice = load_primitive_info(
-        mat.phonopy_yaml, mat.born)
+    symbols, masses, scaled_positions, lattice = load_primitive_info(mat.phonopy_yaml)
     site_groups = ([[int(i) for i in g] for g in cfg.site_groups]
                    if cfg.site_groups is not None
                    else site_groups_by_species(symbols))

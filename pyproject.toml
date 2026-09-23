@@ -59,10 +59,8 @@ Documentation = "https://ramic-k.github.io/IRMA/"
 [project.optional-dependencies]
 # Required only for the generalized noncubic inelastic paths
 # (iel=10 with inelastic_mode=1 or 2); everything else runs without it.
-# Floor 4.2: the supported major is phonopy 4 (project decision 2026-07-10;
-# suite + numerical-identity + performance parity verified on 4.3.1). The
-# code itself still runs on 2.x/3.x because primitive-cell semantics are
-# pinned explicitly (pinned_primitive_matrix_kwargs), but only 4.x is tested.
+# Floor 4.2: phonopy 4 is the supported and tested major (verified on 4.3.1);
+# IRMA passes phonopy 4's lang="C" and reads its physical-units table.
 phonopy = ["phonopy>=4.2"]
 # The neutron-scattering forward model (irma.spectra): scipy for the S(Q,E)
 # interpolation, PyYAML for the (primary) YAML config format. Declared

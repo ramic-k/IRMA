@@ -2254,25 +2254,12 @@ class EndfFormMixin:
     def _detect_freq_from_fc_worker(self, fc_path):
         """Heavy phonopy mesh evaluation; runs OFF the Tk thread."""
         try:
-            import phonopy
             import numpy as np
-            from irma.core.phonopy_io import (
-                isolated_phonopy_cwd, pinned_primitive_matrix_kwargs,
-                reject_unsafe_phonopy_yaml, resolve_force_constants_source,
-            )
+            from irma.core.phonopy_io import load_phonopy
             from irma.core.constants import THZ_TO_EV
-            # SEC-1: this path comes from a file picker, so the file is
-            # untrusted by construction; scan it BEFORE phonopy's unsafe
-            # YAML loader can execute a !!python/ tag. The except-handler
-            # below marshals the rejection into a clean error dialog.
-            reject_unsafe_phonopy_yaml(fc_path)
-            fc_kwargs = resolve_force_constants_source(fc_path)
-            with isolated_phonopy_cwd():
-                ph = phonopy.load(
-                    phonopy_yaml=fc_path,
-                    **pinned_primitive_matrix_kwargs(fc_path),
-                    **fc_kwargs,
-                )
+            # The except-handler below turns an unsafe or unreadable yaml
+            # into an error dialog.
+            ph = load_phonopy(fc_path)
             ph.run_mesh([8, 8, 8], with_eigenvectors=False)
             freqs_ev = ph.mesh.frequencies * THZ_TO_EV
             positive = freqs_ev[freqs_ev > 1e-4 * THZ_TO_EV]
