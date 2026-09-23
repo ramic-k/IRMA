@@ -1,23 +1,9 @@
 """Fast CI coverage for the lat=0 noncubic engine path (modes 1/2).
 
-Every other mode-1/2 engine test runs a lat=1 deck, so the lat=0 branch —
-the 'physical-qe' grid_key in run_noncubic_standalone_sab and the sc=1 path
-of _irma_grid_to_physical_qe (irma/core/standalone_sab.py), where the deck
-alpha/beta are already in kT(T) units — never executed. lat=0 is a fully
-supported Card 7 input (driver.py accepts lat in (0, 1)).
-
-This reuses the fast-CI graphite deck (mesh 4^3, ndir=40, mpdir=20) with
-lat=0 and the alpha/beta grids pre-multiplied by sc = THERM/kT(296) using
-the engine's own constants. Because Python float repr round-trips exactly,
-the engine then sees BIT-IDENTICAL physical Q/E grids in both conventions,
-so lat=0 must reproduce the lat=1 law values exactly — the only legitimate
-tape differences are the LAT flag and the stored (deck-unit) grids. That
-turns the lat=1 pins into the lat=0 pins and directly guards the contract
-that lat changes grid UNITS only, never the physics.
-
-The pins are characterization values (current behavior, frozen from two
-identical runs), not external ground truth; physics-level validation lives
-in the dedicated harnesses.
+The fast-CI graphite deck is run with lat=0 and its alpha/beta grids
+pre-multiplied by sc = THERM/kT(296) with the engine's own constants, so the
+engine sees bit-identical physical Q/E grids in both conventions and lat=0
+must hit the lat=1 _PINS: lat changes grid units only, never the physics.
 """
 import os
 import tempfile
@@ -80,11 +66,8 @@ def lat0_tapes():
 
 @pytest.mark.parametrize("mode", [1, 2])
 def test_lat0_law_matches_lat1_pins_and_is_physical(lat0_tapes, mode):
-    """With bit-identical physical grids the lat=0 law must hit the SAME
-    frozen pins as the lat=1 fast-CI run. Verified by two independent
-    processes, both printing 1: 9.098600568286e-01 / 2: 2.633836729729e+00
-    — exactly _PINS, so the lat=1 pins double as the lat=0 pins and any
-    future re-bless there re-blesses here."""
+    """With bit-identical physical grids the lat=0 law must hit the same
+    pins as the lat=1 run (_PINS from test_noncubic_fast_ci)."""
     s_sum, s_min, teff0 = _mt4_stats(lat0_tapes[mode])
     assert _lat_flag(lat0_tapes[mode]) == 0     # the lat=0 branch wrote it
     assert s_sum == pytest.approx(_PINS[mode], rel=1.0e-6)
