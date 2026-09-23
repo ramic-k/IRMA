@@ -24,24 +24,14 @@ def main(argv: list[str] | None = None) -> int:
 
     from .config import NCrystalExportConfig
     from .build import write_packs
-    from irma.spectra.config import SpectraConfigError
 
-    # PyYAML is an extras dependency (irma[spectra]); on a bare core install
-    # the exporter must still fail with a clean message, not a
-    # ModuleNotFoundError traceback.
+    # PyYAML is an extra (irma[spectra]); a bare install gets a clean message.
     try:
         import yaml
     except ModuleNotFoundError:
         yaml = None
 
-    # Error boundary matching the deck CLI's stream/exit conventions (review
-    # S11): input problems get a clean field-naming message and exit 2, run
-    # failures a one-line message and exit 3 -- never a raw traceback for a
-    # routine mistake like a typo'd path or malformed YAML.
-    if not args.config.exists():
-        print(f"\nNCrystal export config error:\n  config file not found: "
-              f"{args.config}", file=sys.stderr)
-        return 2
+    # Input problems exit 2, run failures exit 3 (the deck CLI's convention).
     if yaml is None:
         print("\nNCrystal export config error:\n  PyYAML is required to read "
               "the export config (install the spectra extras: "
@@ -58,23 +48,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nNCrystal export config error:\n  {args.config} is not valid "
               f"YAML: {exc}", file=sys.stderr)
         return 2
-    except (SpectraConfigError, ValueError, TypeError) as exc:
+    except (ValueError, TypeError) as exc:
         print(f"\nNCrystal export config error:\n  {exc}", file=sys.stderr)
         return 2
     try:
         pack_paths, snippet_path = write_packs(cfg, args.outdir)
     except ImportError as exc:
-        # Missing optional dependency (the exporter needs phonopy for the
-        # mode-1/2 engine): an actionable one-liner, not a traceback
-        # (review NC-4; PyYAML gets the same treatment above).
         print(f"\nIRMA NCrystal export failed: missing optional dependency "
               f"({exc}). The exporter needs phonopy -- install it with "
               f"pip install 'irma[phonopy]'", file=sys.stderr)
         return 3
     except (RuntimeError, OSError, ValueError) as exc:
-        # User-meaningful failures (phonopy model loading, missing/unreadable
-        # files, semantic problems); a traceback stays reserved for genuinely
-        # unexpected errors.
         print(f"\nIRMA NCrystal export failed: {exc}", file=sys.stderr)
         return 3
     print(f"\nExported {len(pack_paths)} NCrystal data file(s) + NCMAT snippet:")

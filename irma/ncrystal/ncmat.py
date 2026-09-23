@@ -43,8 +43,6 @@ def debye_temperature_from_msd(msd_a2: float, mass_amu: float,
     """
     u2 = float(msd_a2) * _ANG2_M2
     m = float(mass_amu) * _AMU_KG
-    if u2 <= 0.0 or m <= 0.0 or temperature_K <= 0.0:
-        return 300.0
     theta = _HBAR_J_S * math.sqrt(3.0 * float(temperature_K) / (m * _KB_J_PER_K * u2))
     return float(min(1.0e5, max(1.0, theta)))
 
@@ -96,7 +94,7 @@ def build_base_ncmat(
     counts = Counter(symbols)
     ntot = len(symbols)
     for sym in dict.fromkeys(symbols):                 # first-appearance order
-        theta = float(debye_temperatures.get(sym, 300.0))
+        theta = float(debye_temperatures[sym])
         lines.append("@DYNINFO")
         lines.append(f"  element {sym}")
         lines.append(f"  fraction {_fmt(counts[sym] / ntot)}")

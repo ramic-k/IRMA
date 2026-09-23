@@ -518,9 +518,9 @@ Three actions sit under the **output dir**:
   file and selects the grid mode the file implies (explicit when it carries
   both `alpha_grid` and `beta_grid`, automatic otherwise), leaving the other
   mode's fields at their defaults. Export settings with no control on this
-  form (`gain_side`, `elastic`, `coherent_partition_mode`, `site_groups`,
-  `lat`) are carried through unchanged rather than reset, and the Log names
-  the ones that were carried.
+  form (`gain_side`, `elastic`, `coherent_partition_mode`, `lat`) are
+  carried through unchanged rather than reset, and the Log names the ones
+  that were carried.
 
 ---
 

@@ -42,7 +42,7 @@ _INELASTIC_BY_INT = {1: "1 (incoherent approx)", 2: "2 (coherent 1ph + multi)"}
 # The export keys this form OWNS: every key ``build_config`` can write, i.e.
 # every one with a control on the panel (the grid form names its own). The
 # remaining NCrystalExportConfig fields -- gain_side, elastic,
-# coherent_partition_mode, site_groups, lat -- have no widget here, so a
+# coherent_partition_mode, lat -- have no widget here, so a
 # loaded config's values for them are carried through untouched rather than
 # silently reset to the dataclass defaults on the next Export. See
 # ``_unrepresented_export``.
@@ -116,8 +116,7 @@ HELP = {
     "temperature": (
         "Sample temperature in Kelvin. ONE config covers ONE temperature and "
         "writes one NCrystal data file (.irmapack) per principal scatterer "
-        "(each distinct element in the material, unless you split sites "
-        "explicitly with site_groups). Re-run at each temperature for a "
+        "(each distinct element in the material). Re-run at each temperature for a "
         "multi-temperature deployment.\n\nDefault 296 K (room temperature)."),
     "scatterers": (
         "One row per DISTINCT element in your phonopy.yaml. Each species in the "
