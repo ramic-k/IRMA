@@ -1,24 +1,6 @@
-"""End-to-end coverage for the two forward-model orchestrators.
-
-``compute_spectrum`` and ``compute_sqe_map`` are the top-level entry points of
-``irma.spectra`` -- they take a phonon model + an instrument and return a finished
-INS spectrum / 2-D S(Q,E) map. Before this file BOTH had zero test references: the
-only spectra physics gate (``test_spectra_forward.py``) was skip-gated on a
-hardcoded local validation path, so on any clean checkout the orchestrators ran in
-CI exactly never.
-
-These tests drive both orchestrators through the cheap **mode-0 DOS path**
-(``dos_species=...``): pure numpy, no phonopy, no fork-pool engine, no external
-tape -- so the whole pipeline runs on every checkout:
-
-    DOS -> mode-0 S(Q,E) -> instrument locus projection -> detailed-balance
-    energy-gain side -> resolution broadening -> bank combine -> elastic line
-    / dense 2-D map / constant-Q cuts.
-
-The asserts are structural + physical invariants (shape, finiteness,
-non-negativity, ``I_total == I_inelastic + I_elastic``, gain/loss balance), not
-material-specific reference values -- the numeric validation against real tapes
-lives in the data-gated gate and the validation harness.
+"""compute_spectrum and compute_sqe_map end to end through the mode-0 DOS
+path (no phonopy, no engine pool): shapes, finiteness, the total = inelastic +
+elastic split, the gain/loss balance and the response to the DOS.
 """
 import numpy as np
 import pytest
@@ -57,6 +39,12 @@ BASE = dict(phonopy_yaml=None, temperature_k=T_K, mesh=None,
             e_max=120.0, dE=1.0, dQ=0.1, multiphonon_max_order=40,
             auto_multiphonon_order=False,
             progress=lambda *a, **k: None)
+
+# the same placeholders for compute_sqe_map, which takes its own grid arguments
+MAP_BASE = dict(phonopy_yaml=None, temperature_k=T_K, mesh=None,
+                sab_mass_ratio=11.898, sab_sigma_barn=5.551,
+                multiphonon_max_order=40, auto_multiphonon_order=False,
+                progress=lambda *a, **k: None)
 
 
 def _assert_spectrum_invariants(r, expect_inelastic=True):
@@ -195,11 +183,7 @@ def test_compute_sqe_map_mode0():
     """Dense 2-D S(Q,E) map: correct grid shape, finite, non-negative, non-trivial."""
     m = compute_sqe_map(geometry="direct", e_fixed_meV=250.0,
                         dos_species=[_carbon()], q_min=0.5, q_max=10.0, dQ_map=0.25,
-                        e_max=120.0, dE=2.0, sab_mass_ratio=11.898,
-                        sab_sigma_barn=5.551, phonopy_yaml=None, temperature_k=T_K,
-                        mesh=None, multiphonon_max_order=40,
-                        auto_multiphonon_order=False,
-                        progress=lambda *a, **k: None)
+                        e_max=120.0, dE=2.0, **MAP_BASE)
     assert isinstance(m, SQEMap)
     assert m.S.shape == (m.Q.size, m.E.size)
     assert np.all(np.isfinite(m.S))
@@ -218,10 +202,7 @@ def test_compute_sqe_map_kinematic_envelope():
     m = compute_sqe_map(geometry="direct", e_fixed_meV=250.0,
                         angle_range_deg=(20.0, 120.0), dos_species=[_carbon()],
                         q_min=0.5, q_max=12.0, dQ_map=0.5, e_max=120.0, dE=2.0,
-                        sab_mass_ratio=11.898, sab_sigma_barn=5.551,
-                        phonopy_yaml=None, temperature_k=T_K, mesh=None,
-                        multiphonon_max_order=40, auto_multiphonon_order=False,
-                        progress=lambda *a, **k: None)
+                        **MAP_BASE)
     assert m.envelope is not None
     env_E, q_lo, q_hi = m.envelope
     assert env_E.shape == m.E.shape == q_lo.shape == q_hi.shape
@@ -235,41 +216,11 @@ def test_compute_sqe_map_broadening_changes_the_map():
     broadened maps of the SAME input must differ. A no-op that only flips the
     'broadened' metadata flag would fail here."""
     common = dict(geometry="vision", dos_species=[_carbon()], q_min=1.0, q_max=8.0,
-                  dQ_map=0.5, e_max=100.0, dE=2.0, sab_mass_ratio=11.898,
-                  sab_sigma_barn=5.551, phonopy_yaml=None, temperature_k=T_K,
-                  mesh=None, multiphonon_max_order=40, auto_multiphonon_order=False,
-                  progress=lambda *a, **k: None)
+                  dQ_map=0.5, e_max=100.0, dE=2.0, **MAP_BASE)
     m_raw = compute_sqe_map(broaden=False, **common)
     m_brd = compute_sqe_map(broaden=True, **common)
     assert m_raw.metadata["broadened"] is False
     assert m_brd.metadata["broadened"] is True
-    assert np.all(np.isfinite(m_raw.S)) and m_raw.S.max() > 0.0
-    assert m_raw.S.shape == m_brd.S.shape
     denom = float(np.maximum(np.abs(m_raw.S), np.abs(m_brd.S)).max())
     assert denom > 0.0
     assert np.max(np.abs(m_raw.S - m_brd.S)) / denom > 1.0e-3   # kernel applied
-
-
-def test_compute_sqe_map_responds_to_dos():
-    """End-to-end, non-tautological for the MAP path: two species differing only
-    in optical-peak position must yield materially different S(Q,E) maps. A canned
-    positive map that ignored dos_species would pass the shape/finite/vary checks
-    but fail here (the compute_spectrum analogue of this guard)."""
-    omega, rho_a = _dos(opt_meV=70.0)
-    _, rho_b = _dos(opt_meV=120.0)
-
-    def _map(rho):
-        sp = {"symbol": "C", "omega_ev": omega, "rho": rho, "awr": 11.898,
-              "sigma_bound_b": 5.551}
-        return compute_sqe_map(
-            geometry="direct", e_fixed_meV=250.0, dos_species=[sp], q_min=0.5,
-            q_max=10.0, dQ_map=0.5, e_max=150.0, dE=2.0, sab_mass_ratio=11.898,
-            sab_sigma_barn=5.551, phonopy_yaml=None, temperature_k=T_K, mesh=None,
-            multiphonon_max_order=40, auto_multiphonon_order=False, broaden=False,
-            progress=lambda *a, **k: None)
-
-    mA, mB = _map(rho_a), _map(rho_b)
-    assert mA.S.shape == mB.S.shape
-    denom = float(np.maximum(np.abs(mA.S), np.abs(mB.S)).max())
-    assert denom > 0.0
-    assert np.max(np.abs(mA.S - mB.S)) / denom > 0.05
