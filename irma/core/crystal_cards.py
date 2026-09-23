@@ -524,6 +524,16 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to load phonopy mesh for non-cubic inelastic: {exc}") from exc
+        if min_phonon_energy_mev > 0.0:
+            from irma.core.phonopy_io import mode_floor_mask
+            freq = np.asarray(nc_mesh_data.frequencies_ev, dtype=float)
+            kept = mode_floor_mask(freq.reshape(-1) * 1.0e3, nc_mesh_data.qpoints,
+                                   freq.shape[1], min_phonon_energy_mev)
+            reader.require(
+                np.any(kept),
+                f"the minimum phonon energy {min_phonon_energy_mev:g} meV "
+                f"removes every phonon mode; if this one-value card is a "
+                f"Card 6g missing its mpdir field, write 'ndir mpdir'")
 
         # Deck-vs-phonopy-model consistency: mismatches here are CARD 6d
         # problems (wrong positions, wrong species, wrong principal ZA),
