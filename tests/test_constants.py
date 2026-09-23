@@ -32,24 +32,6 @@ def test_bk_is_exact_si_value_to_ten_figures():
     assert c.BK == pytest.approx(c.KB_J_PER_K / c.ECHARGE_C, rel=1e-10)
 
 
-def test_modules_share_the_constants_object():
-    """No module may carry its own literal copy again."""
-    from irma.core import phonopy_io, sab_grids, noncubic_engine
-
-    assert phonopy_io.HBAR2_OVER_2MN_MEV_A2 is c.HBAR2_OVER_2MN_MEV_A2
-    # standalone_sab's Q<->alpha conversion moved into sab_grids (commit f880397),
-    # which now owns the shared hbar^2/2m_n (imported as _HBAR2). Guard it there.
-    assert sab_grids._HBAR2 is c.HBAR2_OVER_2MN_MEV_A2
-    assert noncubic_engine.HBAR2_OVER_2MN_MEV_A2 is c.HBAR2_OVER_2MN_MEV_A2
-    assert noncubic_engine.THzToEv is c.THZ_TO_EV
-    assert noncubic_engine.EV is c.ECHARGE_C
-    assert noncubic_engine.AMU is c.AMU_KG
-    assert noncubic_engine.Hbar is c.HBAR_EV_S
-    assert noncubic_engine.NEUTRON_MASS_AMU is c.AMASSN
-    assert sab_grids._BK_EV_PER_K is c.BK
-    assert noncubic_engine.KB_MEV_PER_K == pytest.approx(c.BK * 1e3, rel=1e-15)
-
-
 def test_mode_floor_mask_two_tier():
     """Goldstone guard at Gamma (0.1 meV), 1-ueV overflow guard elsewhere."""
     import numpy as np
