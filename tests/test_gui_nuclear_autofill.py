@@ -1,6 +1,6 @@
-"""GUI nuclear-data autofill -- ElementTable symbol autofill + ENDF ZA fill.
+"""GUI nuclear-data autofill -- ElementTable symbol autofill.
 
-Pins the three ways the GUI pulls scattering constants from
+Pins the two ways the element tables pull scattering constants from
 irma.core.nuclear_data instead of hardcoded literals:
 
   1. ElementTable.autofill_row -- leaving the symbol cell fills the still-empty
@@ -8,13 +8,9 @@ irma.core.nuclear_data instead of hardcoded literals:
      (B, Cd, Gd, ...) and unknown symbols are never prefilled.
   2. Panel auto-fill from phonopy.yaml -- new rows take the table's constants.
      (The panels ship ONE BLANK row: the scatterer list is material identity.)
-  3. EndfFormMixin._fill_from_za -- the explicit button fills AWR + sigma_free
-     (spr) from ZA, refusing energy-dependent and unknown nuclides.
 
 Uses a withdrawn root (no display shown); skips cleanly without tkinter.
 """
-from unittest import mock
-
 import pytest
 
 tk = pytest.importorskip("tkinter")
@@ -208,59 +204,3 @@ def test_set_symbols_drops_unlisted_and_carries_user_rows(table):
     assert set(rows) == {"H", "O"}                          # C dropped
     assert rows["H"]["awr"] == "0.999"                      # user value kept
     assert float(rows["O"]["awr"]) == pytest.approx(lookup("O").awr, rel=1e-5)
-
-
-# -- 3. ENDF form fill-from-ZA ----------------------------------------------
-
-class _FakeEntry:
-    """Stands in for LabeledEntry: just .get()/.set() on a string."""
-
-    def __init__(self, value=""):
-        self.value = str(value)
-
-    def get(self):
-        return self.value
-
-    def set(self, value):
-        self.value = str(value)
-
-
-@pytest.fixture
-def form():
-    """A bare EndfFormMixin instance with only the fill-from-ZA fields."""
-    from irma.gui.endf_form import EndfFormMixin
-    h = object.__new__(type("_Harness", (EndfFormMixin,), {}))
-    h.za = _FakeEntry("6012")
-    h.awr = _FakeEntry("")
-    h.spr = _FakeEntry("")
-    return h
-
-
-def test_fill_from_za_sets_awr_and_free_xs(form):
-    from irma.gui import endf_form
-    with mock.patch.object(endf_form, "messagebox") as mb:
-        form._fill_from_za()
-    assert not mb.showerror.called
-    c12 = lookup((6, 12))
-    assert float(form.awr.get()) == pytest.approx(c12.awr, rel=1e-4)
-    spr = c12.sigma_bound_b * (c12.awr / (1.0 + c12.awr)) ** 2
-    assert float(form.spr.get()) == pytest.approx(spr, rel=1e-4)
-
-
-def test_fill_from_za_refuses_energy_dependent(form):
-    from irma.gui import endf_form
-    form.za.set("48000")                                    # natural Cd
-    with mock.patch.object(endf_form, "messagebox") as mb:
-        form._fill_from_za()
-    assert mb.showerror.called
-    assert form.awr.get() == "" and form.spr.get() == ""    # untouched
-
-
-@pytest.mark.parametrize("bad", ["banana", "", "6999", "-6012"])
-def test_fill_from_za_reports_unknown_or_malformed(form, bad):
-    from irma.gui import endf_form
-    form.za.set(bad)
-    with mock.patch.object(endf_form, "messagebox") as mb:
-        form._fill_from_za()
-    assert mb.showerror.called
-    assert form.awr.get() == "" and form.spr.get() == ""

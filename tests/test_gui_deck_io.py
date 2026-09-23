@@ -552,6 +552,8 @@ def test_reset_defaults_match_production_recommendation(app):
     assert app.nc_multiphonon_num_directions.get() == "1000"
     assert int(app.nc_auto_order_var.get()) == 1
     assert app.lat.get().startswith("1 —")
+    assert app.coh_edge_group_enable_var.get() is True     # grouping on
+    assert app.coh_edge_group_bpd.get() == "50"
     # Methodology stays; material IDENTITY clears to blank, exactly as a
     # freshly built form ships it (compared field by field in
     # test_gui_widgets.test_reset_lands_in_the_same_blank_state_as_a_fresh_form).
@@ -730,12 +732,6 @@ def test_extinction_dist_dropdown_restricted_to_model_family(app):
 
 
 # ---------- Bragg-edge grouping default-on toggle ----------
-
-def test_grouping_default_on_after_reset(app):
-    app._reset_form_to_defaults()          # the app's real "New deck" reset
-    assert app.coh_edge_group_enable_var.get() is True
-    assert app.coh_edge_group_bpd.get() == "50"
-
 
 def test_grouping_off_deck_unchecks_and_emits_four_field(app):
     # a deck without grouping -> checkbox off on import, 4-field Card 6b on export

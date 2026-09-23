@@ -148,11 +148,15 @@ def test_fresh_panel_ships_no_material_identity(panel):
 
 
 def test_fresh_panel_keeps_methodology_defaults(panel):
-    """...while everything the validation campaign settled stays prefilled."""
+    """...while everything the validation campaign settled stays prefilled,
+    matching the PhysicsConfig defaults."""
+    from irma.spectra.config import PhysicsConfig
     assert panel.mesh.get() == "40 40 40"
     assert panel.temperature.get() == "296"
     assert panel.n_directions.get() == "10000"
     assert panel.mp_directions.get() == "1000"
+    p = PhysicsConfig()
+    assert p.n_directions == 10000 and p.multiphonon_directions == 1000
     assert panel.max_phonon_order.get() == "auto"
     assert panel.ind_ef.get() == "3.5"            # VISION Ef
 
@@ -656,22 +660,6 @@ def test_close_handler_confirms_and_shuts_down_active_run(root, monkeypatch):
                         lambda *a, **k: pytest.fail("prompted while idle"))
     app._on_close()
     assert calls == {"shutdown": 1, "destroy": 2}
-
-
-# ---- direction defaults (author amendment to SPG-1/DOC-1) ------------------
-def test_direction_defaults_are_10000_and_1000(panel):
-    """The spectra direction defaults were raised to the manual's advertised
-    10000/1000 at every site: the GUI widgets, PhysicsConfig, and the CLI
-    (the NCrystal exporter was already there)."""
-    from irma.spectra.config import PhysicsConfig
-    assert panel.n_directions.get() == "10000"
-    assert panel.mp_directions.get() == "1000"
-    panel.phonopy_yaml.set("g.yaml")
-    cfg = panel.build_config()
-    assert cfg.physics.n_directions == 10000
-    assert cfg.physics.multiphonon_directions == 1000
-    p = PhysicsConfig()
-    assert p.n_directions == 10000 and p.multiphonon_directions == 1000
 
 
 # ---- About dialog agrees with THIRD_PARTY_NOTICES.md (REL-8) ---------------

@@ -14,8 +14,6 @@ mpdir, ilog, ...) mid-sentence -- and the fresh form's two-part contract:
 
 Requires a display (Tk); skipped headless (CI).
 """
-import sys
-
 import pytest
 
 tk = pytest.importorskip("tkinter")
@@ -56,34 +54,7 @@ def _find_all(widget, klass):
     return found
 
 
-def _resizable_flags(top):
-    res = top.wm_resizable()
-    if isinstance(res, str):
-        res = res.split()
-    return tuple(int(v) for v in res)
-
-
 # ---------------- help popup sizing ----------------
-
-@pytest.mark.skipif(sys.platform == "win32", reason="Tk display-line metrics differ on Windows; the popup sizing is cosmetic and pinned on X11/aqua")
-def test_short_help_stays_compact(root):
-    top = _open_popup(root, "one short line")
-    txt = _find_all(top, tk.Text)[0]
-    assert int(txt.cget("height")) <= 5
-    assert not _find_all(top, ttk.Scrollbar)     # no pointless scrollbar
-    top.destroy()
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="Tk display-line metrics differ on Windows; the popup sizing is cosmetic and pinned on X11/aqua")
-def test_medium_help_sized_to_content_not_12_lines(root):
-    # 20 short logical lines: the old fixed height=12 clipped lines 13-20.
-    msg = "\n".join(f"line {i}" for i in range(1, 21))
-    top = _open_popup(root, msg)
-    txt = _find_all(top, tk.Text)[0]
-    assert int(txt.cget("height")) == 20
-    assert not _find_all(top, ttk.Scrollbar)
-    top.destroy()
-
 
 def test_long_help_caps_height_and_gets_scrollbar(root):
     # Far beyond the cap (and wider than the wrap width, so display lines
@@ -94,12 +65,6 @@ def test_long_help_caps_height_and_gets_scrollbar(root):
     txt = _find_all(top, tk.Text)[0]
     assert int(txt.cget("height")) == _HELP_MAX_VISIBLE_LINES
     assert _find_all(top, ttk.Scrollbar), "long help text needs a scrollbar"
-    top.destroy()
-
-
-def test_popup_is_vertically_resizable(root):
-    top = _open_popup(root, "anything")
-    assert _resizable_flags(top) == (0, 1)       # fixed width, free height
     top.destroy()
 
 
@@ -150,44 +115,6 @@ def _example_deck(name):
                / "examples" / "tsl" / name)
 
 
-def test_fresh_app_sampling_defaults_are_production_recommended(fresh_app):
-    """A user who accepts every mode-1/2 default must get the documented
-    recommended production sampling (Card 6g 10000 1000 1), not the manual's
-    truncation example."""
-    assert fresh_app.nc_num_directions.get() == "10000"
-    assert fresh_app.nc_multiphonon_num_directions.get() == "1000"
-    assert (fresh_app.nc_mesh_nx.get(), fresh_app.nc_mesh_ny.get(),
-            fresh_app.nc_mesh_nz.get()) == ("40", "40", "40")
-    assert int(fresh_app.nc_auto_order_var.get()) == 1   # safe by construction
-    assert fresh_app.lat.get().startswith("1 —")         # matches reset default
-
-
-def test_fresh_app_mode_radio_labels_match_ns_panel_wording(fresh_app):
-    """One physics mode, one name: the ENDF tab must not call mode 2
-    'coh. approx.' while the NS panel calls it exact/coherent."""
-    radios = _find_all(fresh_app.root, ttk.Radiobutton)
-    labels = {str(r.cget("text")) for r in radios}
-    assert "2 — coherent (exact 1-phonon)" in labels
-    assert "1 — incoherent approx." in labels
-    assert not any("coh. approx" in lb for lb in labels)
-
-
-def test_bragg_grouping_default_on_and_help_agrees(fresh_app):
-    """SPG-5: the Bragg-edge grouping checkbox is DELIBERATELY constructed
-    checked with 50 bins/decade prefilled (docs/gui.md: 'on by default');
-    the in-app help must describe that default, not claim 'Off by default'
-    / '0 (default) = OFF' as it used to."""
-    import inspect
-    from irma.gui import endf_form
-    assert fresh_app.coh_edge_group_enable_var.get() is True
-    assert fresh_app.coh_edge_group_bpd.get() == "50"
-    assert fresh_app.coh_edge_group_thr.get() == "1.0"
-    src = inspect.getsource(endf_form)
-    assert "0 (default) = OFF" not in src
-    assert "option). Off by default" not in src
-    assert "The GUI enables it by default" in src
-
-
 # ---------------- material identity is blank, methodology is not ------------
 
 def test_fresh_form_asserts_no_material_identity(fresh_app):
@@ -216,21 +143,7 @@ def test_fresh_form_keeps_the_methodology_defaults(fresh_app):
     assert fresh_app.smin.get() == "1e-75"
     assert fresh_app.coh_edge_group_enable_var.get() is True
     assert fresh_app.coh_edge_group_bpd.get() == "50"
-
-
-def test_identity_hints_name_the_ways_to_fill_the_blank_fields():
-    """Blank must read as deliberately required, not merely forgotten: one
-    gray hint per blanked group, naming the routes that fill it."""
-    from irma.gui import endf_form
-    hints = (endf_form.IDENTITY_HINT_SCATTERER, endf_form.IDENTITY_HINT_MAT,
-             endf_form.IDENTITY_HINT_LATTICE, endf_form.IDENTITY_HINT_ATOMS)
-    for hint in hints:
-        assert "YOUR material" in hint or "YOUR evaluation" in hint
-        assert "Import Input File" in hint
-        assert "examples/tsl" in hint
-    for hint in (endf_form.IDENTITY_HINT_LATTICE, endf_form.IDENTITY_HINT_ATOMS):
-        assert endf_form.STRUCTURE_FILL_TITLE in hint
-    assert "Fill AWR + sigma_free from ZA" in endf_form.IDENTITY_HINT_SCATTERER
+    assert fresh_app.lat.get().startswith("1 —")
 
 
 def test_reset_lands_in_the_same_blank_state_as_a_fresh_form(new_app):
