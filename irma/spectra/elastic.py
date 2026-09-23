@@ -428,20 +428,10 @@ def instrument_reach_emax_eV(*, q_max_invA, e_fixed_meV=None, q_cuts=None,
 # -----------------------------------------------------------------------------
 # Tape-free elastic: build the SAME ElasticModel from the engine's elastic_state
 # -----------------------------------------------------------------------------
-# The in-process noncubic engine surfaces the anisotropic Debye-Waller
-# matrices U_ij (Ang^2) it already computes for the inelastic kernel, plus the
-# primitive geometry. Combined with the caller's coherent scattering lengths /
-# incoherent cross sections / mass ratios this lets the forward model build the
-# elastic line WITHOUT a pre-generated ENDF tape, sharing the DW state with the
-# inelastic kernel by construction. The coherent Bragg peaks reuse the byte-pinned
-# irma.core.elastic_dw kernels (the same arithmetic the MF7/MT2 writer uses), so
-# they equal from_endf_mf7mt2 applied to an elastic_mode=2 (MEF) tape up to NJOY
-# edge-thinning + 7-sigfig rounding. SEF tapes (elastic_mode=1) are NOT
-# numerically equal: the SEF writer embeds the ENDF fold --
-# (sigma_coh+sigma_inc)/sigma_coh for a single-species coherent material, or
-# 1/f_DC for the polyatomic designated-coherent atom (a factor 2 for BeO) --
-# which this builder deliberately omits: here the incoherent channel is carried
-# explicitly and everything is normalized per atom of the cell.
+# The engine's thermal-displacement matrices U_ij and primitive geometry, with
+# the caller's scattering data, give the elastic line without an ENDF tape and
+# with the same Debye-Waller state as the inelastic kernel. The Bragg peaks use
+# the irma.core.elastic_dw kernels of the MF7/MT2 writer.
 def _group_atoms_by_symbol(symbols):
     """First-appearance-ordered species grouping -> (species_symbols, groups)."""
     order, groups = [], {}
@@ -593,11 +583,6 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     bcoh_species = np.array([b_coh_fm[g[0]] for g in groups], float)
     sinc_species = np.array([sigma_inc_b[g[0]] for g in groups], float)
 
-    # Channels. 'both' (default) is the physical mixed elastic: the PURE
-    # coherent Bragg peaks (scale=1.0 -- no ENDF-SEF sigma_inc fold) PLUS a
-    # separate incoherent Debye-Waller line. The single-channel modes isolate
-    # one. Both add without double-counting because the incoherent piece is
-    # explicit rather than folded into the peaks.
     want_coh = elastic_kind in ("both", "coherent")
     want_inc = elastic_kind in ("both", "incoherent")
 
@@ -632,11 +617,8 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     has_inc = bool(channels)
     SB, Wp = _incoherent_summary(channels)
 
-    # Directional incoherent channels: one per atom (1/N weight, exact for
-    # symmetry-equivalent sites since f depends on U only through its
-    # eigenvalues), evaluated by the ElasticModel incoherent methods via
-    # irma.core.incoherent_dw. The isotropic channels above stay populated
-    # for the SB/W' display fields.
+    # Directional incoherent channels: one per atom with weight 1/N. The
+    # isotropic channels above stay populated for the SB/W' display fields.
     channels_dir = ()
     if incoherent_elastic_mode == "directional" and has_inc:
         from irma.core.incoherent_dw import u_eigenvalues
@@ -655,19 +637,10 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
 # -----------------------------------------------------------------------------
 # Tape-free elastic for the DOS-based path (mode 0): isotropic DW from contin
 # -----------------------------------------------------------------------------
-# The DOS path has no phonopy eigenvectors, so the Debye-Waller is ISOTROPIC: a
-# single scalar lambda_s per species (the LEAPR continuous-spectrum coefficient
-# ``f0`` returned by ``kernels.contin``). That f0 is exactly the quantity
-# ``from_engine_elastic_state`` derives anisotropically as ``trace(F_s)/3`` -- in
-# both the elastic DW exponent is ``2W = alpha * lambda_s`` with
-# ``alpha = C_E Q^2/(awr kT)``. This builder therefore reuses the SAME
-# byte-pinned per-species isotropic edge kernels (irma.core.elastic_dw), just
-# omitting the directional F-matrices; for an isotropic crystal the peaks match
-# from_endf_mf7mt2 on an elastic_mode=2 (MEF) tape up to NJOY edge-thinning
-# (SEF tapes embed structure-factor folds this per-atom builder does not
-# apply). The user supplies the crystal structure (lattice + per-species
-# coherent scattering length + fractional sites) -- the spectra analogue
-# of the ENDF iel=10 coherent-elastic option.
+# Without eigenvectors the Debye-Waller is isotropic: one lambda_s per species
+# (the ``kernels.contin`` f0), the quantity from_engine_elastic_state derives as
+# trace(F_s)/3; in both, 2W = alpha * lambda_s with alpha = C_E Q^2/(awr kT).
+# The user supplies the crystal structure for the Bragg peaks.
 def from_dos_elastic(crystal, *, awr, sigma_inc_b, f0_lambda, multiplicity, T_K,
                      elastic_kind="both", emax_eV=5.0, label=None):
     """Build an :class:`ElasticModel` from per-species isotropic Debye-Waller

@@ -425,45 +425,27 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
                      incoherent_elastic_mode="isotropic",
                      include_gain=True, gain_side="direct",
                      kinematic_factor=False, q_pad=0.5, progress=print):
-    """Compute a fresh-from-phonons forward INS spectrum for one instrument.
+    """Forward INS spectrum for one instrument, computed from phonons.
 
-    Reuses the IRMA noncubic SAB engine (``run_noncubic_sab_inprocess``) on the
-    instrument-locus grid; reads the physical ``sqe_*`` map directly; projects
-    via ``instruments.simulate``. By default the engine also emits the
-    energy-gain side directly (``gain_side="direct"``, all modes); see the
-    "Energy-gain side" paragraph below.
-
-    ``inelastic_mode`` defaults to 2 (exact coherent one-phonon), the same
-    default :class:`~irma.spectra.config.PhysicsConfig`, the ``irma spectra``
-    CLI, the GUI and :func:`compute_sqe_map` carry -- a Python caller and a
-    CLI user running the same calculation must get the same physics.
-
-    Mode 0 (DOS-based): pass ``dos_species`` (a list of per-species dicts as
-    accepted by :func:`irma.spectra.dos_mode0.compute_mode0_sqe`) to build
-    ``S(Q,E)`` from phonon DOS by the incoherent-approximation phonon expansion
-    -- no ``phonopy_yaml``/``mesh``/engine. The instrument projection, resolution,
-    cuts and 2-D map are identical downstream. For the mode-0 elastic line set
-    ``elastic=True`` and pass ``dos_crystal=(a,b,c,alpha,beta,gamma)`` plus each
-    species' ``b_coh_fm`` + ``positions`` (fractional sites) on its
-    ``dos_species`` entry: the coherent Bragg peaks + incoherent DW line are built
-    from the DOS-derived isotropic Debye-Waller f0 (the spectra analogue of the
-    ENDF iel=10 coherent-elastic option). An explicit ``elastic_model`` still
-    overrides.
+    S(Q,E) is computed on the instrument-locus grid -- by the noncubic engine
+    (``run_noncubic_sab_inprocess``) for modes 1/2, or for mode 0 from
+    ``dos_species`` (per-species dicts as accepted by
+    :func:`irma.spectra.dos_mode0.compute_mode0_sqe`) -- and projected with
+    ``instruments.simulate``. ``inelastic_mode`` defaults to 2, as in the
+    config, the CLI, the GUI and :func:`compute_sqe_map`.
 
     Elastic line: pass an explicit ``elastic_model`` (e.g. from an ENDF tape),
-    OR set ``elastic=True`` to build it tape-free from the engine's surfaced
-    ``elastic_state`` -- ``elastic_scatterers`` then maps each primitive
-    symbol to ``{b_coh_fm, sigma_inc_b, awr}`` and ``elastic_kind`` selects
-    ``"both"`` (default: coherent Bragg peaks + incoherent DW line), or one of
-    ``"coherent"`` / ``"incoherent"`` to isolate a channel. The line shares the
-    Debye-Waller state with
-    the inelastic kernel by construction (same phonon calculation).
+    or set ``elastic=True`` to build it tape-free. Modes 1/2 use the engine's
+    ``elastic_state``, with ``elastic_scatterers`` mapping each primitive
+    symbol to ``{b_coh_fm, sigma_inc_b, awr}``. Mode 0 uses the DOS-derived
+    Debye-Waller f0; the Bragg peaks need ``dos_crystal=(a,b,c,alpha,beta,gamma)``
+    plus each species' ``b_coh_fm`` and fractional ``positions``.
+    ``elastic_kind`` is ``"both"`` (default), ``"coherent"`` or ``"incoherent"``.
 
     Energy-gain side: ``gain_side="direct"`` (default) computes E<0 with
-    explicit Bose occupation factors, no detailed-balance mirror; mode 0
-    evaluates the gain ladder itself, modes 1/2 read the engine's gain arrays.
-    ``"detailed_balance"`` selects the mirror. The two agree to round-off for
-    the harmonic model.
+    explicit Bose factors (mode 0 evaluates its own gain ladder, modes 1/2 read
+    the engine's gain arrays); ``"detailed_balance"`` mirrors the loss side.
+    The two agree to round-off for the harmonic model.
     """
     from irma.spectra import instruments as _ins
 
@@ -488,13 +470,7 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
         hi = max(Q_support.max(), max(qc) + pad)
         Q_support = np.arange(lo, hi + dQ, dQ)
 
-    # Reach-aware Bragg-enumeration cutoff for the tape-free elastic line: the
-    # elastic line is only ever evaluated at the banks' elastic-Q windows
-    # (<= 2 k_el), on the simulated Q-support and at the requested constant-Q
-    # cut bands (q_res-broadened; q_res=dQ in the simulate_q_cuts call below);
-    # edges beyond that reach contribute exactly zero, so the builders stop
-    # enumerating there instead of at the ENDF tape writer's 5 eV default (the
-    # MF7/MT2 path in the core driver keeps its own full-range call).
+    # Bragg edges for the tape-free elastic line stop at the instrument reach.
     from irma.spectra.elastic import instrument_reach_emax_eV
     elastic_emax_eV = instrument_reach_emax_eV(
         q_max_invA=float(Q_support.max()), e_fixed_meV=e_fixed,
@@ -688,31 +664,21 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
                     scattering_lengths_json=None, incoherent_cross_sections_json=None,
                     site_scattering_lengths_angstrom=None,
                     site_incoherent_cross_sections_barn=None, progress=print):
-    """Compute a dense 2-D S(Q,E) powder map over a uniform Q x E grid.
+    """Dense 2-D powder S(Q,E) map over a uniform Q x E grid.
 
-    Unlike ``compute_spectrum`` (which samples S(Q,E) along instrument loci on
-    the cheap locus grid), this runs the engine on a DENSE uniform Q grid so the
-    whole S(Q,E) surface can be shown as a heatmap -- more cost, the dense grid
-    P2 avoids. When the axis extends below 0 (``e_min < 0``) the energy-gain
-    side is computed directly by default (``gain_side="direct"``);
-    ``"detailed_balance"`` selects the mirror. The
-    columns are optionally resolution-broadened, and the instrument kinematic
-    envelope is returned when an ``angle_range_deg=(2th_min, 2th_max)`` +
-    ``e_fixed_meV`` are given (for the Euphonic-style direct-geometry overlay).
+    Unlike ``compute_spectrum``, which samples S(Q,E) along the instrument
+    loci, the engine runs on a dense uniform Q grid so the whole surface can
+    be shown as a heatmap. The gain side and the elastic options are those of
+    ``compute_spectrum``. The columns are optionally resolution-broadened, and
+    the kinematic envelope is returned when ``angle_range_deg=(2th_min,
+    2th_max)`` and ``e_fixed_meV`` are given.
 
-    Elastic line: same options as ``compute_spectrum`` -- an explicit
-    ``elastic_model`` (e.g. from an ENDF tape), or ``elastic=True`` to build it
-    tape-free (engine ``elastic_state`` + ``elastic_scatterers`` for modes 1/2;
-    the DOS-derived f0 + optional ``dos_crystal`` for mode 0). The per-Q elastic
-    area ``elastic_dsigma_dOmega(Q, q_res=dQ_map)`` [barn/sr] is deposited as an
-    E=0 line on the map's energy axis (split across the two bins bracketing 0 so
-    its energy integral is exact) BEFORE the resolution pass, so ``broaden=True``
-    gives the line the instrument's sigma(E=0) width like every other feature.
-    When E=0 is an ENDPOINT of the axis (e.g. the default ``e_min=0``) only the
-    on-axis half of the line is representable -- the map then carries half the
-    elastic area (with a NOTE); extend the axis past 0 for the full line. The
+    The per-Q elastic area ``elastic_dsigma_dOmega(Q, q_res=dQ_map)``
+    [barn/sr] is deposited as an E=0 line, split across the two bins
+    bracketing 0, before the resolution pass. When E=0 is an endpoint of the
+    axis (the default ``e_min=0``) the map carries half the elastic line. The
     metadata reports ``elastic`` (a model was active) and ``elastic_deposited``
-    (the line actually landed on this energy axis).
+    (the line landed on this energy axis).
     """
     from irma.spectra import sqe as _sqe
 
@@ -773,12 +739,9 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
     S_map = interp(np.column_stack([QQ.ravel(), EE.ravel()])).reshape(QQ.shape)
     elastic_deposited = False
     if elastic_model is not None:
-        # Deposit the elastic line BEFORE the resolution pass so sigma(E=0)
-        # shapes it like every other feature (broaden=False keeps the spike).
-        # The per-Q area [barn/sr] is split across the two E bins bracketing 0
-        # in linear proportion -- uniform grids like arange(-100, 290, 1.5)
-        # have no exact-zero bin -- which keeps the energy integral exactly
-        # area(Q) and the line centroid at E=0.
+        # Split the per-Q area [barn/sr] linearly across the two bins
+        # bracketing E=0 (a uniform grid need not contain 0): the energy
+        # integral stays area(Q) and the centroid stays at E=0.
         if E_out[0] <= 0.0 <= E_out[-1]:
             area = elastic_model.elastic_dsigma_dOmega(Q_grid, q_res=dQ_map)
             j = min(max(int(np.searchsorted(E_out, 0.0, side="right")) - 1, 0),
@@ -788,19 +751,9 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
             S_map[:, j + 1] += area * w_hi / dE
             elastic_deposited = True
             if E_out[0] == 0.0 or E_out[-1] == 0.0:
-                # The line CENTER sits on the axis edge: once broadened, only the
-                # on-axis half of the line is representable, so the map's elastic
-                # area is ~half of what the 1-D spectrum reports (the 1-D path
-                # renormalizes its truncated half-line back to the full area).
-                # This is a deliberate convention, NOT silent corruption -- to
-                # make the map and 1-D/cut elastic areas agree, give the axis room
-                # on both sides of 0 (e_min<0) so the full line is resolved.
-                progress("NOTE: E=0 is an endpoint of the energy axis -- after "
-                         "broadening the map carries only the on-axis half of the "
-                         "elastic line, so its area is ~half the 1-D/cut value "
-                         "(which renormalizes the truncated half-line to full "
-                         "area). Set e_min<0 for the map and 1-D elastic areas to "
-                         "agree.")
+                # The 1-D path renormalizes its half line to the full area.
+                progress("NOTE: E=0 is an axis endpoint; the map carries half "
+                         "the elastic line (set e_min<0 for the full line).")
         else:
             progress(f"NOTE: E=0 is outside the requested energy axis "
                      f"[{E_out[0]:g}, {E_out[-1]:g}] meV; the elastic line "
