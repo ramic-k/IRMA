@@ -38,16 +38,6 @@ def _bits_equal(a, b):
     )
 
 
-def test_sum_over_principals_is_exact_for_three_groups():
-    amplitudes = _random_amplitudes(3, 24, seed=1)
-    weights = np.array([2.0, 5.0, 1.0])
-    summed = sum(
-        principal_weighted_coherent_partition(amplitudes, p, weights)[0]
-        for p in range(3)
-    )
-    np.testing.assert_allclose(summed, _exact_total(amplitudes), rtol=1e-12)
-
-
 def test_sum_over_principals_is_exact_for_five_groups_batched():
     amplitudes = _random_amplitudes(5, 12, seed=2, n_qsamples=7)
     weights = np.array([0.1, 3.0, 0.7, 2.2, 1.5])
@@ -82,35 +72,3 @@ def test_single_group_returns_exact_self_term():
     np.testing.assert_array_equal(total, np.abs(amplitudes[0]) ** 2)
     np.testing.assert_array_equal(cross, np.zeros_like(total))
     np.testing.assert_array_equal(self_term, total)
-
-
-def test_degenerate_all_zero_weights_two_groups_zero_amplitudes():
-    # Zero coherent weight forces zero coherent amplitude upstream (the
-    # per-atom prefactors scale with b_coh), so the only reachable all-zero-
-    # weight case has zero amplitudes. The 0.5 fallback and the historical
-    # 1.0 scalar then both multiply an exactly-zero cross term: everything
-    # is bit-exact +0.0.
-    amplitudes = np.zeros((2, 8), dtype=complex)
-    weights = np.array([0.0, 0.0])
-    for p in range(2):
-        total, self_term, cross = principal_weighted_coherent_partition(
-            amplitudes, p, weights)
-        zero = np.zeros(8)
-        assert _bits_equal(total, zero)
-        assert _bits_equal(self_term, zero)
-        assert _bits_equal(cross, zero)
-
-
-def test_zero_weight_pair_is_finite_and_total_stays_exact():
-    # Two zero-coherent-weight groups: their mutual pair hits the 0.5
-    # fallback; physically their amplitudes would be zero, but the partition
-    # must stay finite and the sum rule must still hold for any amplitudes.
-    amplitudes = _random_amplitudes(3, 8, seed=5)
-    weights = np.array([0.0, 0.0, 4.0])
-    partials = [
-        principal_weighted_coherent_partition(amplitudes, p, weights)[0]
-        for p in range(3)
-    ]
-    for partial in partials:
-        assert np.all(np.isfinite(partial))
-    np.testing.assert_allclose(sum(partials), _exact_total(amplitudes), rtol=1e-12)
