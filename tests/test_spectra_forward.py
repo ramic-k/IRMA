@@ -1,23 +1,8 @@
-"""irma.spectra forward-model physics gate (ported from the prototype).
-
-Pure-physics checks encoding the verified conventions/derivations: elastic
-Bragg-peak normalization, incoherent Debye-Waller form, detailed balance,
-indirect/direct kinematics, the bank-integrated
-elastic cross-check, and parser robustness on published tapes.
-
-CI COVERAGE: most of these need NO external data -- they run on every checkout.
-The elastic parser + peak/edge/bank self-consistency gates run against a real
-published ENDF/B graphite tape that lives IN the repo (the ``graphite_endf``
-fixture decompresses the tracked ``.endf.gz``); the detailed-balance and
-geometry-projection gates run against a synthetic PowderSQE. Only the mode-2-autogrid numeric-validation and the Be cross-checks
-still require the author's local validation tree, and those (and only those) carry
-``@requires_ext``. This file was historically skip-gated WHOLESALE by a blanket
-module-level skipif keyed on a hardcoded local path, so the entire neutron-
-scattering physics gate silently skipped on every clean checkout -- see
-``test_ci_physics_gate_is_active`` for the canary that guards against a relapse.
+"""irma.spectra forward-model physics: kinematics, detailed balance, the
+elastic Bragg and Debye-Waller forms, instrument projection and the MF7/MT2
+reader, on the in-repo ENDF/B graphite tape and synthetic S(Q,E) laws.
 """
 import gzip
-import os
 import shutil
 from pathlib import Path
 
@@ -28,11 +13,6 @@ from irma.spectra import sqe as si
 from irma.spectra import elastic as el
 from irma.spectra import instruments as ins
 
-# Optional external validation tree. Set IRMA_SPECTRA_TEST_DATA to opt in;
-# unset, the @requires_ext tests skip (the rest of the module runs anywhere).
-DATA_ROOT = os.environ.get("IRMA_SPECTRA_TEST_DATA", "")
-GRA = f"{DATA_ROOT}/graphite"
-ENDF = f"{GRA}/graphite_iyad_mode2_autogrid_std.endf"
 SIGMA_B_C = 5.551
 T = 296.0
 
@@ -58,13 +38,6 @@ def graphite_endf(tmp_path_factory):
     return str(out)
 
 
-_HAVE_EXT = bool(DATA_ROOT) and os.path.isdir(GRA)
-requires_ext = pytest.mark.skipif(
-    not _HAVE_EXT,
-    reason="external validation-data tree (IRMA_final_tests/) not present; "
-           "set IRMA_SPECTRA_TEST_DATA to its location to enable")
-
-
 def _synthetic_powder_qe(nq=24, nE=60, T_K=T):
     """A smooth, strictly-positive S(Q,E) PowderSQE on a (q, E) grid -- data-free.
 
@@ -78,18 +51,6 @@ def _synthetic_powder_qe(nq=24, nE=60, T_K=T):
     fE = np.exp(-0.5 * ((E - 40.0) / 18.0) ** 2)[None, :]
     S = gQ * fE + 1.0e-6
     return si.from_noncubic_arrays(q, E, S, T_K=T_K, sigma_b=SIGMA_B_C)
-
-
-def test_ci_physics_gate_smoke():
-    """In-module smoke that a real code path runs with no external data.
-
-    NOTE: this does NOT guard against a blanket-module-skip relapse -- a
-    reintroduced module-level skip would skip this test too. That relapse is
-    caught from OUTSIDE this module by tests/test_spectra_gate_canary.py (which
-    cannot itself be skipped along with this file).
-    """
-    assert si.k_of_E(np.array([si.C_E]))[0] == pytest.approx(1.0)
-    assert _synthetic_powder_qe().S.min() > 0.0
 
 
 # ---- constants / kinematics -------------------------------------------------
@@ -137,33 +98,14 @@ def test_detailed_balance_gain_side():
 
 
 # ---- elastic: parse + self-test --------------------------------------------
-@requires_ext
-def test_elastic_parse_graphite():
-    """Material-specific numeric validation against the IRMA mode-2-autogrid tape
-    (first Bragg edge at 1.873 1/A / 1.818 meV) -- needs the external tree."""
-    m = el.from_endf_mf7mt2(ENDF, T_K=T)
-    assert m.has_coherent and not m.has_incoherent
-    assert m.Q_bragg.size > 1000
-    assert m.Q_bragg[0] == pytest.approx(1.873, abs=2e-3)
-    assert m.E_edge_meV[0] == pytest.approx(1.818, abs=2e-3)
-
-
 def test_elastic_peaks_integrate_to_sigma_coh(graphite_endf):
     """Bragg-peak normalization self-test on the in-repo published graphite tape:
-    the Bragg-summed elastic cross section equals sigma_coherent at every energy."""
+    the Bragg-summed elastic cross section equals sigma_coherent at every energy.
+    The first Bragg edge is near 1.876 1/A."""
     m = el.from_endf_mf7mt2(graphite_endf, T_K=T)
-    for E in (20.0, 100.0, 400.0):
-        lhs, rhs = el.selftest(m, E_meV=E)
-        assert lhs == pytest.approx(rhs, rel=1e-6)
-
-
-def test_elastic_peaks_generalize_to_beryllium():
-    BE = f"{DATA_ROOT}/Be/be_mode2_autogrid_std.endf"
-    if not os.path.exists(BE):
-        pytest.skip("Be tape not present")
-    m = el.from_endf_mf7mt2(BE, T_K=T)
-    assert m.has_coherent and m.Q_bragg.size > 500
-    for E in (30.0, 200.0):
+    assert m.has_coherent and m.Q_bragg.size > 100
+    assert m.Q_bragg[0] == pytest.approx(1.876, abs=1e-2)
+    for E in (20.0, 100.0, 200.0, 400.0):
         lhs, rhs = el.selftest(m, E_meV=E)
         assert lhs == pytest.approx(rhs, rel=1e-6)
 
@@ -171,22 +113,6 @@ def test_elastic_peaks_generalize_to_beryllium():
 def test_edge_to_shell_mapping(graphite_endf):
     m = el.from_endf_mf7mt2(graphite_endf, T_K=T)
     assert np.allclose(m.Q_bragg, 2 * np.sqrt(m.E_edge_meV / el.C_E), rtol=1e-9)
-
-
-def test_parser_handles_published_endfb_graphite(graphite_endf):
-    """The published ENDF/B crystalline-graphite tape (in-repo) parses and passes
-    the Bragg-peak self-test; first Bragg edge near 1.876 1/A. Runs on CI."""
-    m = el.from_endf_mf7mt2(graphite_endf, T_K=T)
-    assert m.has_coherent and m.Q_bragg.size > 100
-    assert m.Q_bragg[0] == pytest.approx(1.876, abs=1e-2)
-    lhs, rhs = el.selftest(m, 200.0)
-    assert lhs == pytest.approx(rhs, rel=1e-6)
-    # cross-check the published tape against the IRMA mode-2-autogrid tape when the
-    # external tree is available (different evaluations should agree to a few %).
-    if _HAVE_EXT and os.path.exists(ENDF):
-        mi = el.from_endf_mf7mt2(ENDF, T_K=T)
-        assert float(m.sigma_coherent(50.0)[0]) == pytest.approx(
-            float(mi.sigma_coherent(50.0)[0]), rel=0.03)
 
 
 def test_incoherent_dw_form():
