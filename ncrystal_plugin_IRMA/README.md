@@ -8,9 +8,9 @@ plugin only *samples*; the packs and the material `.ncmat` are produced by
 `irma.ncrystal` (`python -m irma.ncrystal`, see the [exporter
 docs](../docs/ncrystal-plugin.md)). There is no IRMA at NCrystal runtime.
 
-The plugin's Python is a thin shim over `irma.ncrystal` (the single pack format
-owner); the compiled C++ scattering model reads packs natively and is discovered
-by NCrystal's plugin manager. The NCMAT activation section is `@CUSTOM_IRMA`.
+The plugin's Python package only carries the compiled C++ scattering model,
+which reads packs natively and is discovered by NCrystal's plugin manager; the
+pack format lives in `irma.ncrystal.pack`. The NCMAT activation section is `@CUSTOM_IRMA`.
 
 ## Build / install
 

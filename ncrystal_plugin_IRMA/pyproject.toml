@@ -44,10 +44,9 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/ramic-k/IRMA"
 
-# NOTE: This in-repo plugin ships a *thin* Python shim over irma.ncrystal (the
-# single producer/reference). The pack producers / CLIs live in the IRMA core
-# package (`python -m irma.ncrystal`), so no console-script entry points are
-# declared here.
+# NOTE: The Python package here only carries the compiled plugin. The pack
+# format, producers and CLI live in the IRMA core package (irma.ncrystal,
+# `python -m irma.ncrystal`), so no console-script entry points are declared.
 
 [build-system]
 requires = ["scikit-build-core>=0.12", "ncrystal-core>=4.3.0" ]
