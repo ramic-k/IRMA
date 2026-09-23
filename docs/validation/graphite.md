@@ -100,8 +100,11 @@ shared-domain integral ratio of the symmetric-form S(α,β) is 1.00001.
 Against the released OCLIMAX the coherent ratio is 1.04 below Q = 12 Å⁻¹
 and grows to 1.9 over the full window as the first-order attenuation pulls
 the OCLIMAX S(α,β) down at high Q; with the full-tensor variant the same
-ratio is 1.02 over the whole window. The frozen Euphonic reference cases
-live in `tests/mode2_euphonic_n1_validation/`.
+ratio is 1.02 over the whole window. These ratios come from a coherent-only
+comparison. The repository harness in `tests/mode2_euphonic_n1_validation/`
+is a separate, coarser check: it compares IRMA's total n = 1 law with
+Euphonic's coherent one on its own binning, and its global integral ratio is
+1.011 for graphite and 1.021 for beryllium.
 
 ### The full one-phonon term and its components
 

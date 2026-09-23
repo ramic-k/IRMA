@@ -124,8 +124,10 @@ number as a Q-E integral, whose Jacobian differs. Two rules keep the metric hone
   zeroed in the OCLIMAX material file (`.oclimax`), and the IRMA side is
   the coherent component of the same mode-2 run (mode 2 is the exact
   coherent one-phonon treatment; the [graphite page](graphite.md)
-  defines the mode labels used throughout the record). A
-  total-IRMA/coherent-Euphonic ratio is never reported.
+  defines the mode labels used throughout the record). The one exception
+  is the repository harness `tests/mode2_euphonic_n1_validation/`, a
+  coarser check that compares total IRMA n = 1 with coherent Euphonic
+  (ratios 1.011 and 1.021); its numbers are not the ones quoted here.
 - **Same phonon calculation on both sides.** The metric is used only between
   calculations that start from the same phonon calculation, where any
   deviation reflects only implementation and convention differences

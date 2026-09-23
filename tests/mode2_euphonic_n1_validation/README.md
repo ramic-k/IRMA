@@ -83,6 +83,11 @@ use:
 | cuts rel-L1, 3 ≤ Q ≤ 15 | 3.1 – 11.4% | 2.0 – 4.9% |
 | cuts rel-L1, Q = 20 / 30 | 14.8% / 20.4% | 4.5% / 4.9% |
 
+These numbers compare IRMA's total n = 1 law with Euphonic's coherent one on
+this harness's grid. They are not the coherent-only shared-domain ratios
+(1.00001 graphite, 1.0002 beryllium) quoted on the validation pages, which
+come from a separate comparison.
+
 The ~1–2% global ratio is the absolute-scale check: the unit chain
 (Euphonic mb/sr → unitless S(Q,E) via σ_coh → SS(α,β) = kT·S) contains no
 adjustable factors. The graphite Q=20/30 cuts are sampling-noise limited
