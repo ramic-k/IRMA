@@ -5,12 +5,11 @@ The card-by-card deck format this driver parses is documented in
 ``iel=10`` Card 6b-6g block is parsed by :mod:`irma.core.crystal_cards`.
 """
 import dataclasses
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
 
-from irma.core.constants import BK, WL2EKIN
+from irma.core.constants import BK
 from irma.core.deck import (
     DeckError,
     parse_leapr_input, TokenReader,
@@ -21,7 +20,7 @@ from irma.core.kernels import (
 )
 from irma.core.crystal import (
     compute_bragg_edges_general, coher,
-    _average_site_quantity, _compute_per_species_msd,
+    _compute_per_species_msd,
     _order_site_groups_by_card6d_positions, _site_tensors_uniform,
 )
 from irma.core.crystal_cards import _parse_crystal_cards
@@ -119,17 +118,15 @@ def _store_directional_species_dw(crystal_info, itemp, ntempr, F_matrix_all):
     site_groups = crystal_info['nc_atom_type_site_groups']
     atom_types_list = crystal_info['atom_types']
     nsp = len(atom_types_list)
+    F_arr = np.asarray(F_matrix_all)
     F_species = np.zeros((nsp, 3, 3))
     for si in range(nsp):
-        F_species[si] = _average_site_quantity(
-            F_matrix_all, site_groups[si],
-            f"atom type {si+1} Debye-Waller matrix")
+        F_species[si] = F_arr[site_groups[si]].mean(axis=0)
     crystal_info.setdefault('F_species_per_temp', [None] * ntempr)[itemp] = F_species
 
     # Per-site F-matrices in crystal.py's site_terms order (species, then
     # Card 6d position order). When every group's tensors are identical the
     # elastic kernels keep the species-averaged path.
-    F_arr = np.asarray(F_matrix_all)
     ordered_groups = _order_site_groups_by_card6d_positions(
         atom_types_list, site_groups, crystal_info['nc_mesh_data'].atom_positions)
     F_sites = []
@@ -485,13 +482,8 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
     bragg = []
     nedge = 0
     if iel == 10:
-        # Generalized Bragg edge calculation
-        # Compute dcutoff from emax: d_min = sqrt(WL2EKIN / (4*emax))
-
-        emax_bragg = 5.0
-        dcutoff = sqrt(WL2EKIN / (4.0 * emax_bragg)) * 0.95  # 5% margin
         bragg_data, nedge, species_corr, bragg_dir_terms = compute_bragg_edges_general(
-            crystal_info['crystal'], emax=emax_bragg, dcutoff=dcutoff)
+            crystal_info['crystal'], emax=5.0)
         # Convert from numpy array to list of (E, delta) tuples
         bragg = [(bragg_data[i, 0], bragg_data[i, 1]) for i in range(nedge)]
         crystal_info['species_corr'] = species_corr

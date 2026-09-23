@@ -453,18 +453,6 @@ def instrument_reach_emax_eV(*, q_max_invA, e_fixed_meV=None, q_cuts=None,
 # 1/f_DC for the polyatomic designated-coherent atom (a factor 2 for BeO) --
 # which this builder deliberately omits: here the incoherent channel is carried
 # explicitly and everything is normalized per atom of the cell.
-def _lattice_to_params(lattice):
-    """(a,b,c [A], alpha,beta,gamma [deg]) from row-vector lattice (3x3, A).
-
-    Delegates to the shared, acos-clamped implementation in irma.core.crystal
-    (imported lazily to keep this module's import light). The previous local copy
-    lacked the [-1, 1] cosine clamp the shared one has, so floating-point
-    round-off on a near-degenerate cell could throw a domain error.
-    """
-    from irma.core.crystal import lattice_to_cell_params
-    return lattice_to_cell_params(lattice)
-
-
 def _group_atoms_by_symbol(symbols):
     """First-appearance-ordered species grouping -> (species_symbols, groups)."""
     order, groups = [], {}
@@ -548,7 +536,7 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
     """
     from irma.core.crystal import (
         CrystalStructure, AtomSite, compute_bragg_edges_general,
-        _site_tensors_uniform,
+        _site_tensors_uniform, lattice_to_cell_params,
     )
     from irma.core.phonopy_io import thermal_displacements_to_f_matrix
     from irma.core.elastic_dw import resolve_species_dw, make_edge_delta
@@ -596,7 +584,7 @@ def from_engine_elastic_state(elastic_state, *, b_coh_fm, sigma_inc_b, awr,
         # crystal structure (species in group order) -> deterministic Bragg
         # edges, enumerated only up to emax_eV (the caller's reach); skipped
         # entirely for the incoherent-only line, which never uses them.
-        a, b, c, al, be, ga = _lattice_to_params(lattice)
+        a, b, c, al, be, ga = lattice_to_cell_params(lattice)
         sites = [AtomSite(b_coh_fm=float(b_coh_fm[g[0]]),
                           positions=[tuple(frac[i]) for i in g]) for g in groups]
         crystal = CrystalStructure(a, b, c, al, be, ga, sites)
