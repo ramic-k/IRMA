@@ -249,10 +249,9 @@ A Card 6d atom type with no matching Card 6e spectrum falls back to the
 principal scatterer's Debye-Waller lambda (computed from the Card 11/12
 spectrum). For the principal type itself this is exact. For any other type
 it is only an approximation, and it directly sets that species' elastic
-`W'(T)` on the tape, so IRMA prints a warning naming the type (and flags
-the inherited lambda as likely poor when the two masses differ by more than
-20%). To give such a species its own lambda, raise `nspec` on Card 6b and
-supply a Card 6e spectrum for it.
+`W'(T)` on the tape, so IRMA prints a warning naming the type. To give such
+a species its own lambda, raise `nspec` on Card 6b and supply a Card 6e
+spectrum for it.
 
 #### Card 6f: phonopy mesh (`inelastic_mode=1/2` only)
 

@@ -13,14 +13,14 @@ structures.
 """
 
 import numpy as np
-from math import sqrt, exp, hypot, pi, sin, cos
+from math import sqrt, hypot, pi, sin, cos
 from dataclasses import dataclass
 from typing import List, Tuple
 
 from irma.core.constants import (
     BK, EV, AMU, HBAR, AMASSN, WL2EKIN, _Z_TO_SYMBOL,
 )
-from irma.core.kernels import fsum, _EXP_MAX_ARG
+from irma.core.kernels import start
 
 
 @dataclass
@@ -442,11 +442,29 @@ def _site_tensors_uniform(site_tensors, site_indices):
         or float(np.max(np.abs(arr[gi] - F0))) <= tol
         for gi in site_indices[1:])
 
+# Built-in materials of LEAPR's coher: lat -> (a, c [cm], sigma_coh [b]).
+_COHER_MATERIALS = {
+    1: (2.4573e-8, 6.700e-8, 5.50),    # graphite
+    2: (2.2856e-8, 3.5832e-8, 7.53),   # Be (NJOY's c; the published value is 3.5842e-8)
+    3: (2.695e-8, 4.39e-8, 1.0),       # BeO
+    4: (4.04e-8, None, 1.495),         # Al (FCC)
+    # Pb (FCC): deliberate NJOY divergence, NJOY2016 ships 1.0 b
+    # (njoy/NJOY2016#403); 4*pi*b_coh^2 with b_coh = 9.405 fm is 11.115 b.
+    5: (4.94e-8, None, 11.115),
+    6: (2.86e-8, None, 12.9),          # Fe (BCC)
+}
+
+
 def coher(lat, natom, emax):
     """Compute Bragg energies and structure factors for coherent elastic.
 
+    NJOY's algorithm; its Debye-Waller factor (wint = 0) is left out.
     Returns: bragg array of (energy, structure_factor) pairs, nedge
     """
+    if lat not in _COHER_MATERIALS:
+        raise ValueError(
+            f"coher: invalid built-in material lat={lat} (must be 1-6: "
+            f"graphite, Be, BeO, Al, Pb, Fe)")
     twopis = (2.0 * pi)**2
     amne = AMASSN * AMU
     econ = EV * 8.0 * (amne / HBAR) / HBAR
@@ -455,39 +473,8 @@ def coher(lat, natom, emax):
     eps = 0.05
     toler = 1.0e-6
 
-    # Material constants
-    if lat == 1:  # Graphite
-        a, c = 2.4573e-8, 6.700e-8
-        amsc, scoh = 12.011, 5.50 / natom
-    elif lat == 2:  # Beryllium
-        a, c = 2.2856e-8, 3.5832e-8  # built-in Be; c differs from the published 3.5842e-8 (Be is excluded from the expected set — validate Be via iel=10 with an explicit lattice)
-        amsc, scoh = 9.01, 7.53 / natom
-    elif lat == 3:  # BeO
-        a, c = 2.695e-8, 4.39e-8
-        amsc, scoh = 12.5, 1.0 / natom
-    elif lat == 4:  # Aluminum
-        a = 4.04e-8
-        amsc, scoh = 26.7495, 1.495 / natom
-    elif lat == 5:  # Lead
-        a = 4.94e-8
-        # DELIBERATE NJOY DIVERGENCE (reported: njoy/NJOY2016#403):
-        # NJOY2016 ships pb4 = 1.0 barn -- a
-        # placeholder, not a physical value (sigma_coh(Pb) = 4*pi*b_coh^2
-        # with b_coh = 9.405 fm is 11.115 b; cf. Al's physical 1.495 b on
-        # the same code path). An iel=5 tape built with NJOY's constant
-        # carries a coherent-elastic channel ~11.1x too small. Verified at
-        # HEAD against the iel=10 general path on the same FCC Pb cell:
-        # cumulative S(E) ratio is exactly 11.115 at every energy (the
-        # identical Al probe agrees to 1.000).
-        amsc, scoh = 207.0, 11.115 / natom
-    elif lat == 6:  # Iron
-        a = 2.86e-8
-        amsc, scoh = 55.454, 12.9 / natom
-    else:
-        raise ValueError(
-            f"coher: invalid built-in material lat={lat} (must be 1-6: "
-            f"graphite, Be, BeO, Al, Pb, Fe)")
-
+    a, c, sigma_coh = _COHER_MATERIALS[lat]
+    scoh = sigma_coh / natom
     if lat < 4:
         c1 = 4.0 / (3.0 * a * a)
         c2 = 1.0 / (c * c)
@@ -499,27 +486,18 @@ def coher(lat, natom, emax):
     else:
         c1 = 2.0 / (a * a)
         scon = scoh * (4.0 * pi)**2 / (8.0 * a * a * a * econ)
-
-    wint = 0.0
-    t2 = HBAR / (2.0 * AMU * amsc)
     ulim = econ * emax
 
-    # Store edges as parallel arrays (matching Fortran's b array)
     b_tsq = []
     b_f = []
-    k = 0  # number of edges found so far
-
     if lat < 4:
-        # Hexagonal lattice: within-loop merge matching Fortran exactly.
-        # For small tsq (<= tsqx), edges are added without merging.
-        # For larger tsq, scan ALL existing edges to find a merge candidate.
+        # Hexagonal: edges with tsq <= tsqx are kept separately; larger ones
+        # merge into the first existing edge within a factor 1+eps (NJOY).
         phi = ulim / twopis
         i1m = int(a * sqrt(phi)) + 1
-
         for i1 in range(1, i1m + 1):
             l1 = i1 - 1
             i2m = int((l1 + sqrt(3.0 * (a * a * phi - l1 * l1))) / 2.0) + 1
-
             for i2 in range(i1, i2m + 1):
                 l2 = i2 - 1
                 x = phi - c1 * (l1 * l1 + l2 * l2 - l1 * l2)
@@ -527,7 +505,6 @@ def coher(lat, natom, emax):
                 if x > 0:
                     i3m = int(c * sqrt(x))
                 i3m += 1
-
                 for i3 in range(1, i3m + 1):
                     l3 = i3 - 1
                     w1 = 2.0 if l1 != l2 else 1.0
@@ -537,109 +514,53 @@ def coher(lat, natom, emax):
                     if l1 == 0 and l2 == 0:
                         w2 = w2 / 2.0
                     w3 = 2.0 if l3 != 0 else 1.0
-
-                    # Positive l2
-                    tsq = (c1 * (l1 * l1 + l2 * l2 + l1 * l2) + l3 * l3 * c2) * twopis
-                    if tsq > 0.0 and tsq <= ulim:
-                        tau = sqrt(tsq)
-                        w = exp(-tsq * t2 * wint) * w1 * w2 * w3 / tau
-                        f = w * formf(lat, l1, l2, l3)
-                        if k <= 0 or tsq <= tsqx:
+                    for sign in (1, -1):
+                        tsq = (c1 * (l1 * l1 + l2 * l2 + sign * l1 * l2)
+                               + l3 * l3 * c2) * twopis
+                        if not (tsq > 0.0 and tsq <= ulim):
+                            continue
+                        f = w1 * w2 * w3 / sqrt(tsq) * formf(lat, l1, sign * l2, l3)
+                        if not b_tsq or tsq <= tsqx:
                             b_tsq.append(tsq)
                             b_f.append(f)
-                            k += 1
+                            continue
+                        for ii in range(len(b_tsq)):
+                            if tsq >= b_tsq[ii] and tsq < (1 + eps) * b_tsq[ii]:
+                                b_f[ii] += f
+                                break
                         else:
-                            idone = False
-                            for ii in range(k):
-                                if tsq >= b_tsq[ii] and tsq < (1 + eps) * b_tsq[ii]:
-                                    b_f[ii] += f
-                                    idone = True
-                                    break
-                            if not idone:
-                                b_tsq.append(tsq)
-                                b_f.append(f)
-                                k += 1
-
-                    # Negative l2
-                    tsq = (c1 * (l1 * l1 + l2 * l2 - l1 * l2) + l3 * l3 * c2) * twopis
-                    if tsq > 0.0 and tsq <= ulim:
-                        tau = sqrt(tsq)
-                        w = exp(-tsq * t2 * wint) * w1 * w2 * w3 / tau
-                        f = w * formf(lat, l1, -l2, l3)
-                        if k <= 0 or tsq <= tsqx:
                             b_tsq.append(tsq)
                             b_f.append(f)
-                            k += 1
-                        else:
-                            idone = False
-                            for ii in range(k):
-                                if tsq >= b_tsq[ii] and tsq < (1 + eps) * b_tsq[ii]:
-                                    b_f[ii] += f
-                                    idone = True
-                                    break
-                            if not idone:
-                                b_tsq.append(tsq)
-                                b_f.append(f)
-                                k += 1
-
-    elif lat <= 5:
-        # FCC lattice.
-        # NJOY-FAITHFUL: leapr.f90's coher hardcodes a +-15 reflection-index
-        # box for the cubic (FCC/BCC) built-ins; very high-order edges
-        # beyond it are dropped exactly as in NJOY. The generalized iel=10
-        # path has no such truncation.
+    else:
+        # FCC (lat 4-5) or BCC (lat 6), over NJOY's +-15 index box.
         i1m = 15
         twothd = 2.0 / 3.0
         for i1 in range(-i1m, i1m + 1):
             for i2 in range(-i1m, i1m + 1):
                 for i3 in range(-i1m, i1m + 1):
-                    tsq = c1 * (i1*i1 + i2*i2 + i3*i3 + twothd*i1*i2 +
-                                twothd*i1*i3 - twothd*i2*i3) * twopis
+                    if lat <= 5:
+                        tsq = c1 * (i1*i1 + i2*i2 + i3*i3 + twothd*i1*i2 +
+                                    twothd*i1*i3 - twothd*i2*i3) * twopis
+                    else:
+                        tsq = c1 * (i1*i1 + i2*i2 + i3*i3 + i1*i2 + i2*i3 + i1*i3) * twopis
                     if tsq > 0.0 and tsq <= ulim:
-                        tau = sqrt(tsq)
-                        w = exp(-tsq * t2 * wint) / tau
-                        f = w * formf(lat, i1, i2, i3)
                         b_tsq.append(tsq)
-                        b_f.append(f)
-                        k += 1
+                        b_f.append(1.0 / sqrt(tsq) * formf(lat, i1, i2, i3))
 
-    else:
-        # BCC lattice
-        i1m = 15
-        for i1 in range(-i1m, i1m + 1):
-            for i2 in range(-i1m, i1m + 1):
-                for i3 in range(-i1m, i1m + 1):
-                    tsq = c1 * (i1*i1 + i2*i2 + i3*i3 + i1*i2 + i2*i3 + i1*i3) * twopis
-                    if tsq > 0.0 and tsq <= ulim:
-                        tau = sqrt(tsq)
-                        w = exp(-tsq * t2 * wint) / tau
-                        f = w * formf(lat, i1, i2, i3)
-                        b_tsq.append(tsq)
-                        b_f.append(f)
-                        k += 1
-
-    if k == 0:
+    if not b_tsq:
         return np.array([]), 0
 
-    # Sort Bragg edges by tsq (ascending)
-    pairs = sorted(zip(b_tsq[:k], b_f[:k]))
-    b_tsq = [p[0] for p in pairs]
+    pairs = sorted(zip(b_tsq, b_f))
+    b_tsq = [p[0] for p in pairs] + [ulim]      # final edge at ulim
     b_f = [p[1] for p in pairs]
-
-    kept_tsq = b_tsq
-    kept_f = b_f
-
-    # Add final edge at ulim
-    kept_tsq.append(ulim)
-    kept_f.append(kept_f[-1])
-    k += 1
+    b_f.append(b_f[-1])
 
     # Convert to practical units and combine duplicate Bragg edges
     bragg = []
     bel = -1.0
-    for i in range(k):
-        be = kept_tsq[i] * recon
-        bs = kept_f[i] * scon
+    for tsq, f in zip(b_tsq, b_f):
+        be = tsq * recon
+        bs = f * scon
         if be - bel < toler and bragg:
             bragg[-1] = (bragg[-1][0], bragg[-1][1] + bs)
         else:
@@ -670,152 +591,21 @@ def formf(lat, l1, l2, l3):
         return (1.0 + cos(e1))**2 + sin(e1)**2
     return 0.0
 
-def _compute_per_species_msd(crystal_info, tempr_arr, ntempr, dwpix,
-                             directional_dw=False):
-    """Compute per-species MSD (Debye-Waller lambda) from partial phonon spectra.
+def _compute_per_species_msd(crystal_info, tempr_arr, ntempr, dwpix):
+    """Per-species Debye-Waller lambda from the Card 6e partial spectra.
 
-    For each atom type that has a matching partial phonon spectrum, compute
-    the DW lambda (f0) at each temperature using the same method as LEAPR's
-    start() function.  Atom types without a matching spectrum fall back to
-    LEAPR's dwpix (the principal scatterer's DW lambda).  For the principal
-    type itself the fallback is exact (dwpix IS its own lambda); for any
-    OTHER type it is only an approximation — that species' elastic W'(T) on
-    the tape is then the principal's — so a loud WARNING is printed naming
-    the type and how to supply a Card 6e spectrum instead.
-
-    ``directional_dw=True`` (the phonopy-backed inelastic modes 1/2) means
-    the per-species elastic Debye-Waller comes from the model's displacement
-    tensors: the coherent-elastic builder takes the directional branch of
-    ``resolve_species_dw`` and the ``W_ps`` table built from these lambdas
-    is never consumed. The fallback values are still stored (byte-identical
-    dwpix bookkeeping), but the inherited-lambda WARNING is suppressed: the
-    deck cannot carry Card 6e spectra in these modes (the parser rejects
-    nspec != 0), so warning about their absence would be contradictory.
-
-    CONSTRAINT (tbeta = 1): unlike LEAPR's start(), which divides the
-    normalization by tbeta (the continuous-spectrum weight), this routine
-    normalizes ``p`` directly to ``an = fsum(1, ...)`` with no tbeta factor,
-    i.e. it HARDCODES tbeta = 1. Each partial spectrum supplied to the iel=10
-    path MUST therefore carry the FULL vibrational weight of its species; there
-    is no per-species discrete/translational weight. Card 6e has no per-species
-    tbeta field and phonopy partial DOS are normalized to integral 1, so every
-    supported input satisfies this. A species carrying weight < 1 would bias its
-    per-species DW lambda f0 and is not expressible/supported here.
-
-    Results are stored in crystal_info['atom_types'][i]['dwpix'][itemp].
+    Each spectrum carries its species' full vibrational weight (tbeta = 1).
+    A type without a spectrum inherits the principal's lambda ``dwpix``.
+    Stored in ``crystal_info['atom_types'][i]['dwpix']``.
     """
-    atom_types = crystal_info['atom_types']
-    partial_spectra = crystal_info['partial_spectra']
-    principal_atom_idx = crystal_info.get('principal_atom_idx')
-    awr_principal = (atom_types[principal_atom_idx].get('awr')
-                     if principal_atom_idx is not None else None)
-
-    for at in atom_types:
-        at['dwpix'] = np.zeros(ntempr)
-
-    if directional_dw:
-        # Modes 1/2: fill the fallback lambdas silently and say why once.
-        for at in atom_types:
-            at['dwpix'][:] = dwpix[:ntempr]
-        print("    Per-species elastic Debye-Waller comes from the phonopy "
-              "displacement tensors (inelastic_mode 1/2); the classic "
-              "per-species lambdas are not used.")
-        return
-
-    for iat, at in enumerate(atom_types):
-        sp_idx = at['spectrum_idx']
-        if sp_idx is None:
-            # No partial spectrum — fall back to LEAPR's dwpix
-            at['dwpix'][:] = dwpix[:ntempr]
-            if iat == principal_atom_idx:
-                # Exact, not an approximation: dwpix IS this type's own DW
-                # lambda (computed from the classic Card 11/12 spectrum).
-                print(f"    Atom type {iat+1} (Z={at['Z']}, A={at['A']}): "
-                      f"no partial spectrum, using principal DW "
-                      f"(exact: this IS the principal scatterer)")
-            else:
-                # A non-principal species inheriting the principal's lambda
-                # is only a rough approximation, and it directly sets that
-                # species' elastic W'(T) on the tape: warn loudly, naming
-                # the type and the remedy (a Card 6e spectrum).
-                awr_s = at.get('awr')
-                mass_note = ""
-                poor = False
-                if awr_principal and awr_s:
-                    pct = abs(awr_s - awr_principal) / awr_principal * 100.0
-                    mass_note = (f" (awr={awr_s:.4f} vs principal "
-                                 f"awr={awr_principal:.4f}, {pct:.0f}% apart)")
-                    poor = pct > 20.0
-                msg = (f"WARNING: Card 6d atom type {iat+1} (Z={at['Z']}, "
-                       f"A={at['A']}) has no matching Card 6e partial "
-                       f"spectrum; its Debye-Waller lambda is INHERITED "
-                       f"from the principal scatterer{mass_note}, and that "
-                       f"inherited lambda sets this species' elastic W'(T) "
-                       f"on the tape.")
-                if poor:
-                    msg += (" The masses differ by more than 20%, so the "
-                            "inherited lambda is likely a POOR approximation "
-                            "for this species.")
-                msg += (f" To give Z={at['Z']}, A={at['A']} its own "
-                        f"Debye-Waller lambda, raise Card 6b nspec and "
-                        f"supply a Card 6e partial spectrum "
-                        f"(Z A delta ni / rho values) for it.")
-                print(msg)
+    principal = crystal_info.get('principal_atom_idx')
+    for iat, at in enumerate(crystal_info['atom_types']):
+        if at['spectrum_idx'] is None:
+            at['dwpix'] = np.array(dwpix[:ntempr], dtype=float)
+            if iat != principal:
+                print(f"WARNING: atom type {iat+1} (Z={at['Z']}, A={at['A']}) has "
+                      "no Card 6e spectrum; using the principal's Debye-Waller lambda.")
             continue
-
-        sp = partial_spectra[sp_idx]
-        rho = sp['rho']
-        delta_e = sp['delta']     # energy spacing in eV
-        ni = sp['ni']
-
-        for itemp in range(ntempr):
-            temp = tempr_arr[itemp]
-            tev = BK * temp
-            deltab = delta_e / tev  # energy grid in units of kT
-            # Same exp(beta/2) overflow regime as kernels.start(): past the
-            # float64 ceiling this cascades to NaN. Fail clearly (this is the
-            # iel=10 Card 6e partial-spectrum copy of the transform).
-            if ni > 1 and deltab * (ni - 1) / 2.0 > _EXP_MAX_ARG:
-                raise ValueError(
-                    "partial phonon-spectrum transform overflows: deltab*(ni-1)/2 "
-                    f"= {deltab * (ni - 1) / 2.0:.1f} exceeds the exp limit "
-                    f"({_EXP_MAX_ARG:.0f}). The partial spectrum's beta range is too "
-                    f"wide for this temperature (kT = {tev:.4g} eV); reduce its "
-                    "energy spacing/extent or raise the temperature.")
-
-            # Normalize the spectrum: ∫ ρ(ε)/ε dε should give tbeta
-            # Same approach as LEAPR's start(): transform p, normalize, then fsum(0)
-            p = np.array(rho[:ni], dtype=float).copy()
-
-            # Transform: p[j] = rho[j] / (beta * 2sinh(beta/2))
-            u = deltab
-            v = exp(deltab / 2.0)
-            # Handle the j=0 case (limiting value)
-            if ni > 1:
-                p[0] = p[1] / deltab**2
-            vv = v
-            for j in range(1, ni):
-                denom = u * (vv - 1.0 / vv)
-                if abs(denom) > 1e-30:
-                    p[j] = p[j] / denom
-                else:
-                    p[j] = 0.0
-                vv = v * vv
-                u += deltab
-
-            # Normalize: tbeta = weight of continuous spectrum.
-            # CONTRACT: partial spectra carry FULL species weight, so tbeta=1
-            # and `an` is NOT divided by tbeta (cf. LEAPR start(): an=an/tbeta).
-            # See the docstring constraint note above.
-            tau = 0.5
-            an = fsum(1, p, ni, tau, deltab)
-            if an > 0:
-                for i in range(ni):
-                    p[i] = p[i] / an
-
-            # DW lambda = fsum(0, ...)
-            f0 = fsum(0, p, ni, tau, deltab)
-            at['dwpix'][itemp] = f0
-
-        print(f"    Atom type {iat+1} (Z={at['Z']}, A={at['A']}): "
-              f"DW from partial spectrum, f0[0]={at['dwpix'][0]:.6f}")
+        sp = crystal_info['partial_spectra'][at['spectrum_idx']]
+        at['dwpix'] = np.array([start(sp['rho'], sp['ni'], sp['delta'], BK * T, 1.0)[1]
+                                for T in tempr_arr[:ntempr]])
