@@ -6,7 +6,7 @@ emission, and the import parser) is unit-testable on a headless runner and
 the GUI import becomes transactional (parse fully, then apply to widgets).
 """
 
-from math import cos, isfinite, radians
+from irma.core.deck import _read_temperature_detail_cards
 
 
 def _quote(text):
@@ -89,11 +89,11 @@ def parse_atoms_text(text):
 def parse_deck_to_staging(reader, path):
     """Parse a IRMA/LEAPR deck into a plain staging dict (Tk-free).
 
-    Builds the COMPLETE imported state and validates it before the GUI
-    applies anything, so a malformed deck leaves the form untouched
-    (transactional import). Engine-enforced ranges are checked here so the
-    GUI rejects on import instead of exporting a deck the engine will
-    reject. Raises DeckError/ValueError on any unsupported/malformed deck.
+    Builds the COMPLETE imported state before the GUI applies anything, so
+    a malformed deck leaves the form untouched (transactional import). Only
+    the structure the form needs is checked here; the engine checks value
+    ranges when the deck runs. Raises DeckError/ValueError on an
+    unsupported or malformed deck.
     """
     st = {}
 
@@ -113,23 +113,10 @@ def parse_deck_to_staging(reader, path):
     fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 1.0e-75, 0])
     st['mat'] = reader.to_int(fvals[0], "mat")
     st['za'] = fvals[1]
-    # Integer-coded flags take the same checked conversion + range checks
-    # the deck driver applies (driver.py, Card 4): a bare int() would
-    # silently truncate a non-integral value (iint=1.9 imported as the
-    # valid lin-lin flag 1) that the engine rejects.
-    isabt = reader.to_int(fvals[2], "isabt")
-    ilog = reader.to_int(fvals[3], "ilog")
-    iint = reader.to_int(fvals[5], "iint")
-    if isabt not in (0, 1):
-        raise ValueError(f"isabt must be 0 or 1, got {isabt}.")
-    if ilog not in (0, 1):
-        raise ValueError(f"ilog must be 0 or 1, got {ilog}.")
-    if iint not in (0, 1):
-        raise ValueError(f"iint must be 0 or 1, got {iint}.")
-    st['isabt'] = isabt
-    st['ilog'] = ilog
+    st['isabt'] = reader.to_int(fvals[2], "isabt")
+    st['ilog'] = reader.to_int(fvals[3], "ilog")
     st['smin'] = fvals[4]
-    st['iint'] = iint
+    st['iint'] = reader.to_int(fvals[5], "iint")
 
     # Card 5: awr, spr, npr, iel, ncold, nsk
     fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
@@ -180,95 +167,33 @@ def parse_deck_to_staging(reader, path):
     st['noncubic'] = None
     st['coherent_extinction'] = None
     if iel == 10:
-        # A bound two-pass secondary scatterer with generalized elastic is
-        # rejected by the engine (crystal_cards.py: the generalized MF7/MT2
-        # builder has no secondary-scatterer Debye-Waller path); mirror it
-        # here so the deck is refused on import, not at run time.
-        if two_pass:
-            raise ValueError(
-                f"a bound two-pass secondary scatterer (Card 6 nss={nss}, "
-                f"b7={b7:g}) is not supported with generalized elastic "
-                f"(Card 5 iel=10): MF7/MT2 would be built from the secondary "
-                f"scatterer's Debye-Waller data instead of the principal's. "
-                f"Use an analytic secondary (Card 6 b7=1 free gas / "
-                f"b7=2 diffusion) or drop the secondary scatterer.")
-
         # Card 6b: elastic_mode nat nspec inelastic_mode
         #          [edge_group_bins_per_decade] [edge_group_threshold_eV]
-        # Guarded with the same ranges the engine enforces
-        # (crystal_cards.py, Card 6b), so an invalid generalized-elastic
-        # deck is rejected on import instead of exported and refused by
-        # the engine.
         fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
         elastic_mode = reader.to_int(fvals[0], "elastic_mode")
         nat = reader.to_int(fvals[1], "nat")
         nspec = reader.to_int(fvals[2], "nspec")
         inelastic_mode_loaded = reader.to_int(fvals[3], "inelastic_mode")
         edge_group_bpd = reader.to_int(fvals[4], "bins_per_decade")
-        if elastic_mode not in (1, 2):
-            raise ValueError(f"Card 6b elastic_mode must be 1 (SEF) or "
-                             f"2 (MEF), got {elastic_mode}.")
-        if nat < 1:
-            raise ValueError(f"Card 6b nat must be >= 1, got {nat}.")
+        # the mode selects which cards follow
         if inelastic_mode_loaded not in (0, 1, 2):
             raise ValueError(f"Card 6b inelastic_mode must be 0, 1, or 2; "
                              f"got {inelastic_mode_loaded}.")
-        if edge_group_bpd < 0:
+        # the form hides (and would silently clear) these fields in modes 1/2
+        if inelastic_mode_loaded in (1, 2) and (ncold or nsk or nss):
             raise ValueError(
-                f"Card 6b bins_per_decade (field 5) must be >= 0 "
-                f"(0 = grouping off), got {edge_group_bpd}.")
-        if not fvals[5] >= 0.0:
-            raise ValueError(f"Card 6b grouping threshold (field 6) must "
-                             f"be >= 0, got {fvals[5]:g}.")
-        if inelastic_mode_loaded in (1, 2):
-            if nspec != 0:
-                raise ValueError(
-                    f"Card 6b nspec must be 0 when inelastic_mode="
-                    f"{inelastic_mode_loaded}: Phonopy provides MT4 and the "
-                    f"Debye-Waller factors, so Card 6e partial spectra are "
-                    f"not used (got nspec={nspec}).")
-            if ncold != 0 or nsk != 0:
-                raise ValueError(
-                    f"ncold/nsk pair-correlation options are not available "
-                    f"with inelastic_mode={inelastic_mode_loaded} "
-                    f"(got ncold={ncold}, nsk={nsk}).")
-            if nss != 0:
-                raise ValueError(
-                    f"a secondary scatterer (Card 6 nss={nss}) is not "
-                    f"supported with inelastic_mode={inelastic_mode_loaded}.")
-        if nspec < 0:
-            raise ValueError(f"Card 6b nspec must be >= 0, got {nspec}.")
+                f"ncold/nsk/secondary scatterer are not available with "
+                f"inelastic_mode={inelastic_mode_loaded} (got ncold={ncold}, "
+                f"nsk={nsk}, nss={nss}).")
         st['elastic_mode'] = elastic_mode
         st['edge_group_bpd'] = edge_group_bpd
         st['edge_group_thr'] = fvals[5]
         st['inelastic_mode'] = inelastic_mode_loaded
 
-        # Card 6c: lattice parameters, validated with the engine's cell
-        # checks (crystal_cards.py, Card 6c): positive finite edges, angles
-        # in (0, 180), and a positive metric determinant term.
-        fvals = reader.read_floats(6)
-        for nm, v in (("a", fvals[0]), ("b", fvals[1]), ("c", fvals[2])):
-            if not (isfinite(v) and v > 0.0):
-                raise ValueError(f"Card 6c lattice {nm} must be finite "
-                                 f"and > 0, got {v}.")
-        for nm, ang in (("alpha", fvals[3]), ("beta", fvals[4]),
-                        ("gamma", fvals[5])):
-            if not (isfinite(ang) and 0.0 < ang < 180.0):
-                raise ValueError(f"Card 6c lattice angle {nm} must be in "
-                                 f"(0, 180) degrees, got {ang}.")
-        ca = cos(radians(fvals[3]))
-        cb = cos(radians(fvals[4]))
-        cg = cos(radians(fvals[5]))
-        metric = 1.0 - ca * ca - cb * cb - cg * cg + 2.0 * ca * cb * cg
-        if not metric > 0.0:
-            raise ValueError(
-                f"Card 6c lattice angles do not form a valid cell (metric "
-                f"determinant term {metric:.6g} <= 0); alpha={fvals[3]}, "
-                f"beta={fvals[4]}, gamma={fvals[5]}.")
-        st['lattice'] = list(fvals)
+        # Card 6c: lattice parameters
+        st['lattice'] = list(reader.read_floats(6))
 
-        # Card 6d: atom types, validated with the engine's per-type checks
-        # (crystal_cards.py, Card 6d).
+        # Card 6d: atom types
         atoms = []
         for iat in range(nat):
             fvals = reader.read_floats(6)
@@ -278,26 +203,7 @@ def parse_deck_to_staging(reader, path):
             at_b_coh = fvals[3]
             at_sigma_inc = fvals[4]
             at_npos = reader.to_int(fvals[5], "npos")
-            if at_Z < 1:
-                raise ValueError(f"Card 6d Z must be >= 1, got {at_Z}.")
-            if at_A < 0:
-                raise ValueError(f"Card 6d A must be >= 0 (0 = natural "
-                                 f"element), got {at_A}.")
-            if not at_awr > 0.0:
-                raise ValueError(f"Card 6d awr must be > 0, got {at_awr}.")
-            if not isfinite(at_b_coh):
-                raise ValueError(f"Card 6d b_coh must be finite, "
-                                 f"got {at_b_coh}.")
-            if not (at_sigma_inc >= 0.0 and isfinite(at_sigma_inc)):
-                raise ValueError(f"Card 6d sigma_inc must be >= 0, "
-                                 f"got {at_sigma_inc}.")
-            if at_npos < 1:
-                raise ValueError(f"Card 6d npos must be >= 1, "
-                                 f"got {at_npos}.")
             coords_flat = reader.read_float_array(at_npos * 3)
-            if not all(isfinite(float(c)) for c in coords_flat):
-                raise ValueError("Card 6d fractional coordinates must all "
-                                 "be finite.")
             coords = [
                 (coords_flat[3 * ip], coords_flat[3 * ip + 1],
                  coords_flat[3 * ip + 2])
@@ -309,28 +215,14 @@ def parse_deck_to_staging(reader, path):
             })
         st['atoms'] = atoms
 
-        # Card 6e: partial spectra (per-species DW, inelastic_mode=0),
-        # validated with the engine's spectrum checks (crystal_cards.py,
-        # Card 6e).
+        # Card 6e: partial spectra (per-species DW, inelastic_mode=0)
         for isp in range(nspec):
             fvals = reader.read_floats(4)
             sp_Z = reader.to_int(fvals[0], "Z")
             sp_A = reader.to_int(fvals[1], "A")
             sp_delta = fvals[2]
             sp_ni = reader.to_int(fvals[3], "ni")
-            if not sp_delta > 0.0:
-                raise ValueError(
-                    f"Card 6e delta (spectrum spacing, eV) must be > 0, "
-                    f"got {sp_delta:g}.")
-            if sp_ni < 2:
-                raise ValueError(
-                    f"Card 6e ni (number of spectrum points) must be >= 2, "
-                    f"got {sp_ni}.")
             sp_rho = [float(v) for v in reader.read_float_array(sp_ni)]
-            if not all(v >= 0.0 for v in sp_rho):
-                raise ValueError("Card 6e rho values must be >= 0.")
-            if not any(v > 0.0 for v in sp_rho):
-                raise ValueError("Card 6e rho values are all zero.")
             st['partial_spectra'].append({
                 'Z': sp_Z, 'A': sp_A,
                 'delta': sp_delta, 'ni': sp_ni, 'rho': sp_rho,
@@ -352,18 +244,6 @@ def parse_deck_to_staging(reader, path):
             mesh_nz = reader.to_int(fvals_nc[2], "mesh_nz")
             nc_ncpu = reader.to_int(fvals_nc[3], "ncpu")
             use_born = reader.to_int(fvals_nc[4], "use_born")
-            # Same range checks the engine enforces (engine.py:616-621),
-            # so an invalid noncubic deck is rejected on import instead of
-            # exported and failed at run time.
-            if not (mesh_nx >= 1 and mesh_ny >= 1 and mesh_nz >= 1):
-                raise ValueError(
-                    f"Card 6f mesh dimensions must all be >= 1, got "
-                    f"{mesh_nx}x{mesh_ny}x{mesh_nz}.")
-            if nc_ncpu < 1:
-                raise ValueError(f"Card 6f ncpu must be >= 1, got {nc_ncpu}.")
-            if use_born not in (0, 1):
-                raise ValueError(
-                    f"Card 6f use_born must be 0 or 1, got {use_born}.")
             nc['mesh_nx'] = mesh_nx
             nc['mesh_ny'] = mesh_ny
             nc['mesh_nz'] = mesh_nz
@@ -378,22 +258,10 @@ def parse_deck_to_staging(reader, path):
             fvals_nc_ctrl = reader.read_card_floats()
             nc['min_phonon_energy_mev'] = 0.0
             if len(fvals_nc_ctrl) == 1:
-                cutoff = float(fvals_nc_ctrl[0])
-                if not (isfinite(cutoff) and cutoff >= 0.0):
-                    raise ValueError(
-                        "minimum phonon energy must be finite and nonnegative "
-                        f"(meV), got {cutoff}.")
-                nc['min_phonon_energy_mev'] = cutoff
+                nc['min_phonon_energy_mev'] = float(fvals_nc_ctrl[0])
                 fvals_nc_ctrl = reader.read_card_floats()
 
             # Card 6g: required noncubic inelastic controls
-            if len(fvals_nc_ctrl) == 4:
-                raise ValueError(
-                    "Card 6g takes at most 3 fields: ndir mpdir "
-                    "[auto_multiphonon_order]. There is no powder-method "
-                    "selector (the exact numerical powder average is always "
-                    "used) - a 4-field card has one field too many, e.g. "
-                    "'10000 1000 0 1 /' should read '10000 1000 1 /'.")
             if len(fvals_nc_ctrl) not in (2, 3):
                 raise ValueError(
                     "Card 6g is required for inelastic_mode=1/2 and must "
@@ -402,15 +270,6 @@ def parse_deck_to_staging(reader, path):
             mpdir = reader.to_int(fvals_nc_ctrl[1], "mpdir")
             auto_order = (reader.to_int(fvals_nc_ctrl[2], "auto_order")
                           if len(fvals_nc_ctrl) == 3 else 0)
-            # Same range checks the engine enforces (engine.py:669-678).
-            if not (ndir >= 1 and mpdir >= 1):
-                raise ValueError(
-                    "Card 6g direction counts must be >= 1, got "
-                    f"ndir={ndir}, mpdir={mpdir}.")
-            if auto_order not in (0, 1):
-                raise ValueError(
-                    "Card 6g auto_multiphonon_order (3rd field) must be 0 "
-                    f"(honor Card 3 nphon) or 1 (auto-size), got {auto_order}.")
             nc['ndir'] = ndir
             nc['mpdir'] = mpdir
             nc['auto_order'] = auto_order
@@ -464,31 +323,15 @@ def parse_deck_to_staging(reader, path):
                     "only the shared-spectrum convention (first "
                     "temperature positive, the rest negative) — "
                     "edit the deck directly.")
-            fvals = reader.read_floats(2)
-            st['delta1'] = fvals[0]
-            ni = reader.to_int(fvals[1], "ni")
-            st['rho'] = list(reader.read_float_array(ni))
-
-            fvals = reader.read_floats(3)
-            st['twt'] = str(fvals[0])
-            st['c_diff'] = str(fvals[1])
-            st['tbeta'] = str(fvals[2])
-
-            nd = reader.read_ints(1)[0]
-            if nd > 0:
-                bdel = reader.read_float_array(nd)
-                adel = reader.read_float_array(nd)
-                st['osc_e'] = list(bdel)
-                st['osc_w'] = list(adel)
-
-            if nsk > 0 or ncold > 0:
-                fvals = reader.read_floats(2)
-                nka = reader.to_int(fvals[0], "nka")
-                st['dka'] = fvals[1]
-                st['ska'] = list(reader.read_float_array(nka))
-
-            if nsk > 0:
-                st['cfrac'] = reader.read_floats(1)[0]
+            (delta, _ni, rho, twt, c_diff, tbeta, _nd, bdel, adel, ska, _nka,
+             dka, cfrac) = _read_temperature_detail_cards(reader, nsk, ncold)
+            st.update(
+                delta1=delta, rho=list(rho), twt=str(twt), c_diff=str(c_diff),
+                tbeta=str(tbeta), osc_e=[] if bdel is None else list(bdel),
+                osc_w=[] if adel is None else list(adel),
+                dka=None if ska is None else dka,
+                ska=None if ska is None else list(ska),
+                cfrac=cfrac if nsk > 0 else None)
 
     st['temperatures'] = temperatures
 
@@ -519,18 +362,13 @@ def parse_deck_to_staging(reader, path):
                         "spectrum block for more than one temperature; "
                         "the GUI supports only the shared-spectrum "
                         "convention — edit the deck directly.")
-                fvals = reader.read_floats(2)
-                st['sec_delta'] = fvals[0]
-                sec_ni = reader.to_int(fvals[1], "ni")
-                st['sec_rho'] = list(reader.read_float_array(sec_ni))
-                fvals = reader.read_floats(3)
-                st['sec_twt'] = str(fvals[0])
-                st['sec_c'] = str(fvals[1])
-                st['sec_tbeta'] = str(fvals[2])
-                sec_nd = reader.read_ints(1)[0]
-                if sec_nd > 0:
-                    st['sec_osc_e'] = list(reader.read_float_array(sec_nd))
-                    st['sec_osc_w'] = list(reader.read_float_array(sec_nd))
+                (delta, _ni, rho, twt, c_diff, tbeta, _nd, bdel, adel,
+                 *_) = _read_temperature_detail_cards(reader, 0, 0)
+                st.update(
+                    sec_delta=delta, sec_rho=list(rho), sec_twt=str(twt),
+                    sec_c=str(c_diff), sec_tbeta=str(tbeta),
+                    sec_osc_e=[] if bdel is None else list(bdel),
+                    sec_osc_w=[] if adel is None else list(adel))
 
     # Comment cards (MF1/MT451). The tokenizer already strips the quote
     # delimiters and resolves doubled quotes, preserving interior and

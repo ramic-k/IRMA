@@ -146,36 +146,14 @@ def test_min_phonon_energy_card_parse_and_legacy_compatibility(tmp_path):
     assert selected['min_phonon_energy_mev'] == 0.5
 
 
-@pytest.mark.parametrize("cutoff", ["-0.1/", "nan/", "inf/"])
-def test_min_phonon_energy_card_rejects_invalid_values(tmp_path, cutoff):
-    with pytest.raises(ValueError, match="finite and nonnegative|expected a number"):
+@pytest.mark.parametrize("cutoff", ["nan/", "inf/"])
+def test_min_phonon_energy_card_rejects_non_numbers(tmp_path, cutoff):
+    with pytest.raises(ValueError, match="expected a number"):
         _stage(_nc_deck(cutoff=cutoff), tmp_path)
 
 
-def test_noncubic_use_born_out_of_range_rejected(tmp_path):
-    with pytest.raises(ValueError, match="use_born must be 0 or 1"):
-        _stage(_nc_deck(mesh="20 20 20 1 2"), tmp_path)
-
-
-def test_noncubic_zero_mesh_rejected(tmp_path):
-    with pytest.raises(ValueError, match="mesh dimensions"):
-        _stage(_nc_deck(mesh="0 20 20 1 0"), tmp_path)
-
-
-def test_noncubic_zero_direction_count_rejected(tmp_path):
-    with pytest.raises(ValueError, match="direction counts must be >= 1"):
-        _stage(_nc_deck(ctrl="0 1000 1"), tmp_path)
-
-
-def test_noncubic_bad_auto_order_rejected(tmp_path):
-    with pytest.raises(ValueError, match="auto_multiphonon_order"):
-        _stage(_nc_deck(ctrl="10000 1000 5"), tmp_path)
-
-
-def test_noncubic_legacy_four_field_rejected(tmp_path):
-    # Pre-v0.16 decks carried the removed incoherent-powder-method selector
-    # as a 3rd field; the 4-field layout must fail with a migration hint.
-    with pytest.raises(ValueError, match="4-field"):
+def test_noncubic_four_field_card6g_rejected(tmp_path):
+    with pytest.raises(ValueError, match="Card 6g"):
         _stage(_nc_deck(ctrl="10000 1000 0 1"), tmp_path)
 
 
@@ -281,77 +259,19 @@ def test_iel10_near_miss_deck_still_imports(tmp_path):
     assert st['partial_spectra'][0]['ni'] == 6
 
 
-def test_iel10_nspec_with_phonopy_mode_rejected(tmp_path):
-    """The reproduced SPG-6 case: inelastic_mode=2 with nspec=1 imported
-    cleanly and only failed later in the engine. It must fail on import."""
-    deck = (
-        "20 /\n'x'/\n1 0 100/\n31 6012./\n"
-        "11.898 4.739 1 10 0 0/\n0/\n"
-        "2 1 1 2/\n"                       # Card 6b: nspec=1 with mode 2
-        "2.46 2.46 6.7 90 90 120/\n"
-        "6 12 11.9 6.646 0.001 1/\n0 0 0/\n"
-        "6 12 0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n"   # Card 6e block
-        "'/tmp/phonopy.yaml'/\n20 20 20 1 0/\n10000 1000 1/\n"
-        "3 4 1/\n0.05 1.0 8.0/\n0.0 0.6 2.0 6.0/\n300/\n/\n")
-    with pytest.raises(ValueError,
-                       match="nspec must be 0 when inelastic_mode=2"):
-        _stage(deck, tmp_path)
-
-
 @pytest.mark.parametrize("card6b,msg", [
-    ("3 1 1 0", "elastic_mode must be 1"),
-    ("2 0 1 0", "nat must be >= 1"),
     ("2 1 1 5", "inelastic_mode must be 0, 1, or 2"),
-    ("2 1 1 0 -1", "bins_per_decade .* must be >= 0"),
-    ("2 1 1 0 50 -1.0", "grouping threshold"),
     ("2 1 1 0 25.5", "bins_per_decade must be an integer"),
 ])
-def test_iel10_card6b_guards_mirror_engine(tmp_path, card6b, msg):
+def test_iel10_card6b_structure_checks(tmp_path, card6b, msg):
     with pytest.raises(ValueError, match=msg):
         _stage(_iel10_deck(card6b=card6b), tmp_path)
 
 
-@pytest.mark.parametrize("card6c,msg", [
-    ("0 2.46 6.7 90 90 120", "lattice a must be finite and > 0"),
-    ("2.46 2.46 6.7 90 90 200", r"angle gamma must be in \(0, 180\)"),
-    ("2.46 2.46 6.7 10 10 30", "do not form a valid cell"),
-])
-def test_iel10_card6c_guards_mirror_engine(tmp_path, card6c, msg):
-    with pytest.raises(ValueError, match=msg):
-        _stage(_iel10_deck(card6c=card6c), tmp_path)
-
-
-@pytest.mark.parametrize("card6d,msg", [
-    ("0 12 11.9 6.646 0.001 1/\n0 0 0", "Z must be >= 1"),
-    ("6 -1 11.9 6.646 0.001 1/\n0 0 0", "A must be >= 0"),
-    ("6 12 0 6.646 0.001 1/\n0 0 0", "awr must be > 0"),
-    ("6 12 11.9 6.646 -0.5 1/\n0 0 0", "sigma_inc must be >= 0"),
-    ("6 12 11.9 6.646 0.001 0", "npos must be >= 1"),
-])
-def test_iel10_card6d_guards_mirror_engine(tmp_path, card6d, msg):
-    with pytest.raises(ValueError, match=msg):
-        _stage(_iel10_deck(card6d=card6d), tmp_path)
-
-
-@pytest.mark.parametrize("card6e,msg", [
-    ("6 12 0 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n", "delta .* must be > 0"),
-    ("6 12 0.005 1/\n0.5/\n", "ni .* must be >= 2"),
-    ("6.5 12 0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n", "Z must be an integer"),
-    ("6 12 0.005 6/\n0.0 -0.2 0.45 0.55 0.3 0.0/\n",
-     "rho values must be >= 0"),
-    ("6 12 0.005 6/\n0 0 0 0 0 0/\n", "rho values are all zero"),
-])
-def test_iel10_card6e_guards_mirror_engine(tmp_path, card6e, msg):
-    with pytest.raises(ValueError, match=msg):
-        _stage(_iel10_deck(card6e=card6e), tmp_path)
-
-
-def test_iel10_bound_two_pass_secondary_rejected(tmp_path):
-    """The engine's newer rejection of a bound two-pass secondary with
-    iel=10 (generalized elastic has no secondary Debye-Waller path) is
-    mirrored on import."""
-    with pytest.raises(ValueError, match="bound two-pass secondary"):
-        _stage(_iel10_deck(card6="1 0. 11.9 4.7 1"), tmp_path)
+def test_iel10_card6e_non_integral_z_rejected(tmp_path):
+    with pytest.raises(ValueError, match="Z must be an integer"):
+        _stage(_iel10_deck(
+            card6e="6.5 12 0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n"), tmp_path)
 
 
 def test_iel10_phonopy_mode_ncold_rejected(tmp_path):
@@ -364,8 +284,6 @@ def test_iel10_phonopy_mode_ncold_rejected(tmp_path):
 
 @pytest.mark.parametrize("card4,msg", [
     ("31 6012. 0 0 1e-75 1.9", "iint must be an integer"),
-    ("31 6012. 0 0 1e-75 3", "iint must be 0 or 1"),
-    ("31 6012. 2 0 1e-75 0", "isabt must be 0 or 1"),
     ("31 6012. 0 1.5 1e-75 0", "ilog must be an integer"),
 ])
 def test_card4_flags_use_checked_conversion(tmp_path, card4, msg):
