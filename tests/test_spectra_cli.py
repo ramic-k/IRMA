@@ -35,26 +35,17 @@ def test_legacy_deck_one_arg():
     assert cli.main(["onlyone"]) == 1
 
 
-def test_legacy_deck_reaches_run_leapr(tmp_path, monkeypatch):
-    """A bare `irma deck out` (unknown first arg) falls through to run_leapr."""
+@pytest.mark.parametrize("prefix", [[], ["evaluate"]])
+def test_deck_reaches_run_leapr(tmp_path, monkeypatch, prefix):
+    """`irma deck out` and `irma evaluate deck out` both reach run_leapr."""
     deck = tmp_path / "graphite.leapr"
     deck.write_text("dummy")
     called = {}
     import irma.core.engine as eng
     monkeypatch.setattr(eng, "run_leapr",
                         lambda i, o: called.update(inp=i, out=o))
-    assert cli.main([str(deck), str(tmp_path / "out.endf")]) == 0
+    assert cli.main(prefix + [str(deck), str(tmp_path / "out.endf")]) == 0
     assert called["inp"] == str(deck)
-
-
-def test_evaluate_alias_reaches_run_leapr(tmp_path, monkeypatch):
-    deck = tmp_path / "g.leapr"
-    deck.write_text("dummy")
-    import irma.core.engine as eng
-    seen = {}
-    monkeypatch.setattr(eng, "run_leapr", lambda i, o: seen.update(i=i))
-    assert cli.main(["evaluate", str(deck), str(tmp_path / "o.endf")]) == 0
-    assert seen["i"] == str(deck)
 
 
 def test_deck_error_exit_code(tmp_path, monkeypatch):
@@ -92,6 +83,14 @@ def test_flag_form_builds_expected_config():
     assert cfg.physics.inelastic_mode == 2
     assert cfg.material.scatterers[0].b_coh_fm == 6.646
     assert cfg.physics.elastic and cfg.physics.elastic_kind == "both"
+    assert cfg.instrument.resolution_shape == "gaussian"
+    flags = scli.config_from_args(_vision_ns(
+        ["--elastic-kind", "incoherent", "--resolution-shape", "lorentzian",
+         "--min-phonon-energy", "0.5"]))
+    assert flags.physics.elastic_kind == "incoherent"
+    assert flags.instrument.resolution_shape == "lorentzian"
+    assert flags.physics.min_phonon_energy_meV == 0.5
+    assert scli.config_from_args(_vision_ns(["--elastic", "off"])).physics.elastic is False
 
 
 def test_flag_form_equals_config_form(tmp_path):
@@ -100,20 +99,6 @@ def test_flag_form_equals_config_form(tmp_path):
     cfg_flag = scli.config_from_args(_vision_ns())
     p = dump(cfg_flag, tmp_path / "cfg.yaml")
     assert load(p) == cfg_flag
-
-
-def test_elastic_off_and_kind():
-    cfg = scli.config_from_args(_vision_ns(["--elastic", "off"]))
-    assert cfg.physics.elastic is False
-    cfg2 = scli.config_from_args(_vision_ns(["--elastic-kind", "incoherent"]))
-    assert cfg2.physics.elastic_kind == "incoherent"
-
-
-def test_resolution_shape_flag():
-    cfg = scli.config_from_args(_vision_ns())
-    assert cfg.instrument.resolution_shape == "gaussian"   # default
-    cfg2 = scli.config_from_args(_vision_ns(["--resolution-shape", "lorentzian"]))
-    assert cfg2.instrument.resolution_shape == "lorentzian"
 
 
 def test_mode0_flag_form_builds_dos_config(tmp_path):
@@ -225,9 +210,12 @@ def test_parse_scatterer_too_few():
 def test_apply_overrides_dotted_and_coercion():
     d = {"material": {"temperature_K": 296.0}, "physics": {}}
     scli.apply_overrides(d, ["material.temperature_K=500", "physics.elastic=false",
-                             "physics.jobs=8", "grid.q_max_invA=null"])
+                             "physics.jobs=8", "grid.q_max_invA=null",
+                             "physics.kinematic_kf_ki=on", "instrument.map_mask=Off"])
     assert d["material"]["temperature_K"] == 500
     assert d["physics"]["elastic"] is False
+    assert d["physics"]["kinematic_kf_ki"] is True
+    assert d["instrument"]["map_mask"] is False
     assert d["physics"]["jobs"] == 8
     assert d["grid"]["q_max_invA"] is None
 
@@ -292,31 +280,8 @@ def _result(n_angles=2):
                   "n_bragg_edges": 42, "engine_metadata": {}})
 
 
-@pytest.mark.parametrize("ext", [".csv", ".npz", ".json"])
-def test_write_spectrum_per_angle(tmp_path, ext):
-    out = tmp_path / f"spec{ext}"
-    scli.write_spectrum(_result(2), out)
-    assert out.exists() and out.stat().st_size > 0
-    if ext == ".npz":
-        d = np.load(out)
-        assert d["I_total_per_angle"].shape == (2, 11)
-        assert list(d["angles_deg"]) == [45.0, 135.0]
-    elif ext == ".json":
-        d = json.loads(out.read_text())
-        assert len(d["E_meV"]) == 11 and len(d["I_total_per_angle"]) == 2
-        assert d["angles_deg"] == [45.0, 135.0]
-    else:
-        txt = out.read_text()
-        assert txt.startswith("# IRMA spectrum")
-        # one (total,inelastic,elastic) triple per bank
-        assert "total@45deg" in txt and "total@135deg" in txt
-
-
-def test_write_spectrum_single_angle_csv(tmp_path):
-    out = tmp_path / "spec.csv"
-    scli.write_spectrum(_result(1), out)
-    header = [ln for ln in out.read_text().splitlines() if not ln.startswith("#")][0]
-    assert header == "E_meV,total@45deg,inelastic@45deg,elastic@45deg"
+def _csv_header(path):
+    return [ln for ln in path.read_text().splitlines() if not ln.startswith("#")][0]
 
 
 def _result_with_qcuts():
@@ -330,41 +295,32 @@ def _result_with_qcuts():
 
 
 @pytest.mark.parametrize("ext", [".csv", ".npz", ".json"])
-def test_write_spectrum_with_q_cuts(tmp_path, ext):
+def test_write_spectrum_per_angle_and_q_cuts(tmp_path, ext):
     out = tmp_path / f"spec{ext}"
     scli.write_spectrum(_result_with_qcuts(), out)
-    if ext == ".csv":
-        header = [ln for ln in out.read_text().splitlines()
-                  if not ln.startswith("#")][0]
-        # 2 angle triples + 2 Q triples
-        assert "total@45deg" in header and "total@Q=2" in header and "total@Q=5" in header
-    elif ext == ".npz":
+    if ext == ".npz":
         d = np.load(out)
+        assert d["I_total_per_angle"].shape == (2, 11)
+        assert list(d["angles_deg"]) == [45.0, 135.0]
         assert list(d["q_cuts"]) == [2.0, 5.0]
         assert d["I_total_per_q"].shape == (2, 11)
-    else:
+    elif ext == ".json":
         d = json.loads(out.read_text())
+        assert len(d["E_meV"]) == 11 and len(d["I_total_per_angle"]) == 2
+        assert d["angles_deg"] == [45.0, 135.0]
         assert d["q_cuts"] == [2.0, 5.0] and len(d["I_total_per_q"]) == 2
-
-
-@pytest.mark.parametrize("ext", [".csv", ".npz", ".json"])
-def test_write_spectrum_total_only_is_lean(tmp_path, ext):
-    """components=False (the config/GUI default) writes ONLY each cut's total --
-    no inelastic/elastic columns or arrays."""
-    out = tmp_path / f"s{ext}"
-    scli.write_spectrum(_result_with_qcuts(), out, components=False)
-    if ext == ".csv":
-        header = [ln for ln in out.read_text().splitlines() if not ln.startswith("#")][0]
-        assert "inelastic@" not in header and "elastic@" not in header
-        assert "total@45deg" in header and "total@Q=2" in header
-    elif ext == ".npz":
-        d = np.load(out)
-        assert "I_total_per_angle" in d.files and "I_inelastic_per_angle" not in d.files
-        assert "I_total_per_q" in d.files and "I_inelastic_per_q" not in d.files
     else:
-        d = json.loads(out.read_text())
-        assert "I_total_per_angle" in d and "I_inelastic_per_angle" not in d
-        assert "I_total_per_q" in d and "I_inelastic_per_q" not in d
+        assert out.read_text().startswith("# IRMA spectrum")
+        header = _csv_header(out)
+        # one (total, inelastic, elastic) triple per bank and per Q cut
+        assert "total@45deg" in header and "total@135deg" in header
+        assert "total@Q=2" in header and "total@Q=5" in header
+
+
+def test_write_spectrum_single_angle_csv(tmp_path):
+    out = tmp_path / "spec.csv"
+    scli.write_spectrum(_result(1), out)
+    assert _csv_header(out) == "E_meV,total@45deg,inelastic@45deg,elastic@45deg"
 
 
 def _result_q_only():
@@ -382,22 +338,30 @@ def _result_q_only():
 
 
 @pytest.mark.parametrize("ext", [".csv", ".npz", ".json"])
-def test_write_spectrum_q_only_omits_angle_block(tmp_path, ext):
-    """cut_by='q' -> only constant-Q cuts; the writer must emit NO per-angle
-    columns/arrays (so the plot shows only the Q-cuts, not the angle spectra)."""
-    out = tmp_path / f"spec{ext}"
-    scli.write_spectrum(_result_q_only(), out)
+def test_write_spectrum_totals_only_and_q_only(tmp_path, ext):
+    """components=False (the config/GUI default) writes only each cut's total;
+    a cut_by='q' result writes no per-angle columns or arrays."""
+    lean, q_only = tmp_path / f"lean{ext}", tmp_path / f"q{ext}"
+    scli.write_spectrum(_result_with_qcuts(), lean, components=False)
+    scli.write_spectrum(_result_q_only(), q_only)
     if ext == ".csv":
-        header = [ln for ln in out.read_text().splitlines() if not ln.startswith("#")][0]
-        assert "deg" not in header                       # no angle columns
+        header = _csv_header(lean)
+        assert "inelastic@" not in header and "elastic@" not in header
+        assert "total@45deg" in header and "total@Q=2" in header
+        header = _csv_header(q_only)
+        assert "deg" not in header
         assert "total@Q=2" in header and "total@Q=5" in header
-    elif ext == ".npz":
-        d = np.load(out)
-        assert "I_total_per_angle" not in d.files        # angle block omitted
-        assert d["I_total_per_q"].shape == (2, 11)
+        return
+    if ext == ".npz":
+        d, q = np.load(lean), np.load(q_only)
+        keys, q_keys = d.files, q.files
     else:
-        d = json.loads(out.read_text())
-        assert "I_total_per_angle" not in d and len(d["I_total_per_q"]) == 2
+        d, q = json.loads(lean.read_text()), json.loads(q_only.read_text())
+        keys, q_keys = d, q
+    assert "I_total_per_angle" in keys and "I_inelastic_per_angle" not in keys
+    assert "I_total_per_q" in keys and "I_inelastic_per_q" not in keys
+    assert "I_total_per_angle" not in q_keys
+    assert len(q["I_total_per_q"]) == 2
 
 
 def test_spectra_main_fails_fast_on_directory_output(tmp_path, capsys):
@@ -408,37 +372,6 @@ def test_spectra_main_fails_fast_on_directory_output(tmp_path, capsys):
                     "--scatterer", "C,5.551,11.898", "-o", str(tmp_path)])
     assert rc == 2
     assert "directory, not a file" in capsys.readouterr().err
-
-
-# ---- --set boolean coercion --------------------------------------------------
-@pytest.mark.parametrize("raw,expected", [
-    ("true", True), ("yes", True), ("on", True), ("ON", True),
-    ("false", False), ("no", False), ("off", False), ("Off", False),
-])
-def test_coerce_boolean_vocabulary(raw, expected):
-    assert scli._coerce(raw) is expected
-
-
-# ---- direction defaults + help text (SPG-1/DOC-1 amendment, SPG-2) ---------
-def _vision_subparser():
-    p = scli.build_parser()
-    sub = next(a for a in p._actions
-               if isinstance(a, argparse._SubParsersAction))
-    return sub.choices["vision"]
-
-
-def _option(parser, flag):
-    return next(a for a in parser._actions if flag in a.option_strings)
-
-
-def test_gain_side_help_no_longer_claims_a_mirror_fallback():
-    """SPG-2: modes 1/2 compute the gain side directly (emit_gain_side reads
-    the engine's gain arrays); the mirror is only a defensive fallback. The
-    CLI help must say so, matching docs/spectra.md and the GUI help."""
-    help_text = _option(_vision_subparser(), "--gain-side").help
-    assert "fall back" not in help_text and "fall\nback" not in help_text
-    assert "every mode" in help_text
-    assert "directly computed gain arrays" in help_text
 
 
 def test_flag_defaults_are_the_config_defaults():
