@@ -194,6 +194,49 @@ def form_section(parent, title, help_title=None, help_text=None,
     return body
 
 
+def scrolled_columns(parent):
+    """A vertically scrolling form column beside a column that fills the
+    rest of ``parent``. The canvas takes the form's natural width, so
+    nothing is clipped horizontally. Returns (form, side, canvas)."""
+    top = ttk.Frame(parent)
+    top.pack(fill=tk.BOTH, expand=True)
+    left_outer = ttk.Frame(top)
+    left_outer.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+    bg = ttk.Style().lookup("TFrame", "background")
+    canvas = tk.Canvas(left_outer, highlightthickness=0, borderwidth=0,
+                       background=bg or None)
+    vsb = ttk.Scrollbar(left_outer, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=vsb.set)
+    vsb.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    form = ttk.Frame(canvas)
+    canvas.create_window((0, 0), window=form, anchor="nw")
+    form.bind("<Configure>", lambda _e: canvas.configure(
+        scrollregion=canvas.bbox("all"), width=form.winfo_reqwidth()))
+
+    def _wheel(event):
+        """Scroll on the mouse wheel (platform-normalized delta)."""
+        delta = event.delta
+        step = delta // 120 if abs(delta) >= 120 else delta
+        canvas.yview_scroll(-int(step), "units")
+    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
+    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+    side = ttk.Frame(top)
+    side.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    return form, side, canvas
+
+
+def check_with_help(parent, text, var, help_text):
+    """Checkbox with an attached ⓘ help glyph; returns the row frame so
+    callers can show or hide it."""
+    row = ttk.Frame(parent)
+    row.pack(anchor=tk.W, fill=tk.X, pady=2)
+    ttk.Checkbutton(row, text=text, variable=var).pack(side=tk.LEFT)
+    InfoLabel(row, text, help_text).pack(side=tk.LEFT, padx=(4, 0))
+    return row
+
+
 class LabeledEntry(ttk.Frame):
     """A label + entry field + optional help ('?' button or 'ⓘ' glyph).
 
