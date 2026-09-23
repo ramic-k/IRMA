@@ -192,6 +192,9 @@ def test_parse_angles_comma_and_range():
     assert scli.parse_angles("30,60,90") == [30.0, 60.0, 90.0]
     r = scli.parse_angles("5:135:5")
     assert r[0] == 5.0 and r[-1] == 135.0 and len(r) == 27
+    assert scli.parse_angles("0:1:0.6") == [0.0, 0.6]        # never past stop
+    with pytest.raises(argparse.ArgumentTypeError, match="sign"):
+        scli.parse_angles("135:5:5")                          # step points away
 
 
 def test_parse_scatterer_minimal_and_full():
