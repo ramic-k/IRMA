@@ -113,3 +113,16 @@ def test_spectra_and_ncrystal_configs_carry_and_validate_the_cutoff(tmp_path):
     assert meta["min_phonon_energy_meV"] == "0.5"
     physics = sc.PhysicsConfig()
     assert physics.min_phonon_energy_meV == 0.0
+
+
+def test_spectra_mode1_cutoff_removes_the_low_energy_one_phonon_intensity():
+    # the engine context must be built with the same cutoff as the run; with
+    # the default context the intensity below the cutoff stayed at ~20%
+    pytest.importorskip("phonopy")
+    from test_spectra_engine_integration import _LIVE
+    from irma.spectra.forward import compute_spectrum
+    r = compute_spectrum(**dict(_LIVE, elastic=False), min_phonon_energy_mev=30.0)
+    E, intensity = r.E, r.I_inelastic
+    low = E < 30.0
+    assert (np.trapezoid(intensity[low], E[low])
+            < 1e-2 * np.trapezoid(intensity, E))
