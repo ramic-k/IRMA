@@ -380,7 +380,12 @@ instrument-resolved 1-D INS spectrum or a 2-D S(Q,E) powder map, computed
 directly from a phonon calculation with no ENDF tape involved. It is the GUI face of
 the `irma spectra` command line; **Save Config...** / **Open Config...**
 round-trip the same YAML files the CLI runs, so you can prototype in the GUI
-and script the production run.
+and script the production run. Settings the panel has no control for
+(`physics.elastic_from_tape`, `grid.q_pad_invA`,
+`instrument.bank_halfwidth_deg`, `instrument.combine`) are kept from the
+opened file and listed in the log. The panel runs 2-D maps for direct
+geometry only; it refuses to open an indirect-geometry map config, which
+runs with `irma spectra map`.
 
 ![Neutron Scattering Experiments tab with a phonopy calculation loaded: graphite, inelastic mode 2, 40³ mesh, with the per-element scattering table and the Physics direction counts](assets/gui/gui_ns_phonopy_mode2.png)
 

@@ -13,7 +13,7 @@ import pytest
 # COLLECTION time on a Python built without _tkinter (e.g. the CI runner's
 # Homebrew python), aborting the whole pytest run instead of skipping cleanly.
 tk = pytest.importorskip("tkinter")
-from irma.spectra.config import SpectraConfig, dump, load   # noqa: E402
+from irma.spectra.config import SpectraConfig, SpectraConfigError, dump, load  # noqa: E402
 from irma.gui.runner import ComputationRunner               # noqa: E402
 
 
@@ -165,6 +165,15 @@ def _min_phonon_cfg():
     return cfg
 
 
+def _no_widget_cfg():
+    # fields the panel has no control for: carried through build_config
+    cfg = _cfg("indirect", instrument={"bank_halfwidth_deg": 3.0,
+                                       "combine": "sum"})
+    cfg.physics.elastic_from_tape = "graphite.endf"
+    cfg.grid.q_pad_invA = 1.0
+    return cfg
+
+
 IDENTITY_CASES = {
     "indirect": lambda: _cfg("indirect"),
     "direct": lambda: _cfg("direct"),
@@ -190,6 +199,7 @@ IDENTITY_CASES = {
     "components": lambda: _cfg(
         "direct", instrument={"export_components": True}),
     "min_phonon_energy": _min_phonon_cfg,
+    "no_widget_fields": _no_widget_cfg,
 }
 
 
@@ -199,6 +209,14 @@ def test_load_then_build_is_identity(panel, case):
     cfg = IDENTITY_CASES[case]()
     panel.load_config(cfg)
     assert panel.build_config() == cfg
+
+
+def test_indirect_map_config_is_refused_on_load(panel):
+    # the panel runs maps for direct geometry only; nothing is loaded
+    before = panel.build_config()
+    with pytest.raises(SpectraConfigError, match="irma spectra map"):
+        panel.load_config(_cfg("indirect", instrument={"output_mode": "map"}))
+    assert panel.build_config() == before
 
 
 def test_map_run_writes_the_full_map(panel, monkeypatch):
