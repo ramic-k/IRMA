@@ -81,14 +81,6 @@ def species_from_sites(symbols: Sequence[str],
     """
     symbols = [str(s).strip() for s in symbols]
     positions = [tuple(float(x) for x in p) for p in scaled_positions]
-    if len(symbols) != len(positions):
-        raise ValueError(
-            f"symbols and positions disagree on the site count: "
-            f"{len(symbols)} vs {len(positions)}")
-    for pos in positions:
-        if len(pos) != 3:
-            raise ValueError(
-                f"fractional position {pos!r} does not have 3 components")
 
     order: List[str] = []
     grouped: dict = {}
@@ -122,19 +114,15 @@ def species_from_sites(symbols: Sequence[str],
 def format_card6d_row(species: CrystalSpecies) -> str:
     """One 'Atom Types in Unit Cell' row:
     ``Z A AWR b_coh sigma_inc npos x1 y1 z1 ...``."""
-    coords = "  ".join(f"{x:.6f} {y:.6f} {z:.6f}"
-                       for x, y, z in species.positions)
-    return (f"{species.Z}  {species.A}  {species.awr:.6f}  "
-            f"{species.b_coh_fm:.6f}  {species.sigma_inc_b:.6f}  "
-            f"{species.npos}  {coords}")
+    return format_atom_row({
+        "Z": species.Z, "A": species.A, "awr": species.awr,
+        "b_coh": species.b_coh_fm, "sigma_inc": species.sigma_inc_b,
+        "npos": species.npos, "positions": species.positions})
 
 
 def format_lattice_fields(cellpar) -> Tuple[str, ...]:
     """The six lattice entries (a, b, c in Angstrom; angles in degrees)."""
-    values = [float(v) for v in cellpar]
-    if len(values) != 6:
-        raise ValueError(f"cellpar must have 6 entries, got {len(values)}")
-    return tuple(f"{v:.6f}" for v in values)
+    return tuple(f"{float(v):.6f}" for v in cellpar)
 
 
 # ------------------------------------------------------------------------
@@ -152,6 +140,11 @@ def format_lattice_fields(cellpar) -> Tuple[str, ...]:
 # Constants equal to the table entry to this many significant digits count
 # as the table's own numbers (a prefill), not the user's.
 TABLE_MATCH_DIGITS = 6
+
+
+def _same_digits(x, y):
+    """True when x and y agree to TABLE_MATCH_DIGITS significant digits."""
+    return f"{float(x):.{TABLE_MATCH_DIGITS}g}" == f"{float(y):.{TABLE_MATCH_DIGITS}g}"
 
 
 def split_za(za):
@@ -228,10 +221,9 @@ def row_constants_match_table(row):
         nuc = lookup((int(row["Z"]), int(row["A"])))
     except KeyError:
         return False
-    def same(x, y):
-        return f"{float(x):.{TABLE_MATCH_DIGITS}g}" == f"{float(y):.{TABLE_MATCH_DIGITS}g}"
-    return (same(row["awr"], nuc.awr) and same(row["b_coh"], nuc.b_coh_fm)
-            and same(row["sigma_inc"], nuc.sigma_inc_b))
+    return (_same_digits(row["awr"], nuc.awr)
+            and _same_digits(row["b_coh"], nuc.b_coh_fm)
+            and _same_digits(row["sigma_inc"], nuc.sigma_inc_b))
 
 
 def relabel_row(row, za):
@@ -257,8 +249,7 @@ def relabel_row(row, za):
     new.update({"A": a, "awr": float(nuc.awr), "b_coh": float(nuc.b_coh_fm),
                 "sigma_inc": float(nuc.sigma_inc_b)})
     changes = [(name, row[name], new[name]) for name in ("A", "awr", "b_coh", "sigma_inc")
-               if f"{float(row[name]):.{TABLE_MATCH_DIGITS}g}"
-               != f"{float(new[name]):.{TABLE_MATCH_DIGITS}g}"]
+               if not _same_digits(row[name], new[name])]
     return new, changes
 
 
