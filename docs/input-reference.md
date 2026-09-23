@@ -28,8 +28,10 @@ header built from the input file's comment cards. The `irma` console script and 
 
 ## Input file format rules
 
-IRMA tokenizes input exactly the way NJOY's list-directed (free-format) reader
-does. Knowing these few rules prevents the great majority of input problems.
+IRMA tokenizes input the way NJOY's list-directed (free-format) reader does,
+with two differences: Fortran null values (`,,`) and repeat counts (`3*0.0`)
+are refused, and a scalar card never continues onto the next line. Knowing
+these few rules prevents the great majority of input problems.
 
 | Rule | Behavior |
 |------|----------|

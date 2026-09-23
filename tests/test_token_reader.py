@@ -112,3 +112,14 @@ def test_array_slash_on_last_data_line_aligns():
     arr = r.read_float_array(3)
     assert list(arr) == [1.0, 2.0, 3.0]
     assert r.read_floats(2, defaults=[0, 0]) == [5.0, 6.0]
+
+
+def test_fortran_null_value_is_refused_not_shifted():
+    # NJOY keeps a ',,' item at its default; dropping it would shift fields
+    from irma.core.deck import DeckError, _parse_line
+    with pytest.raises(DeckError, match="null value"):
+        _parse_line("1.0,,3.0 /")
+    with pytest.raises(DeckError, match="null value"):
+        _parse_line(", 2 3 /")
+    assert _parse_line("1, 2, /")[:2] == [1, 2]          # trailing comma is fine
+    assert _parse_line("'a,, title' /")[0] == ("string", "a,, title")

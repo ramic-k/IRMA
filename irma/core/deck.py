@@ -69,7 +69,10 @@ def parse_leapr_input(filename):
             break
 
         i += 1
-        tokens_in_line = _parse_line(line)
+        try:
+            tokens_in_line = _parse_line(line)
+        except DeckError as exc:
+            raise DeckError(f"{exc} (input line {i} of {filename})") from None
         cards_seen += sum(1 for t in tokens_in_line if t == CARD_END)
         tokens.extend(tokens_in_line)
         token_lines.extend([i] * len(tokens_in_line))   # i has been incremented, so it is the 1-based source line number
@@ -158,6 +161,18 @@ def _parse_line(line):
                     tokens.append(val)
         except ValueError:
             tokens.append(p)
+    # A Fortran list-directed null value (',,' or a leading comma) keeps that
+    # item at its default in NJOY; dropping it would shift every later value
+    # one field left, so a numeric card with one is refused. Trailing commas
+    # before '/' are harmless (the missing values take their defaults anyway).
+    fields = [f.strip() for f in stripped.split(',')]
+    while fields and not fields[-1]:
+        fields.pop()
+    if "" in fields and all(isinstance(t, (int, float)) for t in tokens):
+        raise DeckError(
+            f"empty comma-separated field (a Fortran null value) in "
+            f"{line.strip()!r}: IRMA does not support null values; write "
+            f"every value")
 
     # End-of-record sentinel: CARD_END for a '/'-terminated card, LINE_END for
     # a bare continuation line (multi-line arrays). Card reads treat both as
