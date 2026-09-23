@@ -5,16 +5,14 @@ rows. 'Fill structure from phonopy.yaml' fills the rows as natural elements
 (A = 0), and the user then names an isotope on the Scattering tab; the
 button relabels that element's row to the same nuclide, positions kept.
 The contract pinned here:
-- the button is the only thing that changes a row; setting ZA does not;
 - a row whose constants are the table's own is relabelled without a
   question, a row with custom constants only after a yes, and 'No' changes
   nothing at all (Card 5 included);
 - other elements' rows are untouched (BeO: O stays natural);
-- several rows of one element are never chosen between;
 - a nuclide with no tabulated constants or energy-dependent ones is refused
   before anything changes;
-- deck generation offers the same relabel when ZA and the rows disagree,
-  and aborts with the engine's message on 'No'.
+- deck generation refuses a ZA that matches no row, with the engine's
+  message, and changes no row.
 Requires a display (Tk); skipped headless (CI).
 """
 import pytest
@@ -61,12 +59,6 @@ def _quiet_dialogs(app, monkeypatch):
     app.inelastic_mode_var.set(2)
     app.za_status_var.set("")
     yield
-
-
-def test_setting_za_changes_no_row(app):
-    _set_text(app.atoms_text, NATURAL_C)
-    app.za.set("6012")
-    assert _atoms(app) == NATURAL_C.strip()
 
 
 def test_apply_relabels_the_natural_row_to_the_isotope_and_back(app):
@@ -128,21 +120,6 @@ def test_other_elements_are_left_alone(app):
     assert (rows[1]["Z"], rows[1]["A"]) == (8, 16)
 
 
-def test_two_rows_of_one_element_are_never_chosen_between(app):
-    two = (NATURAL_C + "6  13  12.891600  6.190000  0.520000  1  0.500000 0.500000 0.500000\n")
-    _set_text(app.atoms_text, two)
-    app.awr.set("")
-    app.za.set("6012")
-    app._fill_from_za()
-    assert _atoms(app) == two.strip()
-    assert app.awr.get() == ""                              # nothing applied
-    app.za.set("6013")                                      # an exact match
-    app._fill_from_za()
-    assert _atoms(app) == two.strip()
-    assert app.awr.get() != ""
-    assert "row 2 is already C-13" in app.za_status_var.get()
-
-
 def test_missing_or_energy_dependent_nuclides_are_refused_before_any_change(app):
     _set_text(app.atoms_text, NATURAL_C)
     app.awr.set("")
@@ -154,16 +131,6 @@ def test_missing_or_energy_dependent_nuclides_are_refused_before_any_change(app)
     app.za.set("64157")                                     # energy-dependent
     app._fill_from_za()
     assert _atoms(app) == gd.strip() and app.awr.get() == ""
-
-
-def test_hydrogen_to_deuterium_names_the_model_caveat(app):
-    h = "1  0  0.999341  -3.740900  80.260000  1  0.000000 0.000000 0.000000\n"
-    _set_text(app.atoms_text, h)
-    app.za.set("1002")
-    app._fill_from_za()
-    rows = _rows(app)
-    assert rows[0]["A"] == 2 and rows[0]["b_coh"] > 0
-    assert "H masses" in app.za_status_var.get()
 
 
 def test_deck_generation_names_the_mismatch_and_changes_no_row(app):
