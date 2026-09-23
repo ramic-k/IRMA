@@ -97,6 +97,28 @@ def lattice_to_cell_params(lattice_ang):
     return a, b, c, _ang(L[1], L[2]), _ang(L[0], L[2]), _ang(L[0], L[1])
 
 
+def standard_frame_rotation(lattice_ang):
+    """Matrix M with ``lattice @ M = L_std`` (lattice vectors as rows), where
+    L_std is the same cell in the frame the reciprocal lattice matrix below
+    uses: a along x, b in the xy-plane. A Cartesian tensor such as a
+    Debye-Waller matrix moves into that frame as ``M.T @ F @ M``. Returns None
+    when M is the identity to 1e-12, so a model already in that frame is left
+    untouched.
+    """
+    L = np.asarray(lattice_ang, float).reshape(3, 3)
+    a, b, c, alpha, beta, gamma = lattice_to_cell_params(L)
+    ca, cb, cg = np.cos(np.radians([alpha, beta, gamma]))
+    sg = np.sin(np.radians(gamma))
+    m57 = c * (ca - cb * cg) / sg
+    L_std = np.array([
+        [a,       0.0,     0.0],
+        [b * cg,  b * sg,  0.0],
+        [c * cb,  m57,     np.sqrt(max(0.0, c * c - (c * cb) ** 2 - m57 ** 2))],
+    ])
+    M = np.linalg.solve(L, L_std)
+    return None if np.max(np.abs(M - np.eye(3))) < 1e-12 else M
+
+
 def _get_reciprocal_lattice_matrix(a, b, c, alpha_deg, beta_deg, gamma_deg):
     """Compute the 3×3 reciprocal lattice matrix G.
 

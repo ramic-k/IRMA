@@ -337,6 +337,7 @@ class PhonopyMeshData:
     atom_positions: np.ndarray  # (N_atoms, 3) fractional coords in primitive cell
     min_phonon_energy_mev: float = 0.0  # user cutoff; 0 preserves legacy floors
     phonopy_mesh_object: object = field(default=None, repr=False, compare=False)
+    lattice_ang: np.ndarray = None  # (3, 3) primitive lattice rows [Angstrom]
 
     @property
     def n_qpoints(self):
@@ -565,6 +566,7 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
         atom_positions=atom_positions,
         min_phonon_energy_mev=min_phonon_energy_mev,
         phonopy_mesh_object=ph.mesh,
+        lattice_ang=angstrom_primitive(ph).cell,
     )
 
 
