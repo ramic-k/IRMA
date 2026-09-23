@@ -488,7 +488,10 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
 
         # Per-species Debye-Waller lambdas; modes 1/2 use the directional
         # tensors instead.
-        if not phonopy_mt4:
+        if phonopy_mt4:
+            print("    Per-species elastic Debye-Waller comes from the phonopy "
+                  "displacement tensors (inelastic_mode 1/2).")
+        else:
             _compute_per_species_msd(crystal_info, tempr_arr, ntempr, dwpix)
 
     elif iel > 0:
