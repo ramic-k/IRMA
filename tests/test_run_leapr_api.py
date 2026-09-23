@@ -57,18 +57,13 @@ def toy_run_iel1():
     return _run_toy_deck(iel=1)
 
 
-def test_nsk1_vineyard_warning_printed(capsys):
+def test_nsk1_is_announced_and_changes_nothing(toy_run, capsys):
     # nsk=1 reads Cards 17-19 and applies nothing (NJOY2016 parity); the run
-    # must say so loudly instead of silently emitting an nsk=0 tape.
-    _run_toy_deck(nsk=1, skold_cards="1 1.0/\n1.0/\n0.5/\n")
-    text = capsys.readouterr().out
-    assert "Vineyard" in text and "not implemented" in text
-
-
-def test_nsk1_tape_matches_nsk0(toy_run):
-    # the Vineyard no-op means the nsk=1 tape's MF7 equals the nsk=0 tape's
+    # must say so loudly, and its MF7 equals the nsk=0 tape's
     _, out0 = toy_run
     _, out1 = _run_toy_deck(nsk=1, skold_cards="1 1.0/\n1.0/\n0.5/\n")
+    text = capsys.readouterr().out
+    assert "Vineyard" in text and "not implemented" in text
 
     def mf7(path):
         with open(path) as f:
