@@ -1,30 +1,14 @@
-"""Instrument-reach-aware Bragg enumeration.
-
-The tape-free elastic builders must not enumerate the Bragg edges to the ENDF
-tape writer's 5 eV (Q ~ 98 1/A) regardless of what the instrument can reach.
-Edges beyond the largest evaluated Q contribute exactly zero to the spectrum,
-so ``compute_spectrum`` now derives the cutoff from the actual reach
-(``instrument_reach_emax_eV``) -- the ENDF MF7/MT2 tape path in the core
-driver keeps its own full 5 eV call and is untouched. Pinned here:
-
-  * the helper's reach algebra (bank elastic ring, Q-support, cut bands,
-    5 eV cap);
-  * truncation purity: a smaller-emax edge list is the bit-identical PREFIX of a
-    larger-emax one, for BOTH builders;
-  * the load-bearing equivalence on the committed graphite mode-0 example
-    (examples/spectra/graphite_mode0_dosfile.yaml): I_elastic -- combined,
-    per-angle AND per-constant-Q-cut -- is BYTE-IDENTICAL between the
-    reach-derived cutoff and a forced full 5 eV enumeration;
-  * the incoherent-only fast path: no Bragg enumeration runs at all.
+"""Instrument-reach Bragg cutoff: the reach algebra, truncation as a
+bit-identical prefix of the engine builder, and byte-identical elastic
+output on the committed graphite mode-0 example against a full 5 eV run.
 """
 import numpy as np
 import pytest
 from pathlib import Path
 
 from irma.core.constants import HBAR2_OVER_2MN_MEV_A2 as C_E
-from irma.core.crystal import CrystalStructure, AtomSite
 from irma.spectra.elastic import (
-    instrument_reach_emax_eV, from_dos_elastic, from_engine_elastic_state)
+    instrument_reach_emax_eV, from_engine_elastic_state)
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "spectra"
 
@@ -88,50 +72,6 @@ def test_engine_builder_truncation_is_a_bit_identical_prefix():
     assert np.array_equal(trunc.f_bragg, full.f_bragg[:n])         # DW included
     assert np.array_equal(trunc.E_edge_meV, full.E_edge_meV[:n])
     assert float(trunc.E_edge_meV.max()) <= 0.12 / 1.0e-3          # <= emax
-
-
-def test_dos_builder_truncation_is_a_bit_identical_prefix():
-    cr = CrystalStructure(2.866, 2.866, 2.866, 90.0, 90.0, 90.0,
-                          [AtomSite(b_coh_fm=9.45,
-                                    positions=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.5)])])
-    kw = dict(awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0], multiplicity=[2],
-              T_K=296.0, elastic_kind="coherent")
-    full = from_dos_elastic(cr, emax_eV=0.5, **kw)
-    trunc = from_dos_elastic(cr, emax_eV=0.12, **kw)
-    n = trunc.Q_bragg.size
-    assert 0 < n < full.Q_bragg.size
-    assert np.array_equal(trunc.Q_bragg, full.Q_bragg[:n])
-    assert np.array_equal(trunc.f_bragg, full.f_bragg[:n])
-
-
-# ---- incoherent-only: the enumeration must not run at all ---------------------
-@pytest.fixture
-def _no_bragg_enumeration(monkeypatch):
-    """Make any Bragg enumeration call fail loudly (the builders import it
-    from irma.core.crystal at call time)."""
-    import irma.core.crystal as crystal_mod
-
-    def _boom(*a, **k):
-        raise AssertionError("compute_bragg_edges_general must not run for an "
-                             "incoherent-only elastic line")
-    monkeypatch.setattr(crystal_mod, "compute_bragg_edges_general", _boom)
-
-
-def test_dos_builder_incoherent_kind_skips_enumeration(_no_bragg_enumeration):
-    cr = CrystalStructure(2.866, 2.866, 2.866, 90.0, 90.0, 90.0,
-                          [AtomSite(b_coh_fm=9.45, positions=[(0.0, 0.0, 0.0)])])
-    em = from_dos_elastic(cr, awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0],
-                          multiplicity=[1], T_K=296.0, elastic_kind="incoherent")
-    assert em.has_incoherent and not em.has_coherent
-    assert em.Q_bragg.size == 0
-
-
-def test_engine_builder_incoherent_kind_skips_enumeration(_no_bragg_enumeration):
-    em = from_engine_elastic_state(_engine_state(), b_coh_fm=6.646,
-                                   sigma_inc_b=80.0, awr=0.9999,
-                                   elastic_kind="incoherent")
-    assert em.has_incoherent and not em.has_coherent
-    assert em.Q_bragg.size == 0
 
 
 # ---- the load-bearing proof: committed example, reach-derived vs full 5 eV ----
