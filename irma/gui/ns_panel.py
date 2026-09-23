@@ -12,6 +12,7 @@ event loop needed), so they are unit-testable against a withdrawn Tk root.
 """
 
 import argparse
+import dataclasses
 import os
 import sys
 import tempfile
@@ -26,10 +27,32 @@ from irma.gui.widgets import (
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.element_table import ElementTable
 from irma.spectra.config import (
-    SpectraConfig, SpectraConfigError, dump, load, phonopy_species)
+    GridConfig, InstrumentConfig, PhysicsConfig, SpectraConfig,
+    SpectraConfigError, dump, load, phonopy_species)
 from irma.spectra.cli import parse_angles, parse_coeffs
 from irma.spectra.chopper_resolution import (
     available_instruments, available_packages, default_frequency, default_coverage)
+
+# Config fields the panel has no control for. A loaded config's non-default
+# values are carried through build_config instead of being reset to the
+# defaults on the next Run or Save (the NCrystal panel keeps its export
+# settings the same way).
+_NO_WIDGET = {"physics": (PhysicsConfig, ("elastic_from_tape",)),
+              "grid": (GridConfig, ("q_pad_invA",)),
+              "instrument": (InstrumentConfig, ("bank_halfwidth_deg", "combine"))}
+
+
+def _unrepresented_fields(cfg):
+    """{(section, field): value} for the loaded fields in _NO_WIDGET whose
+    value differs from the config default."""
+    carried = {}
+    for section, (cls, names) in _NO_WIDGET.items():
+        defaults = {f.name: f.default for f in dataclasses.fields(cls)}
+        for name in names:
+            value = getattr(getattr(cfg, section), name)
+            if value != defaults[name]:
+                carried[(section, name)] = value
+    return carried
 
 
 _GEOMETRIES = ("indirect", "direct")
@@ -520,6 +543,7 @@ class NSPanel(RunPanel):
         self.runner = runner
         self._status = status_setter or (lambda msg: None)
         self._last_output = None
+        self._carried = {}          # see _unrepresented_fields
         init_form_styles()
         self._build()
         # temp 2-D map files (.npz) live for the panel's lifetime only
@@ -1208,9 +1232,6 @@ class NSPanel(RunPanel):
                 "multiphonon dirs", self.mp_directions.get())
             physics["jobs"] = (parse_int("jobs", self.jobs.get())
                                if self.jobs.get().strip() else None)
-        # elastic-from-tape is intentionally not exposed in the GUI -- the
-        # forward model computes the elastic line on demand from the phonon
-        # model (config/CLI still accept it for import/validation).
 
         grid = {"e_min_meV": parse_float("E min (meV)", self.e_min.get()),
                 "e_max_meV": parse_float("E max (meV)", self.e_max.get()),
@@ -1220,9 +1241,6 @@ class NSPanel(RunPanel):
             grid["q_max_invA"] = parse_float("Q max (1/A)", self.q_max.get())
 
         geometry = self._geometry()
-        # bank_halfwidth_deg is deliberately not a GUI control
-        # (OCLIMAX/Euphonic expose none); the config keeps its fixed
-        # default for the elastic-Bragg window.
         instrument = {"geometry": geometry,
                       "export_components": bool(self.export_components.get())}
         if geometry == "indirect":
@@ -1280,9 +1298,11 @@ class NSPanel(RunPanel):
         else:
             instrument["resolution_shape"] = "gaussian"
 
-        return SpectraConfig.from_dict(
-            {"material": material, "physics": physics, "grid": grid,
-             "instrument": instrument})
+        sections = {"material": material, "physics": physics, "grid": grid,
+                    "instrument": instrument}
+        for (section, name), value in self._carried.items():
+            sections[section][name] = value
+        return SpectraConfig.from_dict(sections)
 
     @staticmethod
     def _scatterer_to_row(s):
@@ -1300,8 +1320,17 @@ class NSPanel(RunPanel):
                 "positions": pos}
 
     def load_config(self, cfg):
-        """Populate every widget from a SpectraConfig (for Open / round-trip)."""
+        """Populate every widget from a SpectraConfig (for Open / round-trip).
+
+        Refuses (before touching a widget) an indirect-geometry map, which
+        the panel cannot represent: it runs maps for direct geometry only.
+        """
         m, p, g, ins = cfg.material, cfg.physics, cfg.grid, cfg.instrument
+        if ins.geometry != "direct" and ins.output_mode == "map":
+            raise SpectraConfigError(
+                f"this config asks for a {ins.geometry}-geometry 2-D map, and the "
+                f"panel runs maps for direct geometry only; run it with "
+                f"`irma spectra map <config> -o <map.csv>`")
         load_phonopy_fields(self, m)
         self.temperature.set(m.temperature_K)
         self.lattice.set(",".join(str(x) for x in m.lattice) if m.lattice else "")
@@ -1325,7 +1354,6 @@ class NSPanel(RunPanel):
         self.elastic.set("on" if p.elastic else "off")
         self.elastic_kind.set(p.elastic_kind)
         self.incoherent_elastic_dw.set(p.incoherent_elastic_mode)
-        # elastic_from_tape has no GUI widget (computed on demand); skip it.
         self.include_gain.set(p.include_energy_gain)
         self.gain_side.set(_GAIN_SIDE_REV[p.gain_side])
         self.kinematic.set(p.kinematic_kf_ki)
@@ -1385,7 +1413,7 @@ class NSPanel(RunPanel):
         self.ind_sigma_coeffs.set_coeffs(ins.sigma_coeffs)
         self.dir_sigma_coeffs.set_coeffs(ins.sigma_coeffs)
         self.export_components.set(bool(ins.export_components))
-        # 'combine' / 'bank_halfwidth_deg' have no GUI widget; ignored.
+        self._carried = _unrepresented_fields(cfg)
         self._sync_ns_context()          # apply field/column visibility for the loaded mode
 
     # -------------------------------------------------------------- actions --
@@ -1640,11 +1668,18 @@ class NSPanel(RunPanel):
         if not path:
             return
         try:
-            cfg = load(path)
+            self.load_config(load(path))
         except Exception as exc:
             messagebox.showerror("Open Config", str(exc))
             return
-        self.load_config(cfg)
+        if self._carried:
+            # no control on the form shows these, so say so in the log
+            self.log.append(
+                "note: carried from the file (no control on this panel; the "
+                "next Run or Save keeps them): "
+                + ", ".join(f"{s}.{n}={v!r}"
+                            for (s, n), v in sorted(self._carried.items()))
+                + "\n")
         self._status(f"Loaded config from {os.path.basename(path)}")
 
     def _plot(self):
