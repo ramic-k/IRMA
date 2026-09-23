@@ -110,7 +110,6 @@ def contract_real_symmetric_projection_components(
 def build_star_averaged_projection_components(
     full_mesh_eigvecs: np.ndarray,
     reduced_mesh,
-    chunk_size: int = 256,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build exact star-averaged ``|u.e|^2`` tensors for an irreducible mesh.
 
@@ -120,16 +119,8 @@ def build_star_averaged_projection_components(
     tensor with a real unit vector ``u`` reproduces the exact full-mesh star
     average of ``|u.e|^2`` without revisiting all symmetry-equivalent q-points.
     """
-    mapping_table = getattr(reduced_mesh, "grid_mapping_table", None)
-    ir_grid_points = getattr(reduced_mesh, "ir_grid_points", None)
-    if mapping_table is None or ir_grid_points is None:
-        raise ValueError(
-            "Symmetry-reduced mesh is missing grid_mapping_table/ir_grid_points needed "
-            "for star-averaged projection tensors."
-        )
-
-    mapping = np.asarray(mapping_table, dtype=np.intp)
-    ir_grid_points = np.asarray(ir_grid_points, dtype=np.intp)
+    mapping = np.asarray(reduced_mesh.grid_mapping_table, dtype=np.intp)
+    ir_grid_points = np.asarray(reduced_mesh.ir_grid_points, dtype=np.intp)
     if full_mesh_eigvecs.shape[0] != len(mapping):
         raise ValueError(
             "Full-mesh eigenvector count does not match reduced-mesh mapping table length."
@@ -146,7 +137,7 @@ def build_star_averaged_projection_components(
     n_atoms = full_mesh_eigvecs.shape[2]
     projection_components = np.zeros((n_ir, n_branches, n_atoms, 6), dtype=float)
 
-    chunk_size = max(1, int(chunk_size))
+    chunk_size = 256
     for start in range(0, full_mesh_eigvecs.shape[0], chunk_size):
         stop = min(full_mesh_eigvecs.shape[0], start + chunk_size)
         eig_block = np.asarray(full_mesh_eigvecs[start:stop], dtype=np.complex128)
@@ -274,32 +265,12 @@ def precompute_directional_multiphonon_orders(
             pending_dirs.append(idir)
             pending_atoms.append(atom_index)
 
-    # Batched T1**n recursion: pocketfft transforms each row of a 2-D input
-    # independently, so the per-row arithmetic — rfft(prev),
-    # irfft(base_fft * prev_fft), *= de_mev, center slice — is the FFT
-    # form of recursive_multiphonon_orders_no_factorial (the single-row
-    # reference implementation above), with the FFT dispatch overhead
-    # amortized across rows. FFT is the only viable form here: the ladder
-    # runs one convolution per order for every (direction, atom) row, and
-    # the auto-sized order count reaches ~1000 for soft-mode materials, so
-    # direct O(n^2) convolutions would total ~10^6 kernel calls per run
-    # (measured: ~85% of the phase's serial time on a 9-atom cell) where
-    # the batched FFT needs a handful of pocketfft calls per order. Each
-    # order is scattered straight into order_tables so no
-    # (n_rows, max_order, n_e) intermediate exists.
-    #
-    # Per-row order horizon: max_order is auto-sized from the GLOBAL
-    # 2W_max = Q_max^2 * U_max (order ~1000 for soft-mode materials like
-    # beta-quartz), but each row's Poisson weights vanish above its OWN
-    # horizon 2W_row = Q_max^2 * (u_hat . U_d . u_hat) — the directional
-    # MSDs span ~20x, so most rows never need the global depth. Orders
-    # above a row's horizon carry weights that underflow to EXACTLY 0.0 in
-    # the deposit for every Q, so leaving those table entries zero changes
-    # no output bit (fma(0, k, acc) == acc); the ladder therefore processes
-    # rows sorted by horizon and shrinks the FFT batch as orders pass each
-    # row's cutoff. Horizon per order n: the log-weight's maximum over
-    # Q^2 in (0, q2_max] sits at w = min(n, 2W_row) and must clear the
-    # float64 underflow line (-760 sits safely below the true ~-745.8).
+    # T1**n for all rows at once, one batched rfft/irfft per order. Each row
+    # stops at its own order horizon: the last order whose Poisson weight at
+    # Q_max stays above float64 underflow (log weight >= -760, below exp's
+    # ~-745.8 zero line). Later orders have weight exactly 0.0, so leaving
+    # their tables zero changes no output bit. Rows are sorted by horizon and
+    # the batch shrinks as orders pass each row's horizon.
     if pending_rows and max_order >= 2:
         rows_hat = np.array(pending_rows, dtype=float)        # (n_rows, n_e)
         dir_idx = np.asarray(pending_dirs, dtype=np.intp)
@@ -393,25 +364,17 @@ _STATE_GENERATION = 0
 def share_worker_state(state: dict):
     """Stage a worker-state dict in shared memory for the spawn pool.
 
-    Every ndarray member is copied once into a multiprocessing.shared_memory
-    block (zero-copy to attach, one copy in RAM regardless of ncpu); the
-    remainder (scalars, small containers, the phonopy dynamical matrix) is
-    pickled into one more shared block. What travels per task is only the
-    returned ``state_ref`` — (generation, array manifest, remainder block
-    name, remainder length) — so ONE long-lived pool can switch state
-    between compute phases without restarting workers: _dispatch_block
-    re-attaches when it sees a new generation and reuses the cached
-    attachment otherwise.
+    Each non-empty, non-object ndarray gets its own shared-memory block; the
+    rest (scalars, small containers, the phonopy dynamical matrix) is pickled
+    into one more block. Tasks carry only the returned ``state_ref``
+    (generation, array manifest, pickle block name and length), and
+    _dispatch_block re-attaches when the generation changes, so one pool
+    serves every compute stage.
 
-    Returns (state_ref, shm_handles); the caller must keep shm_handles alive
-    while the phase runs and hand them to release_shared_state afterwards.
-    Workers keep their own mappings until the next generation swap, so the
-    parent unlinking right after the phase is safe on POSIX (mapping
-    persists until close) and on Windows (unlink is a no-op).
-
-    Zero-size and object-dtype arrays stay in the pickled remainder: the
-    former cannot back a shared-memory block, the latter hold references
-    that raw bytes cannot carry.
+    Returns (state_ref, shm_handles). The caller keeps the handles alive
+    during the stage and then passes them to release_shared_state. The parent
+    unlinks the blocks; workers keep their own mappings until the next
+    generation.
     """
     import pickle
     from multiprocessing import shared_memory
@@ -558,20 +521,11 @@ def principal_weighted_coherent_partition(
     - exact principal self term ``|F_p|^2``
     - weighted principal/non-principal interference sum
 
-    Each pairwise interference term ``2 Re(F_p F_o*)`` is shared between its
-    two participants only, in proportion to their coherent weights: the
-    principal keeps ``w_p / (w_p + w_o)`` of the (p, o) term. Summed over all
-    principals every pair term regains coefficient exactly 1, so the
-    per-species partials add back to the exact coherent total ``|sum_p F_p|^2``
-    for any number of site groups. A single scalar share of the TOTAL cross
-    term cannot do this beyond two groups: each pair would come back with
-    coefficient ``w_p + w_o < 1`` and the partials would undercount the
-    interference. For exactly two groups the pairwise factor reduces to the
-    scalar ``sigma_coh`` share, bit-for-bit. In the degenerate
-    all-zero-weight case the 0.5 fallback below is arbitrary by
-    construction: zero coherent weight forces zero coherent amplitudes
-    upstream (the prefactors scale with ``b_coh``), so the factor
-    multiplies an exactly-zero term.
+    Each pair term ``2 Re(F_p F_o*)`` is split between its two groups in
+    proportion to their coherent weights: the principal keeps
+    ``w_p / (w_p + w_o)``. Summed over all principals every pair term comes
+    back with coefficient 1, so the partials add up to the exact coherent
+    total ``|sum_p F_p|^2`` for any number of groups.
     """
     principal_amplitude = np.take(group_amplitudes, principal_group_index, axis=-2)
     principal_self = np.abs(principal_amplitude) ** 2
@@ -644,13 +598,9 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     q_red = q_mags_block[:, None] * direction_red_basis[direction_index]
     q_cart_block = q_mags_block[:, None] * directions[direction_index]
     unit_dirs_block = directions[direction_index]
-    # Parallelepiped fold to [-1/2, 1/2)^3 in reduced coordinates instead of
-    # phonopy's Wigner-Seitz fold: any image choice
-    # differs only by an integer G, and the explicit exp(2*pi*i G.r) phase
-    # below compensates it exactly. The dynamical matrix is evaluated at an
-    # equivalent-but-different q, so results differ at floating-point level
-    # only; gated at ENDF tape precision (1e-6), like the rest of the
-    # physics-metric-validated coherent path.
+    # Fold to [-1/2, 1/2)^3 in reduced coordinates. This differs from
+    # phonopy's Wigner-Seitz fold only by an integer G, which the
+    # exp(2*pi*i G.r) phase below compensates.
     q_folded = np.ascontiguousarray(q_red - np.rint(q_red))
     frequencies, eigvecs = _batched_qpoints_eigh(dynamical_matrix, q_folded,
                                                  frequency_factor_to_thz)
@@ -667,19 +617,10 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
         unit_conversion * mev_to_joule * BARN_PER_M2 * one_phonon_creation_scale
     )
 
-    # --- Block-vectorized structure factor and line weights ----------------
-    # The whole (M directions x nbands modes) grid is computed in bulk: the
-    # former per-q Python loop spawned ~30 micro-numpy ops and re-found the
-    # einsum contraction path on every q-point. Invalid modes (freq <= 0,
-    # i.e. the Gamma Goldstone modes) and degenerate directions (|q| < 1e-12)
-    # are carried through with zero weight rather than skipped, keeping every
-    # array rectangular. The result equals the per-q computation to floating-
-    # point roundoff (different summation order only); the coherent path is
-    # validated against Euphonic by physics metrics, not byte identity.
+    # The block is computed as one (samples x modes) array. Invalid modes and
+    # |q| < 1e-12 samples carry zero weight instead of being skipped.
     n_atoms_coh = eigvecs.shape[1] // 3
-    # One mode population for every term: with a user cutoff the coherent
-    # term applies the mesh consumers' rule (floors plus cutoff, Gamma-aware
-    # on the folded q); without one it keeps every positive mode, as before.
+    # Same mode floors and cutoff as the mesh mode sums, Gamma-aware on the folded q.
     from irma.core.phonopy_io import coherent_mode_mask
     valid_modes = coherent_mode_mask(frequencies * THzToEv * 1000.0, q_folded,
                                      min_phonon_energy_mev)          # (M, B)
@@ -856,37 +797,22 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
     sigma_total_scale = state["multiphonon_sigma_total_scale"]
     total_num_dirs = state["num_total_dirs"]
     multiphonon_orders = order_tables[:, :, 1:, :]
-    # Per-order n>=2 weighting is the bounded Poisson term Poisson(2W; n) = (2W)^n/n! e^{-2W}
-    # with mean 2W = Q^2 * (u_hat . U . u_hat), multiplying the unit-area self shapes built
-    # by precompute. Because the shapes carry the (u^2)^n scaling, this is mathematically
-    # identical to the exact (Q^2)^n/n! e^{-Q^2 u^2} (u^2)^n form, but every factor is now
-    # representable: the Poisson log is <= 0, so it cannot overflow and needs no clip, and
-    # the unit shapes cannot underflow. This lets the high-Q orders build the free-gas limit.
+    # Order n >= 2 is weighted by Poisson(2W; n) = (2W)^n/n! e^{-2W}, with
+    # 2W = Q^2 (u_hat . U . u_hat), times the unit-area shapes from the
+    # precompute. This equals (Q^2)^n/n! e^{-Q^2 u^2} (u^2)^n, but the log
+    # weight is <= 0, so nothing overflows at high Q.
     n_orders = multiphonon_orders.shape[2]
     order_numbers = np.arange(2, 2 + n_orders, dtype=float)
     log_factorials = np.array(
         [math.lgamma(int(n) + 1) for n in order_numbers], dtype=float
     )
 
-    # --- Batched deposit sweep ---------------------------------------------
-    # The Poisson(2W; n) weights for a chunk of Q rows contract with the
-    # per-(direction, atom, order) energy tables as one
-    # (rows x d*a*o) @ (d*a*o x e) matrix product rather than one small
-    # einsum per Q row: the contraction is ~10^12 MACs per block, so it
-    # must run inside BLAS, not through ~num_q Python iterations. BLAS
-    # chooses its own (d, a, o) summation order, so the result is
-    # deterministic per run but pinned only to ~1e-13 relative — about 6
-    # orders below the ENDF writer's 6-significant-figure rounding; the
-    # regression gate for this path is tape-byte comparison (the fast-CI
-    # baseline pins), not float64 identity. Rows with q ~ 0 or
-    # non-positive quadrature weight carry zero row_scale and deposit
-    # nothing.
+    # A chunk of Q rows is deposited as one (rows x d*a*o) @ (d*a*o x e)
+    # matrix product. Rows with q ~ 0 have zero row_scale.
     n_e_out = multiphonon_orders.shape[3]
     orders_c = np.ascontiguousarray(multiphonon_orders)
     kernel_matrix = orders_c.reshape(-1, n_e_out)
-    # Gain kernel matrix: the SAME (direction, atom, order) Poisson weighting
-    # `term` (computed below) contracts with the gain-window orders, so the gain
-    # side costs only a second matmul -- no recomputation of weights.
+    # The gain side reuses the same weights with the gain-window orders.
     gain_orders_c = (
         np.ascontiguousarray(order_tables_gain[:, :, 1:, :])
         if sqe_multiphonon_gain is not None
@@ -907,23 +833,11 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         q2 = q_grid[rows] ** 2                                   # (r,)
         two_w = q2[:, None, None] * projected_u2[None, :, :]     # (r,d,a)
         positive_2w = two_w > 0.0
-        # Order window. A Poisson weight whose log falls below the float64
-        # underflow line is EXACTLY 0.0 after exp(), and dropping exact
-        # zeros from the matmul's sequential k-accumulation leaves every
-        # partial sum bit-identical (fma(0, k, acc) == acc), so restricting
-        # the contraction to the surviving order range changes nothing but
-        # the work. For soft-mode materials the ladder is auto-sized by
-        # 2W at the LARGEST Q (order ~1000), while low-Q chunks weight only
-        # orders near their own small 2W — this window is where that
-        # asymmetry stops costing dense matmul columns. Per order the log
-        # term's maximum over the chunk's 2W range [w_min, w_max] sits at
-        # w = clamp(n, w_min, w_max) (d/dw of n*ln(w) - w is n/w - 1), an
-        # exact pointwise bound with no interval assumptions; -760 sits
-        # safely below exp()'s true zero-underflow line (~-745.8).
+        # Order window: orders whose Poisson weight is exactly 0.0 for every
+        # row of the chunk are left out of the matmul, which changes no sum.
+        # Per order, the log weight is largest at w = clamp(n, w_min, w_max).
         w_pos = two_w[positive_2w]
         if w_pos.size == 0:
-            # Every weight in the chunk is exactly zero; the full matmul
-            # would only add exact zeros.
             continue
         w_best = np.clip(order_numbers, float(w_pos.min()), float(w_pos.max()))
         keep = np.nonzero(

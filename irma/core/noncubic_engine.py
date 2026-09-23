@@ -67,8 +67,7 @@ from irma.core.noncubic_helpers import (  # re-exported for back-compat
     infer_sigma_barn,
     normalize_site_groups,
     convert_sqe_to_asym_downscatter_sab,
-    parse_scattering_lengths,
-    parse_incoherent_cross_sections,
+    parse_element_table,
     reshape_mesh_eigenvectors,
     derive_required_multiphonon_order,
     multiphonon_energy_reach,
@@ -93,15 +92,6 @@ from irma.core.noncubic_numerics import (  # re-exported for back-compat
 Angstrom = 1e-10
 THz = 1000000000000.0
 
-
-# Single-element fallback tables for the STANDALONE CLI driver only. The
-# production engine path (mode 1/2 ENDF generation) always passes
-# site_scattering_lengths_angstrom / incoherent overrides explicitly and a
-# scattering-lengths JSON, so these are never consulted on the validated path.
-# Any non-Carbon standalone run must supply --scattering-lengths-json/-file (or
-# the incoherent equivalents); otherwise resolution fails loudly with a clear
-# "Missing ..." ValueError. 6.646e-5 A is the natural-C coherent length;
-# 0.001 barn is a placeholder incoherent value.
 
 # --- spawn-pool worker layer (lives in noncubic_workers) ---------------------
 # The ProcessPoolExecutor kernels (accumulate_*_block), the WORKER_STATE
@@ -363,11 +353,6 @@ def compute_from_args(
         incoherent_one_phonon_mode_weights = context["incoherent_one_phonon_mode_weights"]
         incoherent_one_phonon_mode_eigvecs_valid = context["incoherent_one_phonon_mode_eigvecs_valid"]
         max_mode_energy_mev = context["max_mode_energy_mev"]
-        multiphonon_mode_energies_mev = context["multiphonon_mode_energies_mev"]
-        multiphonon_mode_frequencies_thz = context["multiphonon_mode_frequencies_thz"]
-        multiphonon_mode_weights = context["multiphonon_mode_weights"]
-        multiphonon_mode_eigvecs_valid = context["multiphonon_mode_eigvecs_valid"]
-        multiphonon_q_weight_norm = context["multiphonon_q_weight_norm"]
         multiphonon_mode_projection_components = context["multiphonon_mode_projection_components"]
         multiphonon_star_counts = context["multiphonon_star_counts"]
         num_jobs = context["num_jobs"]
@@ -555,7 +540,7 @@ def compute_from_args(
         multiphonon_mode_weights = incoherent_one_phonon_mode_weights
         multiphonon_mode_occupancies = incoherent_one_phonon_mode_occupancies
         multiphonon_mode_eigvecs_valid = incoherent_one_phonon_mode_eigvecs_valid
-
+        multiphonon_q_weight_norm = incoherent_one_phonon_q_weight_norm
 
         # The pool (pool_holder, created lazily by run_blocks) carries no
         # per-stage state of its own: each stage stages its state in shared
