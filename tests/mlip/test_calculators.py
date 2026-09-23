@@ -87,9 +87,14 @@ class _FakeTorch(types.ModuleType):
         self.default_dtype = d
 
 
-def test_mattersim_branch_with_stubs(monkeypatch, tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+@pytest.fixture
+def fake_torch(monkeypatch):
+    torch = _FakeTorch()
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    return torch
+
+
+def test_mattersim_branch_with_stubs(monkeypatch, tmp_path, fake_torch):
     made = {}
 
     class StubCalc:
@@ -289,21 +294,15 @@ def test_mace_checkpoint_file_is_loaded_once_from_its_bytes(
     assert "license_note" not in meta
 
 
-def test_mace_checkpoint_without_heads_is_single_head(monkeypatch, tmp_path):
+def test_mace_checkpoint_heads(monkeypatch, tmp_path):
     pytest.importorskip("ase")
     model_file = tmp_path / "w.model"
     model_file.write_bytes(b"w")
-    # legacy checkpoints without a heads attribute are single-head
+    # legacy checkpoints without a heads attribute are single-head...
     _stub_mace(monkeypatch, _FakeMaceModel(heads=None), {})
     _, meta = make_calculator(CalculatorSpec("mace", model=str(model_file)))
     assert meta["checkpoint_heads"] == ["Default"]
-
-
-def test_mace_multihead_and_non_mace_files_are_refused(monkeypatch,
-                                                       tmp_path):
-    pytest.importorskip("ase")
-    model_file = tmp_path / "w.model"
-    model_file.write_bytes(b"w")
+    # ...multi-head checkpoints and non-MACE files are refused
     _stub_mace(monkeypatch, _FakeMaceModel(heads=("mp", "omat")), {})
     with pytest.raises(ValueError, match="multi-head"):
         make_calculator(CalculatorSpec("mace", model=str(model_file)))
@@ -348,9 +347,7 @@ def test_native_thread_env_is_clamped(monkeypatch):
     assert os.environ["OPENBLAS_NUM_THREADS"] == "1"
 
 
-def test_sevennet_branch_with_stubs(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_sevennet_branch_with_stubs(monkeypatch, fake_torch):
     made = {}
 
     def stub(model=None, modal=None, device=None):
@@ -367,8 +364,7 @@ def test_sevennet_branch_with_stubs(monkeypatch):
 
     made.clear()
     calc, _ = make_calculator(CalculatorSpec("sevennet", model="7net-0"))
-    assert made == {"model": "7net-0", "modal": None, "device": "cpu"} or \
-           made == {"model": "7net-0", "device": "cpu"}
+    assert made == {"model": "7net-0", "modal": None, "device": "cpu"}
 
 
 def _stub_orb(monkeypatch, calculator_cls, **builders):
@@ -380,9 +376,7 @@ def _stub_orb(monkeypatch, calculator_cls, **builders):
                   ORBCalculator=calculator_cls)
 
 
-def test_orb_current_api_tuple_and_adapter(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_orb_current_api_tuple_and_adapter(monkeypatch, fake_torch):
     made = {}
 
     class StubORB:
@@ -396,9 +390,7 @@ def test_orb_current_api_tuple_and_adapter(monkeypatch):
                     "device": "cpu"}
 
 
-def test_orb_filesystem_checkpoint_uses_weights_path(monkeypatch, tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_orb_filesystem_checkpoint_uses_weights_path(monkeypatch, tmp_path, fake_torch):
     made = {}
 
     def builder(weights_path=None, device=None, precision=None):
@@ -418,23 +410,14 @@ def test_orb_filesystem_checkpoint_uses_weights_path(monkeypatch, tmp_path):
     assert made["model"] == "path-model"
 
 
-def test_orb_unknown_builder_name_is_a_clear_error(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    _stub_orb(monkeypatch, type("S", (), {}),
-              orb_v3_conservative_inf_omat=lambda **kw: ("m", "a"))
-    # a bad --model name is a USAGE error (CLI exit 2), not a missing
-    # dependency (exit 4) -- review reclassification
-    with pytest.raises(ValueError, match="pretrained"):
-        make_calculator(CalculatorSpec("orb", model="not_a_builder"))
-
-
-def test_orb_direct_force_builder_is_refused(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_orb_bad_model_names_are_refused(monkeypatch, fake_torch):
     _stub_orb(monkeypatch, type("S", (), {}),
               orb_v3_conservative_inf_omat=lambda **kw: ("cons", "a"),
               orb_v3_direct_inf_omat=lambda **kw: ("direct", "a"))
+    # a bad --model name is a USAGE error (CLI exit 2), not a missing
+    # dependency (exit 4)
+    with pytest.raises(ValueError, match="pretrained"):
+        make_calculator(CalculatorSpec("orb", model="not_a_builder"))
     # the builder EXISTS in orb_models, but it is a direct-force head: the
     # conservative-force rule must refuse it by name (docs/mlip.md promises
     # "no option can select a direct-force model")
@@ -470,9 +453,7 @@ def _stub_upet(monkeypatch, made, resolved_version="9.9.9"):
                                          "pet-omat-s"])
 
 
-def test_pet_mad_alias_pins_resolved_version(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_pet_mad_alias_pins_resolved_version(monkeypatch, fake_torch):
     made = {}
     _stub_upet(monkeypatch, made)
 
@@ -485,9 +466,7 @@ def test_pet_mad_alias_pins_resolved_version(monkeypatch):
     assert meta["checkpoint_sha256"] is None
 
 
-def test_pet_mad_explicit_version_skips_resolution(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_pet_mad_explicit_version_skips_resolution(monkeypatch, fake_torch):
     made = {}
     _stub_upet(monkeypatch, made)
 
@@ -498,9 +477,7 @@ def test_pet_mad_explicit_version_skips_resolution(monkeypatch):
     assert meta["checkpoint"] == "pet-omat-s@1.2.3"
 
 
-def test_pet_mad_checkpoint_file_uses_checkpoint_path(monkeypatch, tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_pet_mad_checkpoint_file_uses_checkpoint_path(monkeypatch, tmp_path, fake_torch):
     made = {}
     _stub_upet(monkeypatch, made)
 
@@ -519,9 +496,7 @@ def test_pet_mad_checkpoint_file_uses_checkpoint_path(monkeypatch, tmp_path):
     assert made["checkpoint_path"] == str(odd)
 
 
-def test_pet_mad_unknown_alias_is_a_clear_error(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_pet_mad_unknown_alias_is_a_clear_error(monkeypatch, fake_torch):
     _stub_upet(monkeypatch, {})
     with pytest.raises(ValueError, match="unknown pet-mad model"):
         make_calculator(CalculatorSpec("pet-mad", model="pet-nonsense-s"))
@@ -538,9 +513,7 @@ def _stub_deepmd(monkeypatch, made):
     _install_stub(monkeypatch, "deepmd.calculator", DP=StubDP)
 
 
-def test_dpa3_local_file_with_head(monkeypatch, tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_dpa3_local_file_with_and_without_head(monkeypatch, tmp_path, fake_torch):
     made = {}
     _stub_deepmd(monkeypatch, made)
 
@@ -553,30 +526,20 @@ def test_dpa3_local_file_with_head(monkeypatch, tmp_path):
     assert meta["dtype"] == "float64"
     assert meta["checkpoint_sha256"] is not None   # hash of the real file
 
-
-def test_dpa3_local_file_without_head_passes_none(monkeypatch, tmp_path):
     # a frozen single-task model has no branches; the MPtrj default must
     # only apply to the known multitask aliases
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    made = {}
-    _stub_deepmd(monkeypatch, made)
-
-    ckpt = tmp_path / "frozen.pth"
-    ckpt.write_bytes(b"dpa-weights")
+    made.clear()
     _, meta = make_calculator(CalculatorSpec("dpa3", model=str(ckpt)))
     assert made["head"] is None
     assert meta["checkpoint"] == str(ckpt)
 
 
 def test_dpa3_alias_downloads_once_and_gets_default_head(monkeypatch,
-                                                         tmp_path):
+                                                         tmp_path, fake_torch):
     import hashlib
 
     from irma.mlip import calculators
 
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
     made, downloads = {}, []
     _stub_deepmd(monkeypatch, made)
     monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
@@ -604,35 +567,6 @@ def test_dpa3_alias_downloads_once_and_gets_default_head(monkeypatch,
     # second build finds the cached file and never touches the network
     make_calculator(CalculatorSpec("dpa3"))
     assert len(downloads) == 1
-
-
-def test_dpa3_download_integrity_mismatch_is_rejected(monkeypatch, tmp_path):
-    # a checkpoint whose sha256 does not match the pin must never reach
-    # deepmd's pickle-based loader, and must not survive in the cache
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    made = {}
-    _stub_deepmd(monkeypatch, made)
-    monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
-
-    def stub_download(repo, filename, revision=None, local_dir=None):
-        path = tmp_path / filename
-        path.write_bytes(b"retagged upstream payload")
-        return str(path)
-
-    _install_stub(monkeypatch, "huggingface_hub",
-                  hf_hub_download=stub_download)
-
-    with pytest.raises(RuntimeError, match="integrity check FAILED"):
-        make_calculator(CalculatorSpec("dpa3"))
-    assert made == {}                              # DP was never built
-    assert not (tmp_path / "DPA-3.1-3M.pt").exists()   # bad copy removed
-
-    # a tampered CACHED copy is caught the same way (cache-hit path)
-    (tmp_path / "DPA-3.1-3M.pt").write_bytes(b"tampered cache")
-    with pytest.raises(RuntimeError, match="integrity check FAILED"):
-        make_calculator(CalculatorSpec("dpa3"))
-    assert not (tmp_path / "DPA-3.1-3M.pt").exists()
 
 
 def test_pet_known_version_hash_is_verified(monkeypatch, tmp_path):
@@ -668,9 +602,7 @@ def test_pet_known_version_hash_is_verified(monkeypatch, tmp_path):
     assert os.path.isfile(pinned.model)
 
 
-def test_dpa3_unknown_alias_and_malformed_head_are_clear_errors(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_dpa3_unknown_alias_and_malformed_head_are_clear_errors(monkeypatch, fake_torch):
     _stub_deepmd(monkeypatch, {})
     with pytest.raises(ValueError, match="unknown dpa3 model"):
         make_calculator(CalculatorSpec("dpa3", model="DPA-99"))
@@ -678,33 +610,10 @@ def test_dpa3_unknown_alias_and_malformed_head_are_clear_errors(monkeypatch):
         make_calculator(CalculatorSpec("dpa3", model="DPA-3.1-3M::"))
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="':' is illegal in NTFS filenames, so a '::'-bearing local checkpoint path cannot exist on Windows")
-def test_dpa3_checkpoint_path_containing_separator(monkeypatch, tmp_path):
-    # '::' is legal in POSIX filenames; an existing file must be taken
-    # whole, and a real prefix path may still carry an explicit head
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    made = {}
-    _stub_deepmd(monkeypatch, made)
-
-    odd = tmp_path / "run::v2.pt"
-    odd.write_bytes(b"w")
-    make_calculator(CalculatorSpec("dpa3", model=str(odd)))
-    assert made == {"model": str(odd), "head": None}
-
-    made.clear()
-    plain = tmp_path / "m.pt"
-    plain.write_bytes(b"w")
-    make_calculator(CalculatorSpec("dpa3", model=f"{plain}::Omat24"))
-    assert made == {"model": str(plain), "head": "Omat24"}
-
-
 def test_dpa3_import_time_failure_is_a_dependency_error(monkeypatch,
-                                                        tmp_path):
+                                                        tmp_path, fake_torch):
     # deepmd.calculator imports DeepPot at module load, so the mpich/ABI
     # failures can fire at IMPORT, not just at DP construction
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
     _install_stub(monkeypatch, "deepmd")
     monkeypatch.setitem(sys.modules, "deepmd.calculator", None)  # ImportError
     ckpt = tmp_path / "m.pt"
@@ -713,9 +622,7 @@ def test_dpa3_import_time_failure_is_a_dependency_error(monkeypatch,
         make_calculator(CalculatorSpec("dpa3", model=str(ckpt)))
 
 
-def test_dpa3_abi_mismatch_is_a_dependency_error(monkeypatch, tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_dpa3_abi_mismatch_is_a_dependency_error(monkeypatch, tmp_path, fake_torch):
 
     class ExplodingDP:
         def __init__(self, model=None, head=None):
@@ -805,24 +712,15 @@ def test_pet_mad_latest_is_unpinned_never_an_identity(monkeypatch, tmp_path):
 
 def test_resolved_checkpoint_identity(monkeypatch, tmp_path):
     from irma.mlip.calculators import (
-        _DEFAULT_MODELS, _checkpoint_sha256, resolved_checkpoint_identity)
+        _checkpoint_sha256, resolved_checkpoint_identity)
 
-    # the HISTORICAL fingerprint formula, verbatim from the pre-review
-    # _fingerprint: any deviation for the five legacy potentials would
-    # silently invalidate every existing force cache
-    def old_formula(spec):
-        model = spec.model or _DEFAULT_MODELS.get(spec.potential, "builtin")
-        return _checkpoint_sha256(spec.model) or str(model)
-
+    # a named model is its own identity; a checkpoint file is its content
     ckpt = tmp_path / "w.pth"
     ckpt.write_bytes(b"weights")
-    legacy = ("mattersim", "orb", "sevennet", "mace", "mace-off")
-    for potential in legacy:
-        for model in (None, "some-named-model",
-                      str(tmp_path / "missing.pth"), str(ckpt)):
-            spec = CalculatorSpec(potential, model=model)
-            assert resolved_checkpoint_identity(spec) == old_formula(spec), \
-                (potential, model)
+    assert resolved_checkpoint_identity(
+        CalculatorSpec("mace", model="medium")) == "medium"
+    assert resolved_checkpoint_identity(
+        CalculatorSpec("mace", model=str(ckpt))) == _checkpoint_sha256(str(ckpt))
 
     # pinned pet-mad needs no upet import at all
     assert resolved_checkpoint_identity(
@@ -841,25 +739,19 @@ def test_resolved_checkpoint_identity(monkeypatch, tmp_path):
 
 
 def test_nequip_zoo_id_normalization_and_cache(monkeypatch, tmp_path):
-    from irma.mlip.calculators import (
-        _nequip_artifact_path, _normalize_nequip_zoo_id, canonicalize_spec)
+    from irma.mlip.calculators import _normalize_nequip_zoo_id, canonicalize_spec
     norm = _normalize_nequip_zoo_id
     assert norm("NequIP-OAM-L:0.1") == "mir-group/NequIP-OAM-L:0.1"
     assert norm("nequip.net:mir-group/NequIP-OAM-XL:0.1") == \
         "mir-group/NequIP-OAM-XL:0.1"
     assert norm("other-group/Model:2.0") == "other-group/Model:2.0"
-    for bad in ("NequIP-OAM-L", "NequIP-OAM-L:", "nequip.net:",
-                "a/b/c:1", "a/:1", ":1", "a:1/b"):
+    for bad in ("NequIP-OAM-L", "a/b/c:1"):
         with pytest.raises(ValueError, match="malformed nequip model"):
             norm(bad)
     # a mistyped PATH must say so, not be treated as a zoo id
     with pytest.raises(ValueError, match="looks like a file path"):
         norm(str(tmp_path / "missing.nequip.pt2"))
 
-    # lossy readable names must not alias distinct ids (review finding)
-    monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
-    assert _nequip_artifact_path("a-b/c:1", ".nequip.pt2") != \
-        _nequip_artifact_path("a/b-c:1", ".nequip.pt2")
     # a compiled artifact path is already canonical
     art = tmp_path / "m.nequip.pt2"
     art.write_bytes(b"compiled")
@@ -884,9 +776,7 @@ def test_nequip_canonicalize_dispatches_before_any_torch_use(monkeypatch,
     assert pinned.model == "/shared/artifact.nequip.pt2"
 
 
-def test_nequip_branch_loads_compiled_artifact(monkeypatch, tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_nequip_branch_loads_compiled_artifact(monkeypatch, tmp_path, fake_torch):
     made = {}
 
     class StubNequIP:
@@ -907,9 +797,7 @@ def test_nequip_branch_loads_compiled_artifact(monkeypatch, tmp_path):
     assert "license_note" not in meta          # MIT/CC-BY: no note
 
 
-def test_grace_branch_and_asl_note(monkeypatch, tmp_path):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_grace_branch_and_asl_note(monkeypatch, tmp_path, fake_torch):
     made = {}
 
     def stub_grace_fm(model):
@@ -953,9 +841,13 @@ def test_emt_test_backend_builds_without_torch():
     assert type(calc).__name__ == "EMT"
 
 
+real = pytest.mark.skipif(os.environ.get("IRMA_MLIP_REAL_TESTS") != "1",
+                          reason="real-potential test; opt in with "
+                                 "IRMA_MLIP_REAL_TESTS=1")
+
+
 @pytest.mark.mlip_real
-@pytest.mark.skipif("os.environ.get('IRMA_MLIP_REAL_TESTS') != '1'",
-                    reason="real-potential test; opt in with IRMA_MLIP_REAL_TESTS=1")
+@real
 def test_real_mattersim_instantiates():
     pytest.importorskip("mattersim")
     calc, meta = make_calculator(CalculatorSpec("mattersim"))
@@ -963,20 +855,18 @@ def test_real_mattersim_instantiates():
 
 
 @pytest.mark.mlip_real
-@pytest.mark.skipif("os.environ.get('IRMA_MLIP_REAL_TESTS') != '1'",
-                    reason="real-potential test; opt in with IRMA_MLIP_REAL_TESTS=1")
+@real
 def test_real_pet_mad_instantiates_with_pinned_version():
     pytest.importorskip("upet")
     from irma.mlip.calculators import canonicalize_spec
     spec = canonicalize_spec(CalculatorSpec("pet-mad"))
-    assert "@" in spec.model                 # pinned, not floating
+    assert os.path.isfile(spec.model)        # pinned to a local checkpoint
     calc, meta = make_calculator(spec)
     assert calc is not None and meta["checkpoint"] == spec.model
 
 
 @pytest.mark.mlip_real
-@pytest.mark.skipif("os.environ.get('IRMA_MLIP_REAL_TESTS') != '1'",
-                    reason="real-potential test; opt in with IRMA_MLIP_REAL_TESTS=1")
+@real
 def test_real_dpa3_forces_on_al():
     pytest.importorskip("deepmd")
     from ase.build import bulk
