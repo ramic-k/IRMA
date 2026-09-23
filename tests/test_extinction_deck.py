@@ -118,14 +118,9 @@ def test_parse_crystal_cards_without_card_has_no_key():
     assert "coherent_extinction" not in ci
 
 
-# ENG-3: extinction is applied only by the coherent-carrying MT2 builders.
-# When SEF (elastic_mode=1) routes to the INCOHERENT elastic builder — a
-# single-atom principal with sigma_coh <= sigma_inc, or a polyatomic whose
-# principal is not the designated-coherent (DC) atom — the config would be a
-# silent no-op on a tape still stamped as extinction-corrected. Both routing
-# conditions are fully determined by Card 6b/6d data, so the parser must
-# reject the combination; the coherent-routing configurations must keep
-# parsing.
+# Extinction is applied only by the coherent-carrying MT2 builders, so the
+# parser rejects it when SEF routes to the incoherent builder (a single-atom
+# principal with sigma_coh <= sigma_inc, or a non-DC polyatomic principal).
 
 # single-atom V-like material: sigma_coh = 4*pi*0.3824^2*0.01 ~ 0.018 b
 # << sigma_inc = 5.08 b -> SEF routes to the incoherent builder
