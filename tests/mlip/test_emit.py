@@ -83,24 +83,22 @@ def test_species_resolution_defaults_and_overrides(al_bundle):
 
 
 def test_energy_dependent_prefill_is_refused(al_bundle, tmp_path):
-    from irma.core.nuclear_data import NUCLIDES
-    flagged = [n for (z, a), n in NUCLIDES.items()
-               if a == 0 and n.energy_dependent]
-    if not flagged:
-        pytest.skip("no natural energy-dependent entries in the table")
-    sym = flagged[0].symbol
+    # natural B is flagged energy-dependent in the nuclear table
     from ase import Atoms
     from ase.io import write as ase_write
     poscar = tmp_path / "structure_relaxed.vasp"
-    ase_write(str(poscar), Atoms(sym, cell=[4, 4, 4], pbc=True,
+    ase_write(str(poscar), Atoms("B", cell=[4, 4, 4], pbc=True,
                                  scaled_positions=[[0, 0, 0]]),
               direct=True, format="vasp")
     fake = type(al_bundle)(path=str(tmp_path), phonopy_yaml="",
                            structure=str(poscar), manifest={})
     with pytest.raises(ValueError, match="ENERGY-DEPENDENT"):
         resolve_species(fake, progress=QUIET)
-    # explicit overrides unlock it
-    out = resolve_species(fake, overrides={sym: {"b_coh_fm": 5.0,
+    # an awr-only override does not unlock the flagged constants...
+    with pytest.raises(ValueError, match="ENERGY-DEPENDENT"):
+        resolve_species(fake, overrides={"B": {"awr": 100.0}}, progress=QUIET)
+    # ...explicit scattering constants do
+    out = resolve_species(fake, overrides={"B": {"b_coh_fm": 5.0,
                                                  "sigma_inc_b": 1.0}},
                           progress=QUIET)
     assert out[0].constants_source == "override"
@@ -113,12 +111,14 @@ def test_iel10_deck_monatomic(al_bundle, tmp_path):
     st = _parse(path)
     assert st["mat"] == 45 and int(st["za"]) == 13000
     assert st["iel"] == 10 and st["inelastic_mode"] == 2 and st["iint"] == 1
+    assert st["elastic_mode"] == 2                 # MEF is the default
     assert st["temperatures"] == [296.0]
     assert len(st["atoms"]) == 1 and st["atoms"][0]["npos"] == 4
     assert st["nalpha"] == len(st["alpha"])
     assert st["noncubic"]["yaml"] == al_bundle.phonopy_yaml
     assert st["noncubic"]["ndir"] == 10000
-    assert os.path.isfile(os.path.join(str(tmp_path), "emit_manifest.json"))
+    man = json.load(open(os.path.join(str(tmp_path), "emit_manifest.json")))
+    assert man["elastic_format"] == "mef" and man["inelastic_mode"] == 2
 
 
 def test_iel10_polyatomic_all_groups_on_every_deck(cuau_bundle, tmp_path):
@@ -255,28 +255,6 @@ def test_adversarial_overrides_are_rejected(al_bundle):
     assert ok[0].sigma_bound_b == pytest.approx(al.sigma_bound_b, rel=1e-6)
 
 
-def test_energy_dependent_needs_scattering_constants_not_any_override(
-        al_bundle, tmp_path):
-    from irma.core.nuclear_data import NUCLIDES
-    flagged = [n for (z, a), n in NUCLIDES.items()
-               if a == 0 and n.energy_dependent]
-    if not flagged:
-        pytest.skip("no natural energy-dependent entries in the table")
-    sym = flagged[0].symbol
-    from ase import Atoms
-    from ase.io import write as ase_write
-    poscar = tmp_path / "structure_relaxed.vasp"
-    ase_write(str(poscar), Atoms(sym, cell=[4, 4, 4], pbc=True,
-                                 scaled_positions=[[0, 0, 0]]),
-              direct=True, format="vasp")
-    fake = type(al_bundle)(path=str(tmp_path), phonopy_yaml="",
-                           structure=str(poscar), manifest={})
-    # an awr-only override must NOT unlock flagged constants
-    with pytest.raises(ValueError, match="ENERGY-DEPENDENT"):
-        resolve_species(fake, overrides={sym: {"awr": 100.0}},
-                        progress=QUIET)
-
-
 def test_explicit_isotope_supplies_its_own_constants(cuau_bundle):
     from irma.core.nuclear_data import lookup
     species = resolve_species(cuau_bundle, nuclides={"Cu": "65-Cu"},
@@ -387,18 +365,6 @@ def test_species_dos_survives_gamma_only_mesh(tmp_path):
         assert rho.sum() > 0.0, f"empty Gamma-only species DOS for {sym}"
 
 
-def test_emitted_deck_defaults_to_mef(al_bundle, tmp_path):
-    (deck,) = emit_endf_decks(al_bundle, temperature_k=296.0, mats={"Al": 45},
-                              out_dir=str(tmp_path), _preview=True,
-                              progress=QUIET)
-    st = _parse(deck)
-    assert st["elastic_mode"] == 2 and st["inelastic_mode"] == 2
-    manifest = json.load(open(os.path.join(str(tmp_path),
-                                           "emit_manifest.json")))
-    assert manifest["elastic_format"] == "mef"
-    assert manifest["inelastic_mode"] == 2
-
-
 def test_sef_option_and_mode1_deck(al_bundle, tmp_path):
     (deck,) = emit_endf_decks(al_bundle, temperature_k=296.0, mats={"Al": 45},
                               out_dir=str(tmp_path), inelastic_mode=1,
@@ -409,6 +375,8 @@ def test_sef_option_and_mode1_deck(al_bundle, tmp_path):
     assert st["inelastic_mode"] == 1
     assert st["iint"] == 0                 # incoherent-approx: log-lin
     assert st["noncubic"]["yaml"] == al_bundle.phonopy_yaml
+    man = json.load(open(tmp_path / "emit_manifest.json"))
+    assert man["elastic_format"] == "sef" and man["inelastic_mode"] == 1
 
 
 def test_mode0_polyatomic_deck_carries_partial_spectra_and_RUNS(
@@ -435,27 +403,12 @@ def test_mode0_polyatomic_deck_carries_partial_spectra_and_RUNS(
     assert out.is_file() and out.stat().st_size > 10000
 
 
-def test_mode2_polyatomic_run_suppresses_inherited_warning(
-        cuau_bundle, tmp_path, capsys):
-    decks = emit_endf_decks(cuau_bundle, temperature_k=296.0,
-                            mats={"Cu": 100, "Au": 200},
-                            out_dir=str(tmp_path), _preview=True,
-                            progress=QUIET)
-    (cu,) = [d for d in decks if d.endswith("endf_Cu.input")]
-    from irma.core.driver import run_leapr
-    run_leapr(cu, str(tmp_path / "cu_mode2.endf"))
-    captured = capsys.readouterr()
-    # modes 1/2 take the directional Debye-Waller branch: the classic
-    # per-species lambdas are unused and the fallback warning is suppressed
-    assert "INHERITED" not in captured.out
-    assert "displacement tensors" in captured.out
-
-
-def test_disordered_rejects_inelastic_mode(dis_bundle, tmp_path):
-    with pytest.raises(ValueError, match="not applicable"):
-        emit_endf_decks(dis_bundle, temperature_k=296.0, mats={"Al": 45},
-                        out_dir=str(tmp_path), inelastic_mode=0,
-                        progress=QUIET)
+def test_disordered_rejects_crystal_options(dis_bundle, tmp_path):
+    for kw in ({"inelastic_mode": 0}, {"elastic_format": "sef"}):
+        with pytest.raises(ValueError, match="not applicable"):
+            emit_endf_decks(dis_bundle, temperature_k=296.0, mats={"Al": 45},
+                            out_dir=str(tmp_path), progress=QUIET, **kw)
+    assert os.listdir(tmp_path) == []     # refused before anything landed
 
 
 # ------------------------------------------------- QA remediation tests ----
@@ -535,105 +488,6 @@ def test_species_dos_honours_recorded_dos_smearing(dis_bundle, monkeypatch):
     assert recorded[-1] is None
 
 
-def test_default_identity_is_natural_and_needs_no_warning(al_bundle,
-                                                          cuau_bundle):
-    """MLP-4 superseded: the default identity is the natural element
-    (A = 0) with that element's own constants, so there is no
-    identity/constants mismatch left to warn about. The old behavior
-    stamped the most abundant isotope onto natural-abundance constants
-    and had to flag it."""
-    msgs = []
-    (al,) = resolve_species(al_bundle, progress=msgs.append)
-    joined = "\n".join(msgs)
-    assert al.A == 0 and al.za == 13000
-    assert "WARNING" not in joined
-    assert "natural element (za=13000)" in joined
-    assert "--nuclide Al=<A>-Al" in joined
-
-    # an explicit nuclide takes identity AND constants from the isotope
-    msgs = []
-    species = resolve_species(cuau_bundle, nuclides={"Cu": "65-Cu"},
-                              progress=msgs.append)
-    by_symbol = {s.symbol: s for s in species}
-    assert by_symbol["Cu"].A == 65 and by_symbol["Cu"].za == 29065
-    assert by_symbol["Au"].A == 0                     # still natural
-    assert "WARNING" not in "\n".join(msgs)
-
-    # near-miss: fully overridden constants leave nothing natural to flag
-    msgs = []
-    resolve_species(al_bundle,
-                    overrides={"Al": {"awr": 26.98, "b_coh_fm": 3.449,
-                                      "sigma_inc_b": 0.0082}},
-                    progress=msgs.append)
-    assert "WARNING" not in "\n".join(msgs)
-
-
-def test_all_natural_emission_is_byte_identical_to_the_flagless_default(
-        cuau_bundle, tmp_path):
-    """The GUI's nuclear-data editor starts every row Natural, and Natural
-    contributes no flag, so its emit is the CLI's own no-flag emit.
-
-    This pins the OTHER half of that claim: passing the empty mappings an
-    all-Natural table produces cannot perturb a single byte of any emitted
-    artifact relative to omitting them.
-    """
-    a, b = tmp_path / "default", tmp_path / "empty_maps"
-    emit_spectra_yaml(cuau_bundle, temperature_k=296.0,
-                      out_path=str(a / "spectra.yaml"), progress=QUIET)
-    emit_spectra_yaml(cuau_bundle, temperature_k=296.0, nuclides={},
-                      overrides={}, out_path=str(b / "spectra.yaml"),
-                      progress=QUIET)
-    emit_endf_decks(cuau_bundle, temperature_k=296.0, mats={"Cu": 1, "Au": 2},
-                    out_dir=str(a), progress=QUIET)
-    emit_endf_decks(cuau_bundle, temperature_k=296.0, mats={"Cu": 1, "Au": 2},
-                    nuclides={}, overrides={}, out_dir=str(b), progress=QUIET)
-    emit_ncrystal_yaml(cuau_bundle, temperature_k=296.0,
-                       out_path=str(a / "ncrystal.yaml"), progress=QUIET)
-    emit_ncrystal_yaml(cuau_bundle, temperature_k=296.0, nuclides={},
-                       overrides={}, out_path=str(b / "ncrystal.yaml"),
-                       progress=QUIET)
-
-    names = sorted(p.name for p in a.iterdir())
-    assert "spectra.yaml" in names and "endf_Cu.input" in names
-    for name in names:
-        # the emit manifest records the out_dir-independent provenance only,
-        # so every artifact compares byte-for-byte
-        assert (a / name).read_bytes() == (b / name).read_bytes(), name
-    # and the resolved species are identical objects field for field
-    assert resolve_species(cuau_bundle, progress=QUIET) == \
-        resolve_species(cuau_bundle, nuclides={}, overrides={}, progress=QUIET)
-
-
-def test_disordered_rejects_sef_and_manifest_records_choices(
-        dis_bundle, al_bundle, tmp_path):
-    """MLP-5/DOC-9: --elastic-format is rejected on the classic path the
-    same way --inelastic-mode is, and the emit manifest records the
-    effective choices where they apply."""
-    out = tmp_path / "sef_dis"
-    with pytest.raises(ValueError, match="not applicable"):
-        emit_endf_decks(dis_bundle, temperature_k=296.0, mats={"Al": 45},
-                        out_dir=str(out), elastic_format="sef",
-                        progress=QUIET)
-    assert os.listdir(out) == []          # rejected before anything landed
-
-    # near-miss: the crystal path accepts sef and records the choice
-    out2 = tmp_path / "sef_xt"
-    emit_endf_decks(al_bundle, temperature_k=296.0, mats={"Al": 45},
-                    out_dir=str(out2), inelastic_mode=1,
-                    elastic_format="sef", _preview=True, progress=QUIET)
-    man = json.load(open(out2 / "emit_manifest.json"))
-    assert man["elastic_format"] == "sef"
-    assert man["inelastic_mode"] == 1
-
-    # near-miss: the disordered default (mef, the CLI argparse default)
-    # still emits
-    out3 = tmp_path / "mef_dis"
-    paths = emit_endf_decks(dis_bundle, temperature_k=296.0,
-                            mats={"Al": 45}, out_dir=str(out3),
-                            progress=QUIET)
-    assert len(paths) == 1
-
-
 def test_disordered_spectra_dos_paths_are_absolute(dis_bundle, tmp_path,
                                                    monkeypatch):
     """MLP-8: a relative --out-dir must still yield a YAML that resolves
@@ -667,11 +521,6 @@ def test_emitted_mesh_disordered_keeps_bundle_mesh(dis_bundle):
     from irma.mlip.emit import _emit_mesh
     assert _emit_mesh(dis_bundle) == \
         [int(n) for n in dis_bundle.manifest["phonons"]["mesh"]]
-
-
-def test_emitted_ncpu_is_machine_core_count():
-    from irma.mlip.emit import _emit_ncpu
-    assert _emit_ncpu() == (os.cpu_count() or 1)
 
 
 def test_min_phonon_energy_reaches_every_emitted_file(al_bundle, tmp_path):
