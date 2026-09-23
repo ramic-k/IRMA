@@ -1,8 +1,8 @@
-"""Site-resolved directional coherent-elastic Debye-Waller (review finding P3).
+"""Site-resolved directional coherent-elastic Debye-Waller.
 
-The directional MT2 path used to average the per-site displacement tensors
-over each Card 6d species group BEFORE exponentiation. The correct physics
-per reflection is the DW-attenuated complex amplitude sum
+Per reflection the directional MT2 path uses the DW-attenuated complex
+amplitude sum over sites (not tensors averaged over each Card 6d species
+group before exponentiation):
 
     F^2(E,T) = |sum_i b_i exp(-W_i(Ghat) E) exp(i phi_i)|^2,
     W_i(Ghat) = (Ghat . F_i . Ghat) / (awr_sp(i) kT),
@@ -10,13 +10,8 @@ per reflection is the DW-attenuated complex amplitude sum
 
 with the code's 2-factor convention exp(-2 W_i e) per amplitude (so the
 uniform-tensor limit reproduces the pair form exp(-2 (W_s+W_t) e) exactly).
-Verified error of the old averaging: old/exact = 0.4807 for two in-phase
-same-species sites with W1=0, W2=100 1/eV at (200), a=3 A; 0.9677 at W2=20.
-
-These tests pin the new site-resolved branch of ``directional_edge_delta``
-and ``make_sigma_coh_ext`` against inline exact references, the exact-zero
-anti-phase cancellation, and the byte-pinned uniform fast path. Synthetic
-states mirror tests/test_elastic_extinction.py's _synthetic_* helpers.
+The tests check ``directional_edge_delta`` and ``make_sigma_coh_ext`` against
+inline exact references, plus the byte-pinned uniform fast path.
 """
 import math
 import types
@@ -110,34 +105,20 @@ _IN_PHASE = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0)]   # phi = 0, 2pi for (200)
 
 
 # ---- 1+2: scalar-tensor contrast at the (200) edge ---------------------------
-@pytest.mark.parametrize("W2, ratio_lo, ratio_hi", [
-    # old/exact = 4 x / (1+x)^2 with x = exp(-2 W2 E200):
-    #   W2=100 1/eV -> 0.4807 (the review's verified factor-2 error)
-    #   W2=20  1/eV -> 0.9677 (the ~3.2% case)
-    (100.0, 0.46, 0.50),
-    (20.0, 0.95, 0.98),
-])
-def test_two_inphase_sites_scalar_contrast(W2, ratio_lo, ratio_hi):
-    F_sites = np.array([_F_scalar(0.0), _F_scalar(W2)])
-    sdw = _sdw(F_sites, uniform=False)
+def test_two_inphase_sites_scalar_contrast():
+    F_sites = np.array([_F_scalar(0.0), _F_scalar(100.0)])
     plane = _plane(_IN_PHASE)
-    e = _E200
-    got = directional_edge_delta(e, sdw, 0, [plane], _KT)
-    exact = _exact_site_sum(e, _GHAT, plane[2], F_sites)
+    got = directional_edge_delta(_E200, _sdw(F_sites, uniform=False), 0,
+                                 [plane], _KT)
+    exact = _exact_site_sum(_E200, _GHAT, plane[2], F_sites)
     assert got == pytest.approx(exact, rel=1e-12)
-    # the OLD averaged-tensor behavior is wrong by 4x/(1+x)^2
-    old = _old_averaged(e, _GHAT, plane[1], sdw.F_species_per_temp[0])
-    x = math.exp(-2.0 * W2 * e)
-    assert old / exact == pytest.approx(4.0 * x / (1.0 + x) ** 2, rel=1e-9)
-    assert ratio_lo < old / exact < ratio_hi
 
 
 # ---- 3: rotated anisotropic tensors ------------------------------------------
 def test_rotated_anisotropic_tensors():
     """Two sites whose tensors are 90-degree rotations of each other:
     diag(a,b,b) and diag(b,a,b). The group average is isotropic in the basal
-    plane, so the old path sees W_avg for both sites; the site-resolved
-    result must equal the exact complex-sum reference instead."""
+    plane; the site-resolved result must equal the exact complex sum."""
     a_w, b_w = 30.0, 5.0
     F1 = np.diag([a_w, b_w, b_w]) * _AWR * _KT
     F2 = np.diag([b_w, a_w, b_w]) * _AWR * _KT
@@ -148,9 +129,6 @@ def test_rotated_anisotropic_tensors():
     got = directional_edge_delta(e, sdw, 0, [plane], _KT)
     exact = _exact_site_sum(e, _GHAT, plane[2], F_sites)
     assert got == pytest.approx(exact, rel=1e-12)
-    # and the averaged behavior is measurably different (W1=30 vs W2=5 along x)
-    old = _old_averaged(e, _GHAT, plane[1], sdw.F_species_per_temp[0])
-    assert abs(old / exact - 1.0) > 0.01
 
 
 # ---- 4: anti-phase cancellation ----------------------------------------------
@@ -294,6 +272,21 @@ def test_driver_raises_when_nonuniform_sites_cannot_be_paired():
             np.array([np.diag([1.0, 2.0, 3.0]), np.diag([4.0, 5.0, 6.0])]))
 
 
+def test_resolver_carries_site_tensors():
+    """resolve_species_dw passes the non-uniform flag and the per-site
+    tensors through; dropping the flag would default to the averaged path."""
+    from irma.core.elastic_dw import resolve_species_dw
+    ci = {
+        'atom_types': [{'Z': 6, 'A': 12, 'awr': _AWR, 'b_coh': 6.646,
+                        'sigma_inc': 0.0, 'dwpix': [0.5]}],
+        'F_species_per_temp': [[np.eye(3)]],
+        'bragg_dir_terms': [[]],
+        'dir_tensors_uniform': False,
+        'F_sites_per_temp': [[np.stack([np.eye(3), 2.0 * np.eye(3)])]],
+    }
+    sdw = resolve_species_dw(ci, [296.0], 1)
+    assert sdw.use_dir_dw and sdw.dir_tensors_uniform is False
+    assert np.array_equal(sdw.F_sites_per_temp[0][0][1], 2.0 * np.eye(3))
 
 
 # ---- extinction path -------------------------------------------------------------
