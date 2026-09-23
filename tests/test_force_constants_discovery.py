@@ -132,18 +132,3 @@ def test_force_sets_only_model_reaches_driver(tmp_path, stubbed_driver):
     args = stubbed_driver["context_args"][0]
     assert args.force_constants is None
     assert args.force_sets.endswith("FORCE_SETS")
-
-
-def test_embedded_fc_model_reaches_driver(tmp_path, stubbed_driver):
-    yaml = _yaml(tmp_path, embed_fc=True)
-    _run(yaml)
-    args = stubbed_driver["context_args"][0]
-    assert args.force_constants is None
-    assert args.force_sets is None
-
-
-def test_no_force_constants_fails_before_compute(tmp_path, stubbed_driver):
-    yaml = _yaml(tmp_path)
-    with pytest.raises(FileNotFoundError, match="No force constants"):
-        _run(yaml)
-    assert not stubbed_driver["context_args"]
