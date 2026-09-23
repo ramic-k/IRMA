@@ -83,13 +83,9 @@ def test_born_path_reaches_context_and_driver(phonopy_files, stubbed_driver):
     assert args.born == str(born.resolve())
     kwargs = stubbed_driver["inprocess_kwargs"][0]
     assert str(kwargs["born_path"]) == str(born.resolve())
-
-
-def test_no_born_stays_none(phonopy_files, stubbed_driver):
-    yaml, _ = phonopy_files
-    _run(yaml, None, {})
-    assert stubbed_driver["context_args"][0].born is None
-    assert stubbed_driver["inprocess_kwargs"][0]["born_path"] is None
+    _run(yaml, None, {})                                   # no BORN stays None
+    assert stubbed_driver["context_args"][1].born is None
+    assert stubbed_driver["inprocess_kwargs"][1]["born_path"] is None
 
 
 def test_context_cache_distinguishes_nac(phonopy_files, stubbed_driver):
