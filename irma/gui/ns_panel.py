@@ -24,16 +24,9 @@ from irma.gui.widgets import (
     scrolled_columns, parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.element_table import ElementTable
-from irma.spectra.config import SpectraConfig, SpectraConfigError, dump, load
+from irma.spectra.config import (
+    SpectraConfig, SpectraConfigError, dump, load, phonopy_species)
 from irma.spectra.cli import parse_angles, parse_coeffs
-
-
-def _phonopy_symbols(path):
-    """Distinct atom symbols from a phonopy.yaml, for the 'auto-fill
-    elements' button. Delegates to the spectra-side parser so the button
-    and the modes-1/2 species check read the yaml identically."""
-    from irma.spectra.config import phonopy_species
-    return phonopy_species(path)
 from irma.spectra.chopper_resolution import (
     available_instruments, available_packages, default_frequency, default_coverage)
 
@@ -549,8 +542,7 @@ class NSPanel(RunPanel):
     # mode-dropdown labels (the digit-0 of each is parsed back to the int mode)
     _MODE_LABELS = ["1 (incoherent approx)", "2 (coherent 1ph+multi)",
                     "0 (DOS + isotropic DW)"]
-    _MODE_BY_INT = {0: "0 (DOS + isotropic DW)", 1: "1 (incoherent approx)",
-                    2: "2 (coherent 1ph+multi)"}
+    _MODE_BY_INT = {int(label[0]): label for label in _MODE_LABELS}
 
     def _mode(self):
         """Active inelastic mode (DOS-files input always means mode 0)."""
@@ -777,7 +769,7 @@ class NSPanel(RunPanel):
             messagebox.showinfo("Auto-fill", "Set a phonopy.yaml first.")
             return
         try:
-            syms = _phonopy_symbols(path)
+            syms = phonopy_species(path)
         except Exception as exc:                       # parsing is best-effort
             messagebox.showerror("Auto-fill",
                                  f"Could not read symbols from {path}:\n{exc}")
@@ -815,7 +807,8 @@ class NSPanel(RunPanel):
         g = form_section(parent, "Instrument geometry")
         self.geom_nb = ttk.Notebook(g)
         self.geom_nb.pack(fill=tk.X)
-        self.geom_nb.bind("<<NotebookTabChanged>>", self._on_geometry_tab)
+        self.geom_nb.bind("<<NotebookTabChanged>>",
+                          lambda _e: self._sync_actions_rows())
 
         # --- Indirect tab (defaults reproduce the VISION spectrometer) -------
         ind = ttk.Frame(self.geom_nb, padding=4)
@@ -851,15 +844,6 @@ class NSPanel(RunPanel):
         self._build_direct_resolution(dirf)
         self._build_direct_output(dirf)
 
-    @staticmethod
-    def _res_width_hint_label(parent):
-        """Hint label describing the resolution polynomial."""
-        return ttk.Label(
-            parent, text="sigma(E) = c0 + c1*E + c2*E^2 (meV).  Leave all three "
-                         "blank = VISION (0.31, 0.005, 8.1e-7).  See each ? for "
-                         "what the term does.",
-            foreground="gray", wraplength=320, justify=tk.LEFT)
-
     def _build_res_shape_width(self, parent):
         """Build the sigma-polynomial resolution controls (shape dropdown + the
         three width-polynomial coefficient fields c0/c1/c2 + hint) into
@@ -877,7 +861,11 @@ class NSPanel(RunPanel):
         ttk.Label(parent, text="resolution width  sigma(E) = c0 + c1*E + c2*E^2:",
                   justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
         coeffs = _CoeffFields(parent)
-        self._res_width_hint_label(parent).pack(anchor=tk.W)
+        ttk.Label(
+            parent, text="sigma(E) = c0 + c1*E + c2*E^2 (meV).  Leave all three "
+                         "blank = VISION (0.31, 0.005, 8.1e-7).  See each ? for "
+                         "what the term does.",
+            foreground="gray", wraplength=320, justify=tk.LEFT).pack(anchor=tk.W)
         return shape, coeffs
 
     def _build_direct_resolution(self, parent):
@@ -934,10 +922,9 @@ class NSPanel(RunPanel):
         self.chop_frequency.set(default_frequency(inst))
         # pre-fill the 2-D-map detector-coverage band from this instrument's span
         # (editable; load_config overwrites it with any stored coverage).
-        if hasattr(self, "map_coverage"):
-            cov = default_coverage(inst)
-            if cov:
-                self.map_coverage.set(f"{cov[0]:g},{cov[1]:g}")
+        cov = default_coverage(inst)
+        if cov:
+            self.map_coverage.set(f"{cov[0]:g},{cov[1]:g}")
 
     def _on_res_model_change(self):
         """User switched the resolution model: swap the frame, and set the 2-D-map
@@ -945,13 +932,12 @@ class NSPanel(RunPanel):
         width-polynomial model shows the full map). Fires only on user action --
         load_config calls _sync_res_model directly and sets the stored mask."""
         self._sync_res_model()
-        if hasattr(self, "dir_map_mask"):
-            model = _RES_MODEL_LABELS.get(self.dir_res_model.get(), "poly")
-            self.dir_map_mask.set(model == "chopper")
-            if model == "chopper":
-                self._sync_chop_packages()      # pre-fill coverage from the instrument
-            else:
-                self.map_coverage.set("")        # generic -> full map (no coverage)
+        model = _RES_MODEL_LABELS.get(self.dir_res_model.get(), "poly")
+        self.dir_map_mask.set(model == "chopper")
+        if model == "chopper":
+            self._sync_chop_packages()      # pre-fill coverage from the instrument
+        else:
+            self.map_coverage.set("")        # generic -> full map (no coverage)
 
     def _sync_res_model(self):
         """Swap the Direct-tab resolution parameter frame to match the model:
@@ -1010,9 +996,6 @@ class NSPanel(RunPanel):
                        "map (Plot tab) and post-process it yourself.",
                   foreground="gray", wraplength=320, justify=tk.LEFT).pack(anchor=tk.W)
 
-        # seed coverage from the current instrument if the chopper model is active
-        if _RES_MODEL_LABELS.get(self.dir_res_model.get(), "poly") == "chopper":
-            self._sync_chop_packages()
         self._sync_output()
         self._sync_cut_by()
 
@@ -1156,19 +1139,6 @@ class NSPanel(RunPanel):
     def _geometry(self):
         """Name of the selected geometry tab."""
         return _GEOMETRIES[self.geom_nb.index(self.geom_nb.select())]
-
-    def _sync_map_btn(self):
-        """Vestigial: the 2-D map is now the Direct tab's 'output: 2-D map' mode
-        (Run computes it), not a standalone button. Kept as a no-op so the
-        tab-change / run-completion call sites stay simple."""
-        return
-
-    def _on_geometry_tab(self, _evt=None):
-        """Geometry tab changed: refresh the map-button state and the
-        actions-row visibility (the Direct '2-D map' state hides the 1-D
-        output selector + breakdown checkbox)."""
-        self._sync_map_btn()
-        self._sync_actions_rows()
 
     @staticmethod
     def _row_to_scatterer(row, is_dos_file, want_positions):
@@ -1373,25 +1343,21 @@ class NSPanel(RunPanel):
 
         # input-source gate is derived: mode 0 + DOS files -> DOS-files branch,
         # everything else -> the Phonopy branch (mode 1/2, or DOS-from-phonopy).
-        dos_source = getattr(p, "dos_source", "file")
         self.input_source.set("dos_files" if (p.inelastic_mode == 0
-                                              and dos_source == "file") else "phonopy")
-        self.inelastic_mode.set(self._MODE_BY_INT.get(p.inelastic_mode,
-                                                      self._MODE_LABELS[0]))
+                                              and p.dos_source == "file") else "phonopy")
+        self.inelastic_mode.set(self._MODE_BY_INT[p.inelastic_mode])
         self.max_phonon_order.set(p.max_phonon_order)
-        cutoff = float(getattr(p, "min_phonon_energy_meV", 0.0))
+        cutoff = float(p.min_phonon_energy_meV)
         self.min_phonon_energy.set("" if cutoff == 0.0 else f"{cutoff:g}")
         self.n_directions.set(p.n_directions)
         self.mp_directions.set(p.multiphonon_directions)
         self.jobs.set("" if p.jobs is None else p.jobs)
         self.elastic.set("on" if p.elastic else "off")
         self.elastic_kind.set(p.elastic_kind)
-        self.incoherent_elastic_dw.set(
-            getattr(p, "incoherent_elastic_mode", "isotropic"))
+        self.incoherent_elastic_dw.set(p.incoherent_elastic_mode)
         # elastic_from_tape has no GUI widget (computed on demand); skip it.
         self.include_gain.set(p.include_energy_gain)
-        self.gain_side.set(_GAIN_SIDE_REV.get(getattr(p, "gain_side", "direct"),
-                                              _GAIN_SIDE_REV["direct"]))
+        self.gain_side.set(_GAIN_SIDE_REV[p.gain_side])
         self.kinematic.set(p.kinematic_kf_ki)
 
         self.e_min.set(g.e_min_meV); self.e_max.set(g.e_max_meV)
@@ -1604,7 +1570,7 @@ class NSPanel(RunPanel):
     def _save_map(self):
         """Export the displayed 2-D map (full, or masked to the coverage arch to
         match the 'mask to accessible' toggle) as long-form CSV or npz."""
-        if not getattr(self, "_map_path", None):
+        if not self._map_path:
             messagebox.showinfo("Save map", "Run a 2-D map first.")
             return
         path = filedialog.asksaveasfilename(
@@ -1727,10 +1693,10 @@ class NSPanel(RunPanel):
     def _replot(self):
         """Re-draw on a y-scale change: the 2-D map if one is loaded, else the
         per-cut 1-D spectrum (lin/log)."""
-        if getattr(self, "_map_path", None):
+        if self._map_path:
             self._draw_map()
             return
-        if not getattr(self, "_plot_data", None):
+        if not self._plot_data:
             return
         try:
             from matplotlib.figure import Figure
