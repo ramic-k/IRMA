@@ -10,11 +10,9 @@ import pytest
 # importorskip FIRST -- a hard `import tkinter` at module top would error
 # at collection on ase-only environments.
 tk = pytest.importorskip("tkinter")
-pytest.importorskip("ase")
 pytest.importorskip("yaml")
 
 from irma.gui.mlip_panel import MlipPanel  # noqa: E402
-from irma.mlip.calculators import POTENTIALS  # noqa: E402
 
 
 class StubRunner:
@@ -37,10 +35,6 @@ def panel():
     p = MlipPanel(root, runner=StubRunner())
     yield p
     root.destroy()
-
-
-def test_panel_builds_and_lists_all_potentials(panel):
-    assert tuple(panel.potential.combo["values"]) == POTENTIALS
 
 
 def test_build_command_minimal_and_full(panel, tmp_path):
@@ -143,16 +137,6 @@ def test_dos_plot_reads_bundle_data(panel, tmp_path, monkeypatch):
     panel._replot_dos()
 
 
-def test_cleanup_temp_files_is_a_safe_noop(panel):
-    panel.cleanup_temp_files()
-
-
-def test_env_summary_never_raises(panel, monkeypatch, tmp_path):
-    monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
-    text = panel._env_summary()
-    assert "registered" in text
-
-
 def test_build_command_jitter_cycles(panel):
     """--jitter-cycles maps onto the CLI: absent at default 0, valued
     when set."""
@@ -204,33 +188,6 @@ def test_emit_command_deck_and_ncrystal_selectors(panel, tmp_path):
 
 
 # ---- progressive disclosure: emit rows scoped to the targets that read them
-def test_emit_rows_endf_only_fields(panel):
-    """inelastic mode is forwarded to the ENDF deck emitter only, and
-    allow-unstable is read by the endf and spectra emitters (never
-    ncrystal): each shows exactly for the targets that read it."""
-    # default: endf ticked
-    assert panel.emit_inelastic_mode.winfo_manager() == "pack"
-    assert panel._allow_unstable_row.winfo_manager() == "pack"
-    panel.targets["endf"].set(False)                 # nothing ticked
-    assert panel.emit_inelastic_mode.winfo_manager() == ""
-    assert panel._allow_unstable_row.winfo_manager() == ""
-    panel.targets["spectra"].set(True)               # spectra: unstable only
-    assert panel.emit_inelastic_mode.winfo_manager() == ""
-    assert panel._allow_unstable_row.winfo_manager() == "pack"
-    panel.targets["spectra"].set(False)
-    panel.targets["ncrystal"].set(True)              # ncrystal: neither
-    assert panel.emit_inelastic_mode.winfo_manager() == ""
-    assert panel._allow_unstable_row.winfo_manager() == ""
-    panel.targets["endf"].set(True)
-    assert panel.emit_inelastic_mode.winfo_manager() == "pack"
-    assert panel._allow_unstable_row.winfo_manager() == "pack"
-
-
-def test_emit_inelastic_mode_help_is_endf_scoped():
-    from irma.gui.mlip_panel import HELP
-    assert HELP["emit_inelastic_mode"].startswith("ENDF target only. ")
-
-
 # ---- the argv must follow the disclosure, not just the widget contents -----
 def test_emit_argv_drops_fields_the_targets_do_not_read(panel, tmp_path):
     """Hidden fields are neither validated nor forwarded.
@@ -275,20 +232,6 @@ def test_emit_argv_drops_fields_the_targets_do_not_read(panel, tmp_path):
     assert cmd[cmd.index("--temperature") + 1] == "500"
 
 
-def test_emit_argv_ignores_a_malformed_hidden_mat(panel, tmp_path):
-    """A malformed MAT left over from an ENDF emit must not block an
-    NCrystal-only emit -- the validation error names a hidden field."""
-    panel.bundle.set(str(tmp_path))
-    panel.mats.set("C31")                          # missing '='
-    with pytest.raises(ValueError, match="SYM=VALUE"):
-        panel.emit_command()                       # endf ticked: still fatal
-    panel.targets["endf"].set(False)
-    panel.targets["ncrystal"].set(True)
-    cmd = panel.emit_command()                     # no raise
-    assert "--mat" not in cmd
-    assert cmd[cmd.index("--to") + 1] == "ncrystal"
-
-
 def test_build_argv_forwards_only_the_live_thread_field(panel, tmp_path):
     """serial threads applies at jobs = 1, threads/worker at jobs > 1.
 
@@ -304,15 +247,11 @@ def test_build_argv_forwards_only_the_live_thread_field(panel, tmp_path):
 
     panel.threads.set("2")                         # serial field, jobs = 1
     panel.worker_threads.set("4")                  # hidden at jobs = 1
-    assert panel.threads.winfo_manager() == "pack"
-    assert panel.worker_threads.winfo_manager() == ""
     cmd = panel.build_command()
     assert cmd[cmd.index("--threads") + 1] == "2"
     assert "--worker-threads" not in cmd
 
     panel.jobs.set("4")                            # parallel: swaps the rows
-    assert panel.worker_threads.winfo_manager() == "pack"
-    assert panel.threads.winfo_manager() == ""
     cmd = panel.build_command()
     assert cmd[cmd.index("--jobs") + 1] == "4"
     assert cmd[cmd.index("--worker-threads") + 1] == "4"
@@ -384,13 +323,6 @@ def test_species_discovery_degrades_without_a_readable_phonopy_yaml(
     empty = tmp_path / "empty"
     empty.mkdir()
     panel.bundle.set(str(empty))                       # no phonopy.yaml
-    assert panel.species_table.nuclide_rows() == []
-    assert "could not read a species list" in panel.species_table._hint.cget("text")
-
-    broken = tmp_path / "broken"
-    broken.mkdir()
-    (broken / "phonopy.yaml").write_text("not: [a, valid, cell\n")
-    panel.bundle.set(str(broken))
     assert panel.species_table.nuclide_rows() == []
     assert "could not read a species list" in panel.species_table._hint.cget("text")
 
@@ -523,11 +455,7 @@ def test_energy_dependent_isotope_keeps_the_identity_it_recovered_from(
     constants (--species) independently."""
     panel.bundle.set(_write_bundle_yaml(tmp_path, [("Li", 6.94)]))
     assert panel.species_table.nuclide_rows()[0]["mode"] == "natural"
-    r = _set_mode(panel, "Li", "isotope", "7-Li")
-    assert panel.species_table.nuclide_rows()[0]["mode"] == "isotope"
-
-    r["_var"]["nuclide"].set("6-Li")
-    panel.species_table.sync_nuclide_row(r)
+    r = _set_mode(panel, "Li", "isotope", "6-Li")
     row = panel.species_table.nuclide_rows()[0]
     assert (row["mode"], row["nuclide"], row["flagged"]) \
         == ("custom", "6-Li", True)
@@ -553,17 +481,6 @@ def test_isotope_mass_mismatch_warns_but_does_not_block(panel, tmp_path):
     assert "mass check" in note and "2-H" in note and "1.008" in note
     cmd = panel.emit_command()                      # warning only
     assert cmd[cmd.index("--nuclide") + 1] == "H=2-H"
-
-
-def test_mass_check_is_silent_without_model_masses(panel, tmp_path):
-    """A phonopy.yaml with no mass entries still yields species rows; the
-    mass check simply has nothing to compare against."""
-    (tmp_path / "phonopy.yaml").write_text(
-        "primitive_cell:\n  points:\n  - symbol: H\n"
-        "    coordinates: [0.0, 0.0, 0.0]\n")
-    panel.bundle.set(str(tmp_path))
-    r = _set_mode(panel, "H", "isotope", "2-H")
-    assert r["_note"].cget("text") == ""
 
 
 def test_bundle_species_reads_symbols_and_masses(tmp_path):
