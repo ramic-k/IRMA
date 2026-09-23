@@ -9,10 +9,8 @@ Four capabilities behind one ``irma`` entry point:
     irma ncrystal -o <outdir> config.yaml     NCrystal .irmapack export
     irma --gui | --version
 
-Backward compatibility is mandatory: if the first argument is not a known
-subcommand keyword, it is treated as the legacy 2-positional deck path, so
-``irma deck out.endf``, ``python -m irma deck out.endf`` and
-``python -m irma.core.engine deck out.endf`` keep working byte-for-byte.
+If the first argument is not a subcommand keyword, it is the deck path of
+the 2-positional form ``irma deck out.endf``.
 
 ``main(argv=None)`` returns a process exit code; the console-script and
 ``python -m irma`` wrappers both ``sys.exit(main())``.
@@ -55,11 +53,8 @@ def _launch_gui():
     try:
         from irma.gui.app import main as gui_main
     except ImportError as exc:
-        print(f"\nThe GUI could not be started: {exc}", file=sys.stderr)
-        print("The graphical interface requires tkinter, which is not "
-              "installed for this Python.", file=sys.stderr)
-        print("See the Tkinter section of INSTALL.md for how to install "
-              "it on your system.", file=sys.stderr)
+        print(f"\nThe GUI could not be started ({exc}); it needs tkinter, "
+              "see the Tkinter section of INSTALL.md.", file=sys.stderr)
         return 4
     gui_main()
     return 0
@@ -98,17 +93,9 @@ def _run_deck(args):
         print("Usage: irma <input_file> <output_file>", file=sys.stderr)
         return 1
     input_file, output_file = args[0], args[1]
-    # Mirror the output-side preflight: a directory passed as the input (a
-    # one-keystroke tab-completion slip) must fail with a clear message, not
-    # leak an IsADirectoryError traceback out of the deck parser's open().
-    if os.path.isdir(input_file):
-        print(f"Error: input path is a directory, not a file: {input_file}",
-              file=sys.stderr)
-        print("Pass the LEAPR-style input deck itself "
-              "(e.g. graphite.input).", file=sys.stderr)
-        return 1
     if not os.path.isfile(input_file):
-        print(f"Error: input file not found: {input_file}", file=sys.stderr)
+        print(f"Error: input file not found or not a file: {input_file}",
+              file=sys.stderr)
         return 1
     # Pre-validate the output path BEFORE the (multi-minute) compute, so a typo'd
     # output path / directory target / read-only parent fails fast instead of only
@@ -122,8 +109,6 @@ def _run_deck(args):
         run_leapr(input_file, output_file)
     except DeckError as exc:
         print(f"\nInput deck error:\n  {exc}", file=sys.stderr)
-        print("Fix the input deck and rerun (see the README card-by-card "
-              "input reference).", file=sys.stderr)
         return 2
     except (RuntimeError, OSError, ValueError) as exc:
         # User-meaningful failures (phonopy model loading, missing/unreadable
@@ -156,11 +141,7 @@ def main(argv=None):
     if argv[0] == "spectra":
         from irma.spectra.cli import main as spectra_main
         return spectra_main(argv[1:])
-    if argv[0] == "mlip" and (
-            len(argv) == 1
-            or argv[1] in ("build", "emit", "validate", "env", "-h",
-                           "--help")
-            or not os.path.exists("mlip")):
+    if argv[0] == "mlip":
         from irma.mlip.cli import main as mlip_main
         return mlip_main(argv[1:])
     if argv[0] == "ncrystal":
@@ -171,26 +152,11 @@ def main(argv=None):
     if argv[0] in ("evaluate", "run"):
         return _run_deck(argv[1:])
 
-    # Fall-through: argv[0] is not a known subcommand. Before treating it as a
-    # legacy deck path, catch an obvious mistyped subcommand or unknown flag so
-    # the user gets a clear hint instead of a misleading "input file not found".
     tok = argv[0]
-    if not os.path.exists(tok):
-        if tok.startswith("-"):
-            print(f"Error: unknown option {tok!r}", file=sys.stderr)
-            _print_help()
-            return 1
-        # only second-guess COMMAND-LIKE tokens (a bare word); a path-like token
-        # with a "." or "/" is a (missing) deck path -> let _run_deck report that.
-        if "." not in tok and "/" not in tok and os.sep not in tok:
-            import difflib
-            known = ["evaluate", "run", "spectra", "ncrystal", "mlip",
-                     "--gui", "--version", "--help"]
-            close = difflib.get_close_matches(tok, known, n=1, cutoff=0.7)
-            if close:
-                print(f"Error: unknown command {tok!r}. Did you mean {close[0]!r}?",
-                      file=sys.stderr)
-                return 1
+    if tok.startswith("-") and not os.path.exists(tok):
+        print(f"Error: unknown option {tok!r}", file=sys.stderr)
+        _print_help()
+        return 1
     return _run_deck(argv)
 
 

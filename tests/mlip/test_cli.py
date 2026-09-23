@@ -243,21 +243,9 @@ def test_unknown_mat_symbol_is_rejected(al_poscar, tmp_path, capsys):
     assert "not present in the structure" in capsys.readouterr().err
 
 
-def test_top_level_routing_and_legacy_mlip_filename(al_poscar, tmp_path,
-                                                    monkeypatch, capsys):
+def test_top_level_routing():
     from irma.cli import main as top_main
     assert top_main(["mlip", "--help"]) == 0
-    capsys.readouterr()
-    assert top_main(["mlipf"]) == 1
-    assert "mlip" in capsys.readouterr().err     # typo suggestion
-    # a legacy deck literally named 'mlip' still evaluates (and fails as a
-    # deck, not as a subcommand usage error)
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "mlip").write_text("not a real deck")
-    rc = top_main(["mlip", "out.endf"])
-    assert rc != 0
-    err = capsys.readouterr().err
-    assert "usage: irma mlip" not in err
 
 
 def test_cross_target_preflight_blocks_before_any_deck_is_written(
