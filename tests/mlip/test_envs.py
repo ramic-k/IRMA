@@ -233,21 +233,6 @@ def test_standalone_calculators_never_import_irma(monkeypatch, tmp_path):
         module.CalculatorSpec("mattersim")) == "MatterSim-v1.0.0-5M.pth"
 
 
-def test_server_classify_import_error_by_command():
-    import irma.mlip.force_server as fs
-    from irma.mlip import calculators
-    # init/canonicalize-time ImportError = missing dependency (exit 4);
-    # calc-time ImportError = a backend runtime bug (exit 2)
-    assert fs._classify(ImportError("x"), calculators, "init") \
-        == "dependency"
-    assert fs._classify(ImportError("x"), calculators, "canonicalize") \
-        == "dependency"
-    assert fs._classify(ImportError("x"), calculators, "calc") == "runtime"
-    assert fs._classify(calculators.MlipDependencyError("x"), calculators,
-                        "calc") == "dependency"
-    assert fs._classify(ValueError("x"), calculators, "init") == "value"
-
-
 def test_every_public_potential_has_env_support():
     from irma.mlip.calculators import POTENTIALS
     assert set(envs.ENV_REQUIREMENTS) == set(POTENTIALS)

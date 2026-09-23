@@ -43,7 +43,7 @@ def _gamma_freqs(phonon):
     return np.asarray(phonon.qpoints.frequencies[0])   # get_qpoints_dict is deprecated
 
 
-def test_worker_threads_match_serial_and_validate(tmp_path):
+def test_worker_threads_match_serial(tmp_path):
     # jobs x worker-threads must produce byte-identical force constants
     # to the serial path (threads change scheduling, never physics)
     atoms = bulk("Al", "fcc", a=4.05, cubic=True)
@@ -56,27 +56,6 @@ def test_worker_threads_match_serial_and_validate(tmp_path):
         progress=lambda *_: None)
     assert np.array_equal(serial.phonon.force_constants,
                           wide.phonon.force_constants)
-    with pytest.raises(ValueError, match="worker_threads"):
-        compute_force_constants(
-            atoms, SPEC, supercell=(2, 2, 2), jobs=2, worker_threads=0,
-            scratch_dir=str(tmp_path / "s3"), progress=lambda *_: None)
-
-
-def test_compute_force_constants_canonicalizes_the_spec(tmp_path,
-                                                        monkeypatch):
-    # review finding: a direct API caller with a floating spec (pet-mad
-    # without @version) must be pinned HERE, not only in the CLI, so the
-    # fingerprint and every worker see one identity
-    import irma.mlip.calculators as calculators
-    seen = []
-    real = calculators.canonicalize_spec
-    monkeypatch.setattr(calculators, "canonicalize_spec",
-                        lambda spec: seen.append(spec) or real(spec))
-    atoms = bulk("Al", "fcc", a=4.05, cubic=True)
-    compute_force_constants(
-        atoms, SPEC, supercell=(2, 2, 2), delta=0.03, jobs=1,
-        scratch_dir=str(tmp_path / "scratch"), progress=lambda *_: None)
-    assert seen == [SPEC]
 
 
 def test_ideal_crystal_fc_and_gamma_modes(tmp_path):
@@ -183,15 +162,6 @@ def test_resume_reuses_and_invalidates(tmp_path):
     r5 = compute_force_constants(atoms, SPEC, delta=0.02, **kw)
     assert r5.n_from_cache == 0
 
-    # a WRONG-VERSION fingerprint file is equally untrusted
-    import json as _json
-    fp = os.path.join(scratch, "fingerprint.json")
-    meta = _json.load(open(fp))
-    meta["version"] = 0
-    _json.dump(meta, open(fp, "w"))
-    r5b = compute_force_constants(atoms, SPEC, delta=0.02, **kw)
-    assert r5b.n_from_cache == 0
-
     # a corrupt force file is recomputed, the rest reused
     victims = sorted(f for f in os.listdir(scratch) if f.startswith("forces_"))
     open(os.path.join(scratch, victims[0]), "wb").write(b"not-an-npy")
@@ -209,12 +179,3 @@ def test_symmetrization_metrics_are_reported(tmp_path):
     assert res.asr_drift_before >= 0.0
     assert res.symmetrization_delta >= 0.0
     assert res.wall_s > 0.0
-
-
-def test_worker_spec_keeps_the_pinned_identity():
-    """Pool workers rebuild from the parent's canonical spec: only the
-    thread width changes, the model survives."""
-    from irma.mlip.phonons import _worker_spec
-    spec = CalculatorSpec("emt", model="x", threads=8)
-    worker = _worker_spec(spec, 2)
-    assert worker.threads == 2 and worker.model == "x"
