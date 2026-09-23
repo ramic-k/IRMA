@@ -756,11 +756,13 @@ class MlipPanel(RunPanel):
         if "endf" in targets:
             if self.emit_inelastic_mode.get() != "default":
                 cmd += ["--inelastic-mode", self.emit_inelastic_mode.get()]
-            if self.emit_min_phonon_energy.get().strip():
-                cmd += ["--min-phonon-energy",
-                        f"{parse_float('min phonon energy [meV]', self.emit_min_phonon_energy.get()):g}"]
             if self.emit_elastic_format.get() != "default":
                 cmd += ["--elastic-format", self.emit_elastic_format.get()]
+        # every emitter records the cutoff (endf Card 6f, spectra and
+        # ncrystal physics), so it is not target-scoped
+        if self.emit_min_phonon_energy.get().strip():
+            cmd += ["--min-phonon-energy",
+                    f"{parse_float('min phonon energy [meV]', self.emit_min_phonon_energy.get()):g}"]
         if "ncrystal" in targets and self.material_id.get().strip():
             cmd += ["--material-id", self.material_id.get().strip()]
         if self.emit_outdir.get().strip():
