@@ -321,9 +321,7 @@ ndir  mpdir  [auto_order]  /
 | `auto_order` | `0` | `0` = honor Card 3 `nphon` verbatim; `1` = auto-size the multiphonon order from the anisotropic Debye-Waller physics. |
 
 The incoherent powder average is always the exact numerical orientational
-average. (Input files written before v0.16 carried a 4-field layout whose 3rd field
-selected a removed diagnostic method; drop that field: `10000 1000 0 1 /`
-becomes `10000 1000 1 /`.)
+average.
 
 Make sure `nphon` (or `auto_order=1`) gives the tabulated S(α,β) real
 support across the requested beta grid. Transfers beyond the table are

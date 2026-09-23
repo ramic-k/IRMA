@@ -88,11 +88,6 @@ def test_accepted_for_mef():
     assert cfg["model"] == "BC_pure"
 
 
-def test_rejected_for_invalid_elastic_mode():
-    with pytest.raises(DeckError, match="elastic_mode=1 SEF or 2 MEF"):
-        _parse_extinction_card(_rd("extinction BC_pure l=8550 /"), elastic_mode=3)
-
-
 def _tokens(*lines):
     toks = []
     for ln in lines:

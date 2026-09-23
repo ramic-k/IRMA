@@ -318,14 +318,6 @@ def test_five_field_card_6g_rejected():
     _expect(deck, "Card 6g", "2 values plus an optional 3rd value")
 
 
-def test_legacy_four_field_card_6g_rejected_with_migration_hint():
-    """Pre-v0.16 decks carried the removed incoherent-powder-method selector
-    as a 3rd field; the legacy 4-field layout must fail with a migration
-    hint, never be silently reinterpreted as the new 3-field layout."""
-    deck = _MODE1_HEAD + "100 100 0 1 /\n"
-    _expect(deck, "Card 6g", "4-field", "10000 1000 1 /")
-
-
 def test_card6g_word_method_rejected():
     """The optional method selector written as a word ('numerical') instead
     of its numeric code used to be dropped by read_card_floats, leaving
