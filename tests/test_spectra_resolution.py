@@ -82,14 +82,6 @@ def test_area_conserved_for_localized_bump(shape):
     assert _trapz(out, E) == pytest.approx(_trapz(I_in, E), rel=rel)
 
 
-def test_gaussian_wrapper_matches_dispatcher():
-    E = np.linspace(-100.0, 100.0, 401)
-    I_in = np.exp(-0.5 * ((E - 10.0) / 5.0) ** 2)
-    a = si.gaussian_resolution(E, I_in, (2.0, 0.01, 0.0))
-    b = si.resolution_convolve(E, I_in, (2.0, 0.01, 0.0), shape="gaussian")
-    assert np.array_equal(a, b)
-
-
 def test_lorentzian_has_heavier_tails_than_gaussian():
     """At equal width, the Lorentzian puts more weight far from a single spike."""
     E = np.linspace(-200.0, 200.0, 4001)
@@ -121,15 +113,10 @@ def test_elastic_line_gaussian_is_default():
     assert np.array_equal(a, b)
 
 
-# ---- shape normalization / errors -------------------------------------------
-def test_shape_aliases_and_errors():
+# ---- shape errors -------------------------------------------------------------
+def test_unknown_shape_rejected():
     E = np.linspace(-10.0, 10.0, 21)
     I_in = np.ones_like(E)
-    # aliases resolve
-    for alias in ("Gaussian", "GAUSS", "normal"):
-        si.resolution_convolve(E, I_in, (1.0, 0, 0), shape=alias)
-    for alias in ("Lorentzian", "lorentz", "cauchy"):
-        si.resolution_convolve(E, I_in, (1.0, 0, 0), shape=alias)
     with pytest.raises(ValueError):
         si.resolution_convolve(E, I_in, (1.0, 0, 0), shape="voigt")
 

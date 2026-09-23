@@ -23,9 +23,7 @@ LEAPR single-material path -- the right fallback when only a total DOS is known
 CONVENTION: the LEAPR ``contin()``
 kernel fills its array with the ASYMMETRIC downscatter law S_asym_down (= S_sym *
 exp(+beta/2)); the physical S(Q,E) is then ``sigma_d/(4 pi kT) * S_asym_down``,
-i.e. ``sqe._law_to_sqe(..., law_kind="asym_downscatter")`` (NOT "symmetric",
-which would double-apply exp(+beta/2)). This matches the trusted from_irma_cache
-path exactly.
+i.e. ``sqe._law_to_sqe``, with no further exp(+beta/2) factor.
 """
 from __future__ import annotations
 
@@ -200,7 +198,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
         f0, tbar, _deltab = contin(ssm, alpha_d, beta, nQ, nE, 0, 1.0, tev,
                                    rho, np1, delta1, float(tbeta), nphon_eff)
         # asym_downscatter (the P0-validated convention): S = sigma_d/(4pi kT) * ssm
-        S_d = _law_to_sqe(ssm, beta, T_K, sigma_d, law_kind="asym_downscatter")
+        S_d = _law_to_sqe(ssm, T_K, sigma_d)
         S_cell += mult * S_d
         sigma_b_cell += mult * sigma_d
         n_atoms += mult

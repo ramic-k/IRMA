@@ -63,17 +63,3 @@ def test_instrument_spectrum_shapes_and_elastic_channel():
                                 elastic_area=5.0)
     assert r2["I_elastic"].max() > 0.0           # elastic line now contributes
     assert np.allclose(r2["I_total"], r2["I_inelastic"] + r2["I_elastic"])
-
-
-def test_from_irma_cache_requires_temperature(tmp_path):
-    """A cache without a 't0' key has no temperature of its own, so the loader
-    must demand an explicit T_K instead of guessing one."""
-    path = tmp_path / "cache.npz"
-    q = np.linspace(0.5, 5.0, 4)
-    e = np.linspace(0.0, 50.0, 6)
-    sbar = np.ones((6, 4))
-    np.savez(path, sbar=sbar, q=q, e_mev=e)          # no 't0'
-    with pytest.raises(ValueError, match="t0"):
-        si.from_irma_cache(path, sigma_b=5.0)
-    p = si.from_irma_cache(path, sigma_b=5.0, T_K=300.0)
-    assert p.T_K == 300.0

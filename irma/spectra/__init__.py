@@ -12,9 +12,9 @@ imported lazily by the compute/config layers, so ``import irma.spectra`` works
 without them.
 """
 from irma.spectra.sqe import (
-    PowderSQE, from_oclimax, from_irma_cache, from_noncubic_arrays,
-    signed_sqe, sqe_interpolator, k_of_E, Q_indirect, Q_direct, Q_fit,
-    kf_ki_indirect, kf_ki_direct, sample_along, sigma_of_E, gaussian_resolution,
+    PowderSQE, from_oclimax, from_noncubic_arrays,
+    signed_sqe, sqe_interpolator, k_of_E, Q_indirect, Q_direct,
+    kf_ki_indirect, kf_ki_direct, sample_along, sigma_of_E,
     resolution_convolve, RESOLUTION_SHAPES, elastic_line, instrument_spectrum,
     VISION_EF_MEV, VISION_BANKS, VISION_SIGMA_COEFFS, C_E, KB,
 )
@@ -40,11 +40,11 @@ from irma.spectra.config import (
 
 __all__ = [
     # containers + loaders
-    "PowderSQE", "from_oclimax", "from_irma_cache", "from_noncubic_arrays",
+    "PowderSQE", "from_oclimax", "from_noncubic_arrays",
     # low-level forward model
-    "signed_sqe", "sqe_interpolator", "k_of_E", "Q_indirect", "Q_direct", "Q_fit",
+    "signed_sqe", "sqe_interpolator", "k_of_E", "Q_indirect", "Q_direct",
     "kf_ki_indirect", "kf_ki_direct", "sample_along", "sigma_of_E",
-    "gaussian_resolution", "resolution_convolve", "RESOLUTION_SHAPES",
+    "resolution_convolve", "RESOLUTION_SHAPES",
     "elastic_line", "instrument_spectrum",
     # direct-geometry chopper resolution (auto)
     "chopper_sigma_of_E", "direct_resolution_fwhm", "instrument_geometry",
