@@ -33,7 +33,9 @@ temperatures stored in the tape (the converter selects that column exactly — n
 interpolation); re-run per temperature.
 
 A **polyatomic** material lists one tape per principal scatterer in a YAML config
-(atom `fraction`s summing to 1); the packs are per-atom normalized and summed:
+(atom `fraction`s summing to 1); the packs are per-atom normalized and summed.
+Every channel of a tape, the coherent Bragg edges included, is scaled by its
+species' atom fraction, as transport codes do:
 
 ```bash
 python -m ncrystal_plugin_ENDFTSL --config beo.yaml -o out   # e.g. BeO -> Be + O packs

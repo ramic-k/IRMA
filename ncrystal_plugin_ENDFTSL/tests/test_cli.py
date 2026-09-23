@@ -112,6 +112,15 @@ def test_cli_malformed_yaml_config_exits_2(tmp_path, capsys):
     assert "invalid YAML" in err and "Traceback" not in err
 
 
+def test_cli_config_removed_coherent_convention_key_exits_2(tmp_path, capsys):
+    cfg = _write_cfg(tmp_path, ["C", "N"])
+    cfg.write_text(cfg.read_text() + "coherent_convention: per_atom\n", encoding="utf-8")
+    rc = main(["--config", str(cfg), "-o", str(tmp_path / "out")])
+    assert rc == 2
+    assert "coherent_convention" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
 def test_cli_config_missing_key_exits_2(tmp_path, capsys):
     import yaml as _yaml
     cfg = tmp_path / "c.yaml"

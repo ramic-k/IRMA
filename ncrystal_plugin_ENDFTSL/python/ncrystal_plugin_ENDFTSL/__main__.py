@@ -80,6 +80,9 @@ def _run_config(cfg_path: Path, outdir: Path) -> int:
     cfg = yaml.safe_load(Path(cfg_path).read_text(encoding="utf-8"))
     if not isinstance(cfg, dict):
         raise ValueError(f"config root must be a mapping, got {type(cfg).__name__}")
+    if "coherent_convention" in cfg:
+        raise ValueError("the config key 'coherent_convention' was removed: a sole "
+                         "coherent carrier is always scaled by its atom fraction")
     mid = _validate_material_id(cfg["material_id"])
     _validate_symbols([s["symbol"] for s in cfg["species"]])
     T = float(cfg["temperature"])
@@ -98,10 +101,7 @@ def _run_config(cfg_path: Path, outdir: Path) -> int:
         specs.append(SpeciesSpec(tape=str(tape), symbol=s["symbol"], mass=float(s["mass"]),
                                  fraction=float(s["fraction"])))
         elements.append((s["symbol"], float(s["fraction"])))
-    # coherent_convention disambiguates a sole LTHR=1 carrier (per_atom vs cef_scaled);
-    # multi-carrier / monatomic layouts ignore it (default 'auto').
-    packs = build_packs(specs, T, mid,
-                        coherent_convention=cfg.get("coherent_convention", "auto"))
+    packs = build_packs(specs, T, mid)
     outdir.mkdir(parents=True, exist_ok=True)
     pack_paths = []
     for pk, sp in zip(packs, specs):
