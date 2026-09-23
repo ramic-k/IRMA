@@ -250,18 +250,18 @@ own source, and each entry names its consequence for users.
   S(α,β). The condition only arises for high-energy oscillators at
   cryogenic temperatures (e.g. a 0.2 eV oscillator below ~30 K at
   expansion order ≳ 18).
-* **SCT prefactor missing its square root (`sint`), reproduced rather
-  than fixed.** The SCT tail evaluated when a discrete-oscillator or
-  rotational shift pushes |β| past the tabulated range divides by
-  `4π·wt·α·T̄`, although the Gaussian normalization, and every sibling
-  SCT/free-gas expression in the same module, divides by the *square
-  root* of that quantity. The missing square root is NJOY's own
-  (`leapr.f90:1892`), and IRMA reproduces it deliberately for byte
-  parity with the reference tapes. It affects only the SCT tail reached
-  from `discre` and `coldh`. Tagged at both implementations
-  (`sint_vec`, `_sint_batch_exact`), which are kept in lockstep.
+* **SCT prefactor square root (`sint`).** The SCT tail evaluated when a
+  discrete-oscillator or rotational shift pushes |β| past the tabulated
+  range is a Gaussian, normalized by the *square root* of `4π·wt·α·T̄`
+  like every sibling SCT/free-gas expression in the module. NJOY divides
+  by `4π·wt·α·T̄` itself (`leapr.f90:1892`), which is wrong unless that
+  product happens to be 1. IRMA uses the square root. It affects only the
+  SCT tail reached from `discre` and `coldh`; the validation-set input
+  files and the NJOY minitapes do not reach it and stay byte-identical.
+  Both implementations (`sint_vec`, `_sint_batch_exact`) carry it.
 
-The first two have been reported upstream:
+The first two have been reported upstream (the SCT square root is not
+yet):
 [njoy/NJOY2016#402](https://github.com/njoy/NJOY2016/issues/402) (`discre`
 delta lines) and
 [njoy/NJOY2016#403](https://github.com/njoy/NJOY2016/issues/403) (lead

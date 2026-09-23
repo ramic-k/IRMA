@@ -582,9 +582,9 @@ def sint_vec(x_arr, bex, rdbex, sex, nbx, alph, wt, tbart, betan, nbeta):
         xs = x_arr[sct_mask]
         ex = -(wt * alph - np.abs(xs))**2 / (4.0 * wt * alph * tbart)
         ex = np.where(xs > 0.0, ex - xs, ex)
-        # NJOY's SCT prefactor has no sqrt (leapr.f90:1892); see
-        # _sint_batch_exact and docs/njoy.md.
-        result[sct_mask] = np.exp(ex) / (4.0 * pi * wt * alph * tbart)
+        # Gaussian normalization with its square root; NJOY omits it
+        # (leapr.f90:1892), a deliberate divergence (docs/njoy.md).
+        result[sct_mask] = np.exp(ex) / np.sqrt(4.0 * pi * wt * alph * tbart)
 
     # Interpolation for |x| <= beta_max
     interp_mask = ~sct_mask
@@ -955,11 +955,10 @@ def _sint_batch_exact(x_arr, bex, rdbex, sex, log_sex, nbx, alph, wt,
     sct = abs_x > beta_max
     if np.any(sct) and alph > 0.0:
         idx = np.flatnonzero(sct)
-        # NJOY's SCT prefactor 1/(4 pi wt alph tbart) has no sqrt, unlike the
-        # Gaussian normalization everywhere else (leapr.f90:1892); kept for
-        # parity with the NJOY tapes.
+        # Gaussian normalization 1/sqrt(4 pi wt alph tbart); NJOY omits the
+        # square root (leapr.f90:1892), a deliberate divergence (docs/njoy.md).
         denom_e = 4.0 * wt * alph * tbart
-        denom_r = 4.0 * pi * wt * alph * tbart
+        denom_r = sqrt(4.0 * pi * wt * alph * tbart)
         for i in idx:
             ax = abs_x[i]
             ex = -(wt * alph - ax) ** 2 / denom_e

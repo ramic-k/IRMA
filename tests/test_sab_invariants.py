@@ -178,3 +178,22 @@ def test_discre_convolves_every_in_range_delta_line():
             f"no delta spike at oscillator {e_osc} eV (row {jj}): "
             f"{row[jj]} vs background {background}")
     assert rows_hit[0] != rows_hit[1], "oscillators must map to distinct rows"
+
+
+@pytest.mark.parametrize("which", ["vec", "batch"])
+def test_sct_tail_is_a_normalized_gaussian(which):
+    """Beyond beta_max, sint returns the short-collision-time Gaussian in |x|
+    (centre wt*alpha, variance 2*wt*alpha*tbar), which must integrate to 1.
+    NJOY omits the square root of the normalization (leapr.f90:1892)."""
+    from irma.core.kernels import _sint_batch_exact, sint_vec
+    wt, alph, tbart = 1.0, 50.0, 1.0              # sigma = 10, centre 50
+    bex = np.array([-1.0, 0.0, 1.0])
+    sex = np.full(3, 1e-3)
+    x = -np.linspace(1.5, 150.0, 20001)           # energy loss, all in the tail
+    if which == "vec":
+        s = sint_vec(x, bex, np.ones(3), sex, 3, alph, wt, tbart,
+                     np.array([0.0, 1.0]), 2)
+    else:
+        s = _sint_batch_exact(x, bex, np.ones(3), sex, np.log(sex), 3, alph,
+                              wt, tbart, 1.0)
+    assert np.trapezoid(s, -x) == pytest.approx(1.0, abs=1e-4)
