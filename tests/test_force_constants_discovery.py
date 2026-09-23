@@ -65,6 +65,22 @@ def test_embedded_outranks_files(tmp_path):
     assert resolve_force_constants_source(yaml) == {}
 
 
+def test_explicit_file_beside_embedded_fc_is_reported_unused(
+        tmp_path, monkeypatch, capsys):
+    # phonopy uses yaml-embedded force constants before any explicit file
+    phonopy = pytest.importorskip("phonopy")
+    from irma.core.phonopy_io import load_phonopy
+    seen = {}
+    monkeypatch.setattr(phonopy, "load",
+                        lambda **kw: seen.update(kw) or object())
+    fc = tmp_path / "FORCE_CONSTANTS"
+    fc.write_text("x")
+    load_phonopy(_yaml(tmp_path, embed_fc=True), force_constants_filename=fc)
+    out = capsys.readouterr().out
+    assert "embeds force constants" in out and str(fc) in out
+    assert seen["force_constants_filename"] == str(fc)   # behavior unchanged
+
+
 def test_nothing_found_is_loud(tmp_path):
     yaml = _yaml(tmp_path)
     with pytest.raises(FileNotFoundError) as exc:

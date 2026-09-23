@@ -207,8 +207,10 @@ def load_phonopy(phonopy_yaml_path, born_path=None, force_constants_filename=Non
     and phonopy's C backend is used (the Rust backend's thread pool ignores
     the worker thread pinning). phonopy runs in an empty scratch directory,
     because it probes ./FORCE_CONSTANTS, ./FORCE_SETS and ./BORN even when
-    explicit paths are given. Force constants: the explicit paths, else
-    ``resolve_force_constants_source``. NAC: the explicit BORN file, else NAC
+    explicit paths are given. Force constants: embedded in the yaml, else the
+    explicit paths, else ``resolve_force_constants_source``. Embedded force
+    constants win (phonopy's rule); an explicit path given with them is not
+    used, and a warning says so. NAC: the explicit BORN file, else NAC
     embedded in the yaml, never ./BORN. ``geometry_only`` reads neither.
     """
     import os
@@ -225,6 +227,12 @@ def load_phonopy(phonopy_yaml_path, born_path=None, force_constants_filename=Non
         if force_constants_filename is None and force_sets_filename is None:
             kwargs.update(resolve_force_constants_source(path))
         else:
+            if phonopy_yaml_embeds_force_constants(path):
+                unused = ", ".join(str(p) for p in (force_constants_filename,
+                                                    force_sets_filename)
+                                   if p is not None)
+                print(f"WARNING: {path} embeds force constants, which phonopy "
+                      f"uses; {unused} is not used", flush=True)
             if force_constants_filename is not None:
                 kwargs["force_constants_filename"] = os.path.abspath(
                     str(force_constants_filename))
@@ -509,7 +517,8 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
         If None, no NAC is applied.
     force_constants_filename, force_sets_filename : str or None
         Explicit force-constants / force-sets file; overrides the
-        yaml-adjacent discovery.
+        yaml-adjacent discovery, but not force constants embedded in the
+        yaml (those win, with a warning).
 
     Returns
     -------
