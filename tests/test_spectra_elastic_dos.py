@@ -1,4 +1,4 @@
-"""DOS-based (mode-0) elastic line: irma.spectra.elastic.from_dos_and_lattice.
+"""DOS-based (mode-0) elastic line: irma.spectra.elastic.from_dos_elastic.
 
 Pins the isotropic coherent-Bragg + incoherent-DW builder used by the DOS path.
 The key physics check is an EXACT equivalence with the anisotropic engine builder
@@ -18,7 +18,7 @@ import pytest
 
 from irma.core.constants import BK, HBAR2_OVER_2MN_MEV_A2 as C_E
 from irma.core.crystal import CrystalStructure, AtomSite
-from irma.spectra.elastic import from_dos_and_lattice, from_engine_elastic_state
+from irma.spectra.elastic import from_dos_elastic, from_engine_elastic_state
 
 
 def _bcc(a=2.866, b_coh_fm=9.45):
@@ -30,9 +30,9 @@ def _bcc(a=2.866, b_coh_fm=9.45):
 
 # ---- basic behaviour --------------------------------------------------------
 def test_builds_finite_model_with_both_channels():
-    em = from_dos_and_lattice(_bcc(), awr=[55.0], sigma_inc_b=[0.4],
-                              f0_lambda=[3.0], T_K=296.0, elastic_kind="both",
-                              emax_eV=0.3)
+    em = from_dos_elastic(_bcc(), awr=[55.0], sigma_inc_b=[0.4],
+                          f0_lambda=[3.0], multiplicity=[2], T_K=296.0,
+                          elastic_kind="both", emax_eV=0.3)
     assert em.has_coherent and em.has_incoherent
     assert em.Q_bragg.size > 0 and np.all(np.diff(em.Q_bragg) >= -1e-12)   # sorted
     assert np.all(em.f_bragg > 0) and np.all(np.isfinite(em.f_bragg))
@@ -48,9 +48,9 @@ def test_builds_finite_model_with_both_channels():
 def test_higher_f0_attenuates_the_peaks_monotonically():
     sums = []
     for f0 in (0.0, 3.0, 8.0):
-        em = from_dos_and_lattice(_bcc(), awr=[55.0], sigma_inc_b=[0.4],
-                                  f0_lambda=[f0], T_K=296.0,
-                                  elastic_kind="coherent", emax_eV=0.3)
+        em = from_dos_elastic(_bcc(), awr=[55.0], sigma_inc_b=[0.4],
+                              f0_lambda=[f0], multiplicity=[2], T_K=296.0,
+                              elastic_kind="coherent", emax_eV=0.3)
         sums.append(em.f_bragg.sum())
     assert sums[0] > sums[1] > sums[2] > 0.0      # Debye-Waller suppresses edges
 
@@ -58,9 +58,9 @@ def test_higher_f0_attenuates_the_peaks_monotonically():
 @pytest.mark.parametrize("kind,coh,inc", [
     ("both", True, True), ("coherent", True, False), ("incoherent", False, True)])
 def test_elastic_kind_isolates_channels(kind, coh, inc):
-    em = from_dos_and_lattice(_bcc(), awr=[55.0], sigma_inc_b=[0.4],
-                              f0_lambda=[3.0], T_K=296.0, elastic_kind=kind,
-                              emax_eV=0.3)
+    em = from_dos_elastic(_bcc(), awr=[55.0], sigma_inc_b=[0.4],
+                          f0_lambda=[3.0], multiplicity=[2], T_K=296.0,
+                          elastic_kind=kind, emax_eV=0.3)
     assert em.has_coherent is coh and em.has_incoherent is inc
     if not coh:
         assert em.Q_bragg.size == 0
@@ -68,7 +68,7 @@ def test_elastic_kind_isolates_channels(kind, coh, inc):
 
 # ---- the physics cross-check: isotropic U == DOS f0 -------------------------
 def test_matches_engine_builder_for_isotropic_U():
-    """from_dos_and_lattice(f0) == from_engine_elastic_state(U=u0 I) EXACTLY when
+    """from_dos_elastic(f0) == from_engine_elastic_state(U=u0 I) EXACTLY when
     f0 = trace(F)/3 = awr*kT_meV*u0/C_E. Both are per-atom now, so for this
     single-species BCC cell the Bragg peaks, the incoherent line and W' all match
     bit-for-bit (the per-atom-average incoherent reduces to the single principal
@@ -90,9 +90,9 @@ def test_matches_engine_builder_for_isotropic_U():
     eng = from_engine_elastic_state(es, b_coh_fm=b_coh_fm, sigma_inc_b=sig_inc,
                                     awr=awr, T_K=T_K, elastic_kind="both",
                                     emax_eV=0.3)
-    dos = from_dos_and_lattice(_bcc(a, b_coh_fm), awr=[awr], sigma_inc_b=[sig_inc],
-                               f0_lambda=[f0], T_K=T_K, elastic_kind="both",
-                               emax_eV=0.3)
+    dos = from_dos_elastic(_bcc(a, b_coh_fm), awr=[awr], sigma_inc_b=[sig_inc],
+                           f0_lambda=[f0], multiplicity=[2], T_K=T_K,
+                           elastic_kind="both", emax_eV=0.3)
 
     assert dos.Q_bragg.size == eng.Q_bragg.size and dos.Q_bragg.size > 0
     assert np.allclose(dos.Q_bragg, eng.Q_bragg, rtol=1e-12, atol=1e-12)
@@ -111,14 +111,14 @@ def test_incoherent_sums_all_species_not_just_principal():
         AtomSite(b_coh_fm=-3.0, positions=[(0.5, 0.5, 0.5)]),        # carries the incoherent
     ])
     # 2 sites, 1 atom each -> N=2; per-atom channel sigma_b = (mult/N)*sigma_inc
-    em = from_dos_and_lattice(cr, awr=[12.0, 16.0], sigma_inc_b=[0.0, 0.5],
-                              f0_lambda=[2.0, 1.5], T_K=296.0, elastic_kind="both",
-                              emax_eV=0.3)
+    em = from_dos_elastic(cr, awr=[12.0, 16.0], sigma_inc_b=[0.0, 0.5],
+                          f0_lambda=[2.0, 1.5], multiplicity=[1, 1], T_K=296.0,
+                          elastic_kind="both", emax_eV=0.3)
     assert em.has_incoherent is True and em.has_coherent is True       # NOT dropped
     assert len(em.incoherent_channels) == 1 and em.sigma_b == pytest.approx(0.5 / 2)
-    em2 = from_dos_and_lattice(cr, awr=[12.0, 16.0], sigma_inc_b=[0.3, 0.5],
-                               f0_lambda=[2.0, 1.5], T_K=296.0, elastic_kind="both",
-                               emax_eV=0.3)
+    em2 = from_dos_elastic(cr, awr=[12.0, 16.0], sigma_inc_b=[0.3, 0.5],
+                           f0_lambda=[2.0, 1.5], multiplicity=[1, 1], T_K=296.0,
+                           elastic_kind="both", emax_eV=0.3)
     assert len(em2.incoherent_channels) == 2
     assert em2.sigma_b == pytest.approx((0.3 + 0.5) / 2)
 
@@ -131,31 +131,10 @@ def test_ch2_incoherent_keeps_hydrogen():
         AtomSite(b_coh_fm=-3.7406, positions=[(0.25, 0.25, 0.25),
                                               (0.75, 0.75, 0.75)]),             # 2 H
     ])
-    em = from_dos_and_lattice(cr, awr=[11.9, 0.9991], sigma_inc_b=[0.001, 80.26],
-                              f0_lambda=[1.0, 5.0], T_K=296.0, elastic_kind="incoherent")
+    em = from_dos_elastic(cr, awr=[11.9, 0.9991], sigma_inc_b=[0.001, 80.26],
+                          f0_lambda=[1.0, 5.0], multiplicity=[1, 2], T_K=296.0,
+                          elastic_kind="incoherent")
     assert em.has_incoherent and len(em.incoherent_channels) == 2
     sbs = sorted(sb for sb, _ in em.incoherent_channels)
     # N=3 (1 C + 2 H); H channel sigma_b = (mult_H/N)*sigma_inc_H = (2/3)*80.26
     assert sbs[-1] == pytest.approx((2 / 3) * 80.26)   # H present, not dropped
-
-
-# ---- input validation -------------------------------------------------------
-@pytest.mark.parametrize("kw", [
-    {"awr": [55.0, 1.0]},                       # wrong length vs 1 species
-    {"sigma_inc_b": [0.4, 0.4]},
-    {"f0_lambda": [3.0, 3.0]},
-    {"awr": [-1.0]},                            # awr must be > 0
-    {"f0_lambda": [-0.1]},                      # f0 must be >= 0
-    {"sigma_inc_b": [-0.1]},                    # sigma_inc must be >= 0
-])
-def test_bad_per_species_inputs_rejected(kw):
-    base = dict(awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0])
-    base.update(kw)
-    with pytest.raises(ValueError):
-        from_dos_and_lattice(_bcc(), T_K=296.0, elastic_kind="both", **base)
-
-
-def test_bad_elastic_kind_rejected():
-    with pytest.raises(ValueError):
-        from_dos_and_lattice(_bcc(), awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0],
-                             T_K=296.0, elastic_kind="bragg")

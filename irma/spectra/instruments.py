@@ -188,7 +188,6 @@ def simulate(p: si.PowderSQE, instrument: Instrument, E_out,
         if elastic_model is not None:
             area = el.bank_elastic_area(
                 elastic_model, instrument.E_fixed, tt,
-                geometry=instrument.geometry,
                 dtheta_deg=instrument.bank_halfwidth_deg)
         out = si.instrument_spectrum(
             p, Qof, E_out, instrument.width_source(),

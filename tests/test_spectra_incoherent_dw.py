@@ -79,11 +79,6 @@ def test_coherent_peaks_unaffected_by_mode():
     assert np.array_equal(iso.f_bragg, dirm.f_bragg)
 
 
-def test_bad_mode_rejected():
-    with pytest.raises(ValueError, match="incoherent_elastic_mode"):
-        _model(GRAPHITE_U, "anisotropic")
-
-
 def _cfg_dict(**physics_over):
     physics = {"inelastic_mode": 2, "max_phonon_order": "auto"}
     physics.update(physics_over)

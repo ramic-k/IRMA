@@ -24,7 +24,7 @@ from pathlib import Path
 from irma.core.constants import HBAR2_OVER_2MN_MEV_A2 as C_E
 from irma.core.crystal import CrystalStructure, AtomSite
 from irma.spectra.elastic import (
-    instrument_reach_emax_eV, from_dos_and_lattice, from_engine_elastic_state)
+    instrument_reach_emax_eV, from_dos_elastic, from_engine_elastic_state)
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "spectra"
 
@@ -94,10 +94,10 @@ def test_dos_builder_truncation_is_a_bit_identical_prefix():
     cr = CrystalStructure(2.866, 2.866, 2.866, 90.0, 90.0, 90.0,
                           [AtomSite(b_coh_fm=9.45,
                                     positions=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.5)])])
-    kw = dict(awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0], T_K=296.0,
-              elastic_kind="coherent")
-    full = from_dos_and_lattice(cr, emax_eV=0.5, **kw)
-    trunc = from_dos_and_lattice(cr, emax_eV=0.12, **kw)
+    kw = dict(awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0], multiplicity=[2],
+              T_K=296.0, elastic_kind="coherent")
+    full = from_dos_elastic(cr, emax_eV=0.5, **kw)
+    trunc = from_dos_elastic(cr, emax_eV=0.12, **kw)
     n = trunc.Q_bragg.size
     assert 0 < n < full.Q_bragg.size
     assert np.array_equal(trunc.Q_bragg, full.Q_bragg[:n])
@@ -120,8 +120,8 @@ def _no_bragg_enumeration(monkeypatch):
 def test_dos_builder_incoherent_kind_skips_enumeration(_no_bragg_enumeration):
     cr = CrystalStructure(2.866, 2.866, 2.866, 90.0, 90.0, 90.0,
                           [AtomSite(b_coh_fm=9.45, positions=[(0.0, 0.0, 0.0)])])
-    em = from_dos_and_lattice(cr, awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0],
-                              T_K=296.0, elastic_kind="incoherent")
+    em = from_dos_elastic(cr, awr=[55.0], sigma_inc_b=[0.4], f0_lambda=[3.0],
+                          multiplicity=[1], T_K=296.0, elastic_kind="incoherent")
     assert em.has_incoherent and not em.has_coherent
     assert em.Q_bragg.size == 0
 

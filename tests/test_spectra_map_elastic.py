@@ -23,7 +23,7 @@ import numpy as np
 
 from irma.spectra.forward import compute_sqe_map
 from irma.spectra.elastic import (
-    from_dos_incoherent_only, from_dos_and_lattice, from_engine_elastic_state,
+    from_dos_elastic, from_engine_elastic_state,
     instrument_reach_emax_eV)
 from irma.core.crystal import CrystalStructure, AtomSite
 
@@ -98,8 +98,8 @@ def test_map_mode0_incoherent_elastic_line_quantitative():
     assert np.all(diff[:, off_line] == 0.0)          # deposit localized at E=0
     assert diff[:, [j0, j1]].min() >= 0.0
 
-    ref = from_dos_incoherent_only(
-        awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
+    ref = from_dos_elastic(
+        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
         multiplicity=[1], T_K=T_K)
     area = ref.incoherent_dsigma_dOmega(m_on.Q)
     got = diff.sum(axis=1) * GRID["dE"]              # energy integral per Q
@@ -128,9 +128,10 @@ def test_map_mode0_coherent_elastic_bragg_peaks():
     crystal = CrystalStructure(*GRAPHITE_LATTICE,
                                [AtomSite(b_coh_fm=6.646,
                                          positions=GRAPHITE_SITES)])
-    ref = from_dos_and_lattice(
+    ref = from_dos_elastic(
         crystal, awr=[sp["awr"]], sigma_inc_b=[sp["sigma_inc_b"]],
-        f0_lambda=[_f0(m_on)], T_K=T_K, elastic_kind="both",
+        f0_lambda=[_f0(m_on)], multiplicity=[len(GRAPHITE_SITES)], T_K=T_K,
+        elastic_kind="both",
         emax_eV=instrument_reach_emax_eV(q_max_invA=float(m_on.Q.max()),
                                          q_cuts=[float(m_on.Q.max())],
                                          q_res_invA=GRID["dQ_map"]))
@@ -153,8 +154,8 @@ def test_map_elastic_broadening_spreads_the_line_and_keeps_its_integral():
                            elastic_kind="incoherent", broaden=True,
                            **GRID, **BASE)
     diff = m_on.S - m_off.S
-    ref = from_dos_incoherent_only(
-        awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
+    ref = from_dos_elastic(
+        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
         multiplicity=[1], T_K=T_K)
     area = ref.incoherent_dsigma_dOmega(m_on.Q)
     got = diff.sum(axis=1) * GRID["dE"]
@@ -200,8 +201,8 @@ def test_map_elastic_on_bin_interior_zero_exact():
     off_line = np.ones(m_on.E.size, bool)
     off_line[jz] = False
     assert np.all(diff[:, off_line] == 0.0)            # single-bin deposit
-    ref = from_dos_incoherent_only(
-        awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
+    ref = from_dos_elastic(
+        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
         multiplicity=[1], T_K=T_K)
     area = ref.incoherent_dsigma_dOmega(m_on.Q)
     assert np.allclose(diff[:, jz] * grid["dE"], area, rtol=1e-9)
@@ -226,8 +227,8 @@ def test_map_elastic_axis_endpoint_zero_carries_half_line():
     assert m_on.metadata["elastic_deposited"] is True
     assert any("endpoint" in str(x) for x in msgs)
     diff = m_on.S - m_off.S
-    ref = from_dos_incoherent_only(
-        awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
+    ref = from_dos_elastic(
+        None, awr=[sp["awr"]], sigma_inc_b=[1.2], f0_lambda=[_f0(m_on)],
         multiplicity=[1], T_K=T_K)
     area = ref.incoherent_dsigma_dOmega(m_on.Q)
     got = np.trapezoid(diff, m_on.E, axis=1)
