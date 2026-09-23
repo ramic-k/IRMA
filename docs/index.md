@@ -125,7 +125,7 @@ calculation:
 ```
 
 The Card 6g values in the snippet are the recommended production sampling for
-the noncubic modes: 10000 coherent powder directions, 1000 multiphonon
+the noncubic modes: 10000 one-phonon powder directions, 1000 multiphonon
 directions, and auto-sized multiphonon order. This is the sampling the
 validation campaign ran, and it is the default in the GUI form and in
 `irma mlip emit`. The powder averages are converged well below these counts,

@@ -178,7 +178,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--num-directions",
         type=int,
         default=10000,
-        help="Number of Fibonacci-sphere directions used for the coherent one-phonon powder average.",
+        help="Number of Fibonacci-sphere directions used for the one-phonon powder average "
+             "(coherent and incoherent).",
     )
     parser.add_argument(
         "--multiphonon-num-directions",

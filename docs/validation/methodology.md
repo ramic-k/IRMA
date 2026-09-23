@@ -152,9 +152,9 @@ compares different physics and is never done.
 ### Broadened metrics for stochastic powder sampling
 
 Modes 1 and 2 compute powder averages by sampling discrete
-directions on a sphere: the validation campaign used 10000 coherent and 1000
-incoherent/multiphonon directions (Card 6g `10000 1000 1`; production
-defaults are lower, the campaign added headroom). Discrete sampling puts
+directions on a sphere: the validation campaign used 10000 one-phonon
+(coherent and incoherent) and 1000 multiphonon directions (Card 6g
+`10000 1000 1`, also the production default). Discrete sampling puts
 sharp coherent features at slightly different energies in two codes even
 when the physics matches, so agreement is measured through the shared-domain
 integral above or through a broadened (resolution-convolved) metric inside
