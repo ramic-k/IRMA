@@ -49,15 +49,6 @@ class ComputationRunner:
             on_log=on_log, on_done=on_done, output_path=output_file,
             error_label="Input deck error")
 
-    def run_config(self, config_path, output_file, on_log=None, on_done=None):
-        """Neutron-scattering spectrum from a SpectraConfig file."""
-        self.run_command(
-            [sys.executable, "-u", "-m", "irma.spectra", "run",
-             config_path, "-o", output_file],
-            success_msg=f"Spectrum written to {output_file}.",
-            on_log=on_log, on_done=on_done, output_path=output_file,
-            error_label="Spectra config error")
-
     @staticmethod
     def _output_problem(output_path):
         """Error message if a zero-exit run left no (or an empty) output file."""

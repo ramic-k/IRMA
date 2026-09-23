@@ -13,14 +13,15 @@ event loop needed), so they are unit-testable against a withdrawn Tk root.
 
 import argparse
 import os
+import sys
 import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from irma.gui.widgets import (
     LabeledEntry, LabeledCombobox, FileSelector, ScrolledText, InfoLabel,
-    check_with_help, form_section, init_form_styles, scrolled_columns,
-    parse_float, parse_int)
+    RunPanel, check_with_help, form_section, init_form_styles,
+    scrolled_columns, parse_float, parse_int)
 from irma.core.noncubic_inelastic import MIN_PHONON_ENERGY_HELP
 from irma.gui.element_table import ElementTable
 from irma.spectra.config import SpectraConfig, SpectraConfigError, dump, load
@@ -548,8 +549,10 @@ IDENTITY_HINT_ELEMENTS = (
     "examples/spectra configs).")
 
 
-class NSPanel(ttk.Frame):
+class NSPanel(RunPanel):
     """Neutron-scattering forward-spectrum panel."""
+
+    error_title = "Spectrum Error"
 
     def __init__(self, parent, runner, status_setter=None):
         super().__init__(parent, padding=8)
@@ -1180,6 +1183,7 @@ class NSPanel(ttk.Frame):
         self._canvas = None
         self._plot_data = None
         self._map_path = None
+        self._pending_map = None
 
     # -------------------------------------------------------------- config ---
     def _geometry(self):
@@ -1501,55 +1505,27 @@ class NSPanel(ttk.Frame):
         if not output:
             messagebox.showerror("Error", "Please specify an output file.")
             return
-        self._cfg_tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False)
-        self._cfg_tmp.close()
-        dump(cfg, self._cfg_tmp.name)
+        cfg_path = self._temp_path("config.yaml")
+        dump(cfg, cfg_path)
         self._last_output = output
-
-        self.log.clear()
-        self.log.append("=== IRMA neutron-scattering spectrum ===\n")
-        self.log.append(f"geometry={cfg.instrument.geometry}  output={output}\n\n")
-        self._status("Running spectrum...")
-        self.run_btn.config(state=tk.DISABLED)
-        self.cancel_btn.config(state=tk.NORMAL)
         self.plot_btn.config(state=tk.DISABLED)
-        self.runner.run_config(self._cfg_tmp.name, output,
-                               on_log=self._log_ts, on_done=self._done_ts)
+        self._start(
+            [sys.executable, "-u", "-m", "irma.spectra", "run",
+             cfg_path, "-o", output],
+            "IRMA neutron-scattering spectrum",
+            f"Spectrum written to {output}.", "Spectra config error",
+            header=f"geometry={cfg.instrument.geometry}  output={output}\n\n",
+            running="Running spectrum...", done="Spectrum complete",
+            output_path=output, on_ok=self._spectrum_done)
 
-    def _cancel(self):
-        """Cancel the running calculation."""
-        if not self.runner.is_running:
-            return
-        self._status("Cancelling...")
-        self.cancel_btn.config(state=tk.DISABLED)
-        self.log.append("\n=== Cancelling (terminating workers) ===\n")
-        self.runner.cancel()
+    def _action_buttons(self):
+        return (self.run_btn,)
 
-    def _log_ts(self, text):
-        """Append a log line from the worker thread (marshalled via after())."""
-        self.after(0, self.log.append, text)
-
-    def _done_ts(self, ok, msg):
-        """Handle run completion from the worker thread (marshalled via after())."""
-        def _update():
-            """Apply the completion UI changes on the Tk thread."""
-            self.run_btn.config(state=tk.NORMAL)
-            self.cancel_btn.config(state=tk.DISABLED)
-            self._sync_map_btn()
-            self.log.append(f"\n{msg}\n")
-            if ok:
-                self._status("Spectrum complete")
-                if self._last_output and os.path.exists(self._last_output):
-                    self.plot_btn.config(state=tk.NORMAL)
-                    self._plot()
-            elif msg.startswith("Calculation cancelled"):
-                self._status("Cancelled")
-            else:
-                self._status("Error")
-                messagebox.showerror("Spectrum Error", msg[:500])
-            self._cleanup_cfg_tmp()
-        self.after(0, _update)
+    def _spectrum_done(self):
+        """Enable Plot and plot the spectrum that was just written."""
+        if self._last_output and os.path.exists(self._last_output):
+            self.plot_btn.config(state=tk.NORMAL)
+            self._plot()
 
     # -- 2-D S(Q,E) map ------------------------------------------------------
     def _run_map(self):
@@ -1562,14 +1538,11 @@ class NSPanel(ttk.Frame):
         except (SpectraConfigError, ValueError, argparse.ArgumentTypeError) as exc:
             messagebox.showerror("Config Error", str(exc))
             return
-        import sys as _sys
-        self._cfg_tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False)
-        self._cfg_tmp.close()
-        dump(cfg, self._cfg_tmp.name)
+        cfg_path = self._temp_path("config.yaml")
+        dump(cfg, cfg_path)
         # drop the previous run's temp map unless it is still plotted (then it
         # is released when the new map supersedes it in _plot_map)
-        prev = getattr(self, "_pending_map", None)
+        prev = self._pending_map
         if prev and prev != self._map_path:
             self._discard_map_file(prev)
         fh = tempfile.NamedTemporaryFile(suffix=".npz", delete=False)
@@ -1608,66 +1581,28 @@ class NSPanel(ttk.Frame):
         # accepts a zero lower bound, and a hardcoded 0.5 cut a valid low-Q
         # band out of cold/low-Ei maps while these comments promised full
         # accessible coverage (review GUI-MAP).
-        argv = [_sys.executable, "-u", "-m", "irma.spectra", "map",
-                self._cfg_tmp.name, "--q-min", "0.0", "--q-max", f"{q_max:.3f}",
+        argv = [sys.executable, "-u", "-m", "irma.spectra", "map",
+                cfg_path, "--q-min", "0.0", "--q-max", f"{q_max:.3f}",
                 "--dq-map", str(cfg.grid.dq_max_invA),
                 "--angle-range", str(th_min), str(th_max),
                 "-o", self._pending_map]
-        self.log.clear()
-        self.log.append("=== IRMA 2-D S(Q,E) map ===\n\n")
-        self._status("Computing 2D map (dense grid)...")
-        self.run_btn.config(state=tk.DISABLED)
-        self.cancel_btn.config(state=tk.NORMAL)
-        self.runner.run_command(
-            argv, success_msg=f"Map written to {self._pending_map}.",
-            on_log=self._log_ts, on_done=self._done_map,
+        # a success guarantees a non-empty map file (the runner checks
+        # output_path on exit 0), so on_ok can load and plot it
+        self._start(
+            argv, "IRMA 2-D S(Q,E) map",
+            f"Map written to {self._pending_map}.", "Spectra config error",
+            header="\n", running="Computing 2D map (dense grid)...",
+            done="2D map complete", error_title="Map Error",
             output_path=self._pending_map,
-            error_label="Spectra config error")
-
-    def _done_map(self, ok, msg):
-        """Handle map completion (marshalled via after())."""
-        def _update():
-            """Apply the completion UI changes on the Tk thread."""
-            self.run_btn.config(state=tk.NORMAL)
-            self.cancel_btn.config(state=tk.DISABLED)
-            self._sync_map_btn()
-            self.log.append(f"\n{msg}\n")
-            # ok now guarantees a non-empty file (run_command verifies
-            # output_path on exit 0), so it is safe to load and plot.
-            if ok:
-                self._status("2D map complete")
-                self._plot_map(self._pending_map)
-            elif msg.startswith("Calculation cancelled"):
-                self._status("Cancelled")
-            else:
-                self._status("Error")
-                messagebox.showerror("Map Error", msg[:500])
-            self._cleanup_cfg_tmp()
-        self.after(0, _update)
-
-    def _cleanup_cfg_tmp(self):
-        """Idempotently remove the panel-owned temp config file."""
-        tmp = getattr(self, "_cfg_tmp", None)
-        if tmp is not None:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
-            self._cfg_tmp = None
+            on_ok=lambda: self._plot_map(self._pending_map))
 
     def cleanup_temp_files(self):
-        """Remove every panel-owned temp file (config YAML + map .npz).
-
-        Called from the completion callbacks, panel destroy AND app close
-        (review GUI-2): completion callbacks are queued via after() and die
-        with the Tk interpreter, so a close-during-run used to leak them.
-        Safe to call repeatedly.
-        """
-        self._cleanup_cfg_tmp()
-        self._discard_map_file(getattr(self, "_map_path", None))
-        pending = getattr(self, "_pending_map", None)
-        if pending != getattr(self, "_map_path", None):
-            self._discard_map_file(pending)
+        """Remove every panel-owned temp file: the run config and the 2-D
+        map files. Idempotent; app close and panel destroy call it."""
+        super().cleanup_temp_files()
+        self._discard_map_file(self._map_path)
+        if self._pending_map != self._map_path:
+            self._discard_map_file(self._pending_map)
         self._map_path = None
         self._pending_map = None
 

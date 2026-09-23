@@ -60,7 +60,7 @@ def test_runs_command_and_streams_output():
 
 def test_exit_code_2_default_label_is_generic_input_error():
     # run_command itself knows nothing about decks: the generic default is
-    # "Input error"; the run()/run_config() adapters pass their own labels.
+    # "Input error"; the run() adapter passes its own label.
     r, logs, done, ev = _make_runner()
     r.run_command([sys.executable, "-u", "-c",
                    "import sys; print('  bad card 6'); sys.exit(2)"])
@@ -136,23 +136,6 @@ def test_run_builds_leapr_argv(monkeypatch):
     assert seen["label"] == "Input deck error"   # LEAPR runs ARE deck errors
 
 
-def test_run_config_builds_spectra_argv(monkeypatch):
-    r = ComputationRunner()
-    seen = {}
-    monkeypatch.setattr(r, "run_command",
-                        lambda argv, success_msg="", on_log=None, on_done=None,
-                        output_path=None, error_label="Input error":
-                        seen.update(argv=argv, out=output_path,
-                                    label=error_label))
-    r.run_config("cfg.yaml", "spec.csv")
-    assert seen["argv"][1:] == ["-u", "-m", "irma.spectra", "run", "cfg.yaml",
-                                "-o", "spec.csv"]
-    assert seen["out"] == "spec.csv"
-    assert seen["label"] == "Spectra config error"   # not "Input deck error"
-
-
-# ---- THE GATE: cancel terminates the forked workers -------------------------
-@pytest.mark.skipif(os.name != "posix", reason="process-group kill is POSIX")
 def test_cancel_terminates_forked_workers():
     prog = (
         "import multiprocessing as mp, time, os\n"
