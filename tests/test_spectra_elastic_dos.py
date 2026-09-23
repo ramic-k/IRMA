@@ -9,9 +9,7 @@ bit-for-bit on the Bragg peaks and the incoherent W'.
 
 Bragg edges here are enumerated to emax_eV=0.3 -- every assertion is independent
 of the enumeration reach (channel bookkeeping, DW monotonicity, builder equivalence at
-MATCHED emax), and truncation purity itself is pinned in
-test_spectra_elastic_reach.py. The full-5 eV enumeration stays pinned in
-test_spectra_elastic_from_engine.py::test_bragg_geometry_matches_compute_bragg_edges.
+MATCHED emax).
 """
 import numpy as np
 import pytest

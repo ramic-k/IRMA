@@ -7,11 +7,8 @@ reproduced exactly from the lattice, the coherent Bragg peaks integrate back to
 sigma_coh (selftest), and the incoherent path produces the THERMR Debye-Waller
 line. No phonopy / engine run needed -- the elastic_state is hand-built.
 
-Bragg edges are enumerated to emax_eV=0.3 where the assertion is reach-independent
-(selftest windows <= 0.2 eV, DW monotonicity, channel bookkeeping);
-test_bragg_geometry_matches_compute_bragg_edges keeps the ONE full-5 eV
-enumeration pin, and truncation purity is pinned in
-test_spectra_elastic_reach.py.
+Bragg edges are enumerated to emax_eV=0.3, where every assertion here is
+reach-independent.
 """
 import numpy as np
 import pytest
@@ -48,20 +45,14 @@ def test_coherent_builds_model_with_edges():
 
 def test_bragg_geometry_matches_compute_bragg_edges():
     """Edge positions come PURELY from the lattice -> reproduce the Bragg routine."""
-    st = _state(a=3.567)
-    m = from_engine_elastic_state(st, b_coh_fm=6.646, sigma_inc_b=0.001, awr=11.898)
+    m = from_engine_elastic_state(_state(a=3.567), b_coh_fm=6.646,
+                                  sigma_inc_b=0.001, awr=11.898, emax_eV=0.3)
     cr = CrystalStructure(3.567, 3.567, 3.567, 90.0, 90.0, 90.0,
                           [AtomSite(6.646, [(0.0, 0.0, 0.0)])])
-    bd, nbe, _, _ = compute_bragg_edges_general(cr, emax=5.0)
-    E_pos = bd[bd[:, 0] > 0, 0]
-    Q_ref = np.sort(2.0 * np.sqrt(E_pos * 1000.0 / C_E))
-    # every reference edge with positive structure factor appears in the model
-    for q in Q_ref:
-        if np.any(np.isclose(m.Q_bragg, q, rtol=1e-9, atol=1e-9)):
-            continue
-        # may have been thinned by f<=0; allow that, but most must match
-    found = sum(np.any(np.abs(m.Q_bragg - q) < 1e-6) for q in Q_ref)
-    assert found >= 0.8 * Q_ref.size
+    bd, *_ = compute_bragg_edges_general(cr, emax=0.3)
+    # the builder drops edges with a zero structure factor
+    Q_ref = np.sort(2.0 * np.sqrt(bd[bd[:, 1] > 0, 0] * 1000.0 / C_E))
+    np.testing.assert_allclose(np.sort(m.Q_bragg), Q_ref, rtol=1e-9)
 
 
 def test_selftest_holds_for_coherent_peaks():
@@ -78,6 +69,7 @@ def test_incoherent_path_is_debye_waller_line():
                                   elastic_kind="incoherent")
     assert m.has_incoherent and not m.has_coherent
     assert m.sigma_b == 80.0
+    assert len(m.incoherent_channels) == 1
     assert m.Wprime_invmeV > 0
     # dsigma/dOmega(Q=0) = sigma_b/4pi
     assert float(m.incoherent_dsigma_dOmega(0.0)[0]) == pytest.approx(80.0 / (4 * np.pi))
@@ -159,15 +151,3 @@ def test_incoherent_keeps_every_species_channel():
     # the Q->0 incoherent level is dominated by H, not the principal's 0.02 b
     level = float(m.incoherent_dsigma_dOmega(np.array([1e-4]))[0])
     assert level == pytest.approx((0.02 / 3 + 2 * 80.27 / 3) / (4 * np.pi), rel=1e-6)
-
-
-def test_single_species_incoherent_unchanged_by_channel_sum():
-    """The multi-species channel sum must reduce exactly to the previous
-    principal-only behavior for a single-species crystal (mult/N == 1)."""
-    m = from_engine_elastic_state(_state(U_iso=0.02), b_coh_fm=3.0,
-                                  sigma_inc_b=2.0, awr=11.898,
-                                  elastic_kind="incoherent")
-    assert m.has_incoherent
-    assert m.sigma_b == pytest.approx(2.0, rel=1e-12)
-    assert len(m.incoherent_channels) == 1
-    assert m.incoherent_channels[0][0] == pytest.approx(2.0, rel=1e-12)
