@@ -71,10 +71,10 @@ from irma.core.crystal import (
     _average_site_quantity, _compute_per_species_msd,
 )
 from irma.core.crystal_cards import _parse_crystal_cards
-# _compute_endf_s and _grouped_coherent_s_table are unused inside engine.py but
-# re-exported via this facade (tests import them from irma.core.engine).
+# _grouped_coherent_s_table is unused inside engine.py but re-exported via
+# this facade (tests import it from irma.core.engine).
 from irma.core.endf_writer import (
-    write_endf_output, _compute_endf_s, _grouped_coherent_s_table,
+    write_endf_output, _grouped_coherent_s_table,
 )
 
 # The LEAPR driver (run_leapr) and its two phonopy/MT4 helpers were

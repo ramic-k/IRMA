@@ -231,11 +231,9 @@ Those values fall below what the ENDF field can represent and are written as
 IRMA warns when this happens:
 
 ```
-WARNING: ilog=0 (linear symmetric-law storage) at T=5 K: N S(alpha,beta)
-points with significant scattering (up to E~250 meV transfer) underflow the
-ENDF symmetric law [S*exp(-beta/2) < 1e-90] and are written as 0 -- the
-high-energy phonon structure (e.g. optic modes) will be LOST on read-back.
-Set ilog=1 (LLN log storage) on Card 4 to preserve it.
+WARNING: at T=5 K, N S(alpha,beta) points with significant scattering (up to
+250 meV transfer) underflow the linear ilog=0 storage and are written as 0;
+set ilog=1 on Card 4.
 ```
 
 **Fix: set `ilog=1`** (ENDF `LLN=1`, log storage) on Card 4: add the `ilog`
