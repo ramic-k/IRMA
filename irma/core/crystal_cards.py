@@ -12,7 +12,6 @@ from irma.core.deck import DeckError
 from irma.core.crystal import (
     AtomSite, CrystalStructure,
     _build_atom_types_expanded, _group_phonopy_atoms_by_type,
-    _order_site_groups_by_card6d_positions,
 )
 from irma.core.noncubic_inelastic import NoncubicInelasticControls
 
@@ -549,17 +548,6 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
         except ValueError as exc:
             reader.require(False, f"Card 6d does not match the phonopy "
                                   f"model: {exc}")
-        # An element with one Card 6d row matches the phonopy sites by symbol
-        # alone, so its positions are compared here: every position must pair
-        # with one phonopy site of its group under one shared origin shift.
-        nc_ordered_site_groups = _order_site_groups_by_card6d_positions(
-            atom_types, nc_atom_type_site_groups, nc_mesh_data.atom_positions)
-        reader.require(
-            nc_ordered_site_groups is not None,
-            "the Card 6d positions do not match the phonopy primitive cell's "
-            "sites (compared up to one shared origin shift); check every "
-            "row's position count and coordinates")
-        crystal_info['nc_ordered_site_groups'] = nc_ordered_site_groups
         principal_nc_site_indices = list(nc_atom_type_site_groups[principal_atom_idx])
         crystal_info['nc_mesh_data'] = nc_mesh_data
         crystal_info['nc_ncpu'] = nc_ncpu

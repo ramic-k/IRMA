@@ -21,7 +21,7 @@ from irma.core.kernels import (
 from irma.core.crystal import (
     compute_bragg_edges_general, coher,
     _compute_per_species_msd,
-    _site_tensors_uniform,
+    _order_site_groups_by_card6d_positions, _site_tensors_uniform,
 )
 from irma.core.crystal_cards import _parse_crystal_cards
 from irma.core.endf_writer import write_endf_output
@@ -122,13 +122,28 @@ def _store_directional_species_dw(crystal_info, itemp, ntempr, F_matrix_all):
     crystal_info.setdefault('F_species_per_temp', [None] * ntempr)[itemp] = F_species
 
     # Per-site F-matrices in crystal.py's site_terms order (species, then
-    # Card 6d position order; the pairing is checked when the deck is read).
-    # When every group's tensors are identical the elastic kernels keep the
-    # species-averaged path.
-    ordered_groups = crystal_info['nc_ordered_site_groups']
-    uniform = all(_site_tensors_uniform(F_arr, list(g)) for g in site_groups)
+    # Card 6d position order). When every group's tensors are identical the
+    # elastic kernels keep the species-averaged path.
+    ordered_groups = _order_site_groups_by_card6d_positions(
+        atom_types_list, site_groups, crystal_info['nc_mesh_data'].atom_positions)
+    F_sites = []
+    uniform = True
+    for si in range(nsp):
+        idx = list(site_groups[si])
+        group_uniform = _site_tensors_uniform(F_arr, idx)
+        uniform = uniform and group_uniform
+        if ordered_groups is not None:
+            F_sites.append(F_arr[ordered_groups[si]])
+        elif group_uniform:
+            F_sites.append(F_arr[idx])  # uniform group: order is irrelevant
+        else:
+            raise ValueError(
+                f"Card 6d atom type {si+1}: cannot pair its positions with the "
+                f"phonopy sites of its group, and the per-site Debye-Waller "
+                f"tensors differ; check that the Card 6d positions match the "
+                f"phonopy primitive cell.")
     crystal_info.setdefault('F_sites_per_temp', [None] * ntempr)[itemp] = (
-        np.concatenate([F_arr[g] for g in ordered_groups], axis=0))
+        np.concatenate(F_sites, axis=0))
     crystal_info['dir_tensors_uniform'] = (
         crystal_info.get('dir_tensors_uniform', True) and uniform)
 
