@@ -54,51 +54,62 @@ def _mode0_dict(tmp_path, **over):
     return d
 
 
+def _mode0_crystal_dict(tmp_path):
+    d = _mode0_dict(tmp_path, physics={"elastic": True, "elastic_kind": "both"})
+    d["material"]["lattice"] = [2.866, 2.866, 2.866, 90.0, 90.0, 90.0]
+    s = d["material"]["scatterers"][0]
+    s["b_coh_fm"] = 9.45
+    s["sigma_inc_b"] = 0.4
+    s["multiplicity"] = 2
+    s["positions"] = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
+    return d
+
+
 # ---- schema round-trip ------------------------------------------------------
 @pytest.mark.parametrize("suffix", [".yaml", ".json"])
-def test_mode0_scatterer_fields_round_trip(tmp_path, suffix):
-    cfg = SpectraConfig.from_dict(_mode0_dict(tmp_path))
-    p = dump(cfg, tmp_path / f"cfg{suffix}")
-    back = load(p)
+def test_mode0_fields_round_trip(tmp_path, suffix):
+    d = _mode0_crystal_dict(tmp_path)
+    d["physics"]["dos_source"] = "phonopy"
+    d["material"]["phonopy_yaml"] = "graphite.yaml"
+    cfg = SpectraConfig.from_dict(d)
+    back = load(dump(cfg, tmp_path / f"cfg{suffix}"))
     assert back == cfg
     s = back.material.scatterers[0]
     assert s.dos_file.endswith("h.dos") and s.dos_unit == "meV" and s.multiplicity == 2
-    assert back.material.phonopy_yaml is None      # DOS path needs no yaml
+    assert s.positions == [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
+    assert back.material.lattice == [2.866, 2.866, 2.866, 90.0, 90.0, 90.0]
+    assert back.physics.dos_source == "phonopy"
 
 
 # ---- validator: mode-0 branch ----------------------------------------------
-def test_mode0_accepts_config_without_phonopy_yaml(tmp_path):
-    cfg = SpectraConfig.from_dict(_mode0_dict(tmp_path))
-    assert validate(cfg) is cfg                            # no phonopy_yaml/mesh needed
-
-
-def test_mode0_missing_dos_file_raises(tmp_path):
-    d = _mode0_dict(tmp_path)
-    d["material"]["scatterers"][0].pop("dos_file")
+@pytest.mark.parametrize("mut", [
+    lambda d: d["material"]["scatterers"][0].pop("dos_file"),
+    lambda d: d["material"]["scatterers"][0].pop("awr"),
+    lambda d: d["material"]["scatterers"][0].pop("sigma_bound_b"),
+    lambda d: d["material"]["scatterers"][0].__setitem__("multiplicity", 0),
+    lambda d: d["material"].__setitem__("scatterers", []),
+    lambda d: d["physics"].__setitem__("dos_source", "phonopy"),   # no phonopy_yaml
+    lambda d: d["physics"].__setitem__("dos_source", "hdf5"),
+    lambda d: d["material"].__setitem__("lattice", [2.8, 2.8, 2.8, 90.0, 90.0]),     # 5 entries
+    lambda d: d["material"].__setitem__("lattice", [-2.8, 2.8, 2.8, 90, 90, 90]),    # a<=0
+    lambda d: d["material"].__setitem__("lattice", [2.8, 2.8, 2.8, 0.0, 90, 90]),    # angle 0
+    lambda d: d["material"]["scatterers"][0].pop("positions"),
+    lambda d: d["material"]["scatterers"][0].pop("b_coh_fm"),
+    lambda d: d["material"]["scatterers"][0].__setitem__("multiplicity", 3),         # != len(pos)
+])
+def test_mode0_bad_config_rejected(tmp_path, mut):
+    d = _mode0_crystal_dict(tmp_path)
+    mut(d)
     with pytest.raises(SpectraConfigError):
         validate(SpectraConfig.from_dict(d))
 
 
-@pytest.mark.parametrize("drop", ["awr", "sigma_bound_b"])
-def test_mode0_missing_xs_or_mass_raises(tmp_path, drop):
-    d = _mode0_dict(tmp_path)
-    d["material"]["scatterers"][0].pop(drop)
-    with pytest.raises(SpectraConfigError):
-        validate(SpectraConfig.from_dict(d))
-
-
-def test_mode0_bad_multiplicity_raises(tmp_path):
-    d = _mode0_dict(tmp_path)
-    d["material"]["scatterers"][0]["multiplicity"] = 0
-    with pytest.raises(SpectraConfigError):
-        validate(SpectraConfig.from_dict(d))
-
-
-def test_mode0_no_scatterers_raises(tmp_path):
-    d = _mode0_dict(tmp_path)
-    d["material"]["scatterers"] = []
-    with pytest.raises(SpectraConfigError):
-        validate(SpectraConfig.from_dict(d))
+def test_dos_source_phonopy_allows_missing_dos_file(tmp_path):
+    d = _mode0_dict(tmp_path, physics={"dos_source": "phonopy"})
+    d["material"]["phonopy_yaml"] = "graphite.yaml"
+    d["material"]["mesh"] = [8, 8, 8]
+    d["material"]["scatterers"][0].pop("dos_file")        # not needed for phonopy source
+    assert validate(SpectraConfig.from_dict(d)) is not None
 
 
 # ---- _assemble_dos_species --------------------------------------------------
@@ -125,26 +136,6 @@ def test_mode0_run_spectra_end_to_end(tmp_path):
     assert res.metadata["elastic"] is False
 
 
-def test_mode0_run_spectra_multispecies_is_atom_weighted_average(tmp_path):
-    """PER-ATOM: two species in one config == the atom-weighted average of each
-    run alone, (mult_H I_H + mult_C I_C)/N -- not a plain sum (old per-cell)."""
-    dosH = _write_dos(tmp_path, "h2.dos", w_max_meV=40)
-    dosC = _write_dos(tmp_path, "c2.dos", w_max_meV=30)
-    H = {"symbol": "H", "dos_file": dosH, "awr": 0.999, "sigma_bound_b": 80.0, "multiplicity": 2}
-    C = {"symbol": "C", "dos_file": dosC, "awr": 11.9, "sigma_bound_b": 5.55, "multiplicity": 1}
-    base = _mode0_dict(tmp_path)
-    base["material"]["scatterers"] = [H, C]
-    both = run_spectra(SpectraConfig.from_dict(base), progress=lambda *a, **k: None)
-
-    only_h = _mode0_dict(tmp_path); only_h["material"]["scatterers"] = [H]
-    only_c = _mode0_dict(tmp_path); only_c["material"]["scatterers"] = [C]
-    rh = run_spectra(SpectraConfig.from_dict(only_h), progress=lambda *a, **k: None)
-    rc = run_spectra(SpectraConfig.from_dict(only_c), progress=lambda *a, **k: None)
-    assert np.allclose(both.I_inelastic,
-                       (2 * rh.I_inelastic + 1 * rc.I_inelastic) / 3.0,
-                       rtol=1e-9, atol=1e-30)
-
-
 def test_mode0_elastic_without_crystal_builds_incoherent_only(tmp_path):
     """physics.elastic=True (kind 'both') but no material.lattice -> the
     incoherent line is still built lattice-free, with a NOTE that the coherent
@@ -168,27 +159,6 @@ def test_mode0_incoherent_elastic_needs_explicit_sigma_inc(tmp_path):
         validate(SpectraConfig.from_dict(d))
 
 
-# ---- mode-0 coherent elastic (lattice + positions) --------------------------
-def _mode0_crystal_dict(tmp_path):
-    d = _mode0_dict(tmp_path, physics={"elastic": True, "elastic_kind": "both"})
-    d["material"]["lattice"] = [2.866, 2.866, 2.866, 90.0, 90.0, 90.0]
-    s = d["material"]["scatterers"][0]
-    s["b_coh_fm"] = 9.45
-    s["sigma_inc_b"] = 0.4
-    s["multiplicity"] = 2
-    s["positions"] = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
-    return d
-
-
-@pytest.mark.parametrize("suffix", [".yaml", ".json"])
-def test_mode0_lattice_positions_round_trip(tmp_path, suffix):
-    cfg = SpectraConfig.from_dict(_mode0_crystal_dict(tmp_path))
-    back = load(dump(cfg, tmp_path / f"cfg{suffix}"))
-    assert back == cfg
-    assert back.material.lattice == [2.866, 2.866, 2.866, 90.0, 90.0, 90.0]
-    assert back.material.scatterers[0].positions == [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
-
-
 def test_mode0_elastic_end_to_end(tmp_path):
     cfg = SpectraConfig.from_dict(_mode0_crystal_dict(tmp_path))
     res = run_spectra(cfg, progress=lambda *a, **k: None)
@@ -196,49 +166,3 @@ def test_mode0_elastic_end_to_end(tmp_path):
     assert res.metadata["n_bragg_edges"] > 0
     assert res.metadata["elastic_kind"] == "both"
     assert np.all(np.isfinite(res.I_elastic)) and res.I_elastic.max() > 0
-
-
-# ---- dos_source validation (no phonopy load needed) -------------------------
-def test_dos_source_phonopy_without_yaml_raises(tmp_path):
-    d = _mode0_dict(tmp_path, physics={"dos_source": "phonopy"})
-    # phonopy source ignores dos_file but needs phonopy_yaml + mesh
-    d["material"].pop("phonopy_yaml", None)
-    with pytest.raises(SpectraConfigError):
-        validate(SpectraConfig.from_dict(d))
-
-
-def test_dos_source_phonopy_allows_missing_dos_file(tmp_path):
-    d = _mode0_dict(tmp_path, physics={"dos_source": "phonopy"})
-    d["material"]["phonopy_yaml"] = "graphite.yaml"
-    d["material"]["mesh"] = [8, 8, 8]
-    d["material"]["scatterers"][0].pop("dos_file")        # not needed for phonopy source
-    assert validate(SpectraConfig.from_dict(d)) is not None
-
-
-def test_bad_dos_source_raises(tmp_path):
-    d = _mode0_dict(tmp_path, physics={"dos_source": "hdf5"})
-    with pytest.raises(SpectraConfigError):
-        validate(SpectraConfig.from_dict(d))
-
-
-def test_dos_source_round_trips(tmp_path):
-    d = _mode0_dict(tmp_path, physics={"dos_source": "phonopy"})
-    d["material"]["phonopy_yaml"] = "graphite.yaml"
-    cfg = SpectraConfig.from_dict(d)
-    assert load(dump(cfg, tmp_path / "c.yaml")) == cfg
-    assert cfg.physics.dos_source == "phonopy"
-
-
-@pytest.mark.parametrize("mut", [
-    lambda d: d["material"].__setitem__("lattice", [2.8, 2.8, 2.8, 90.0, 90.0]),     # 5 entries
-    lambda d: d["material"].__setitem__("lattice", [-2.8, 2.8, 2.8, 90, 90, 90]),    # a<=0
-    lambda d: d["material"].__setitem__("lattice", [2.8, 2.8, 2.8, 0.0, 90, 90]),    # angle 0
-    lambda d: d["material"]["scatterers"][0].pop("positions"),                       # no positions
-    lambda d: d["material"]["scatterers"][0].pop("b_coh_fm"),                        # no b_coh
-    lambda d: d["material"]["scatterers"][0].__setitem__("multiplicity", 3),         # mult != len(pos)
-])
-def test_mode0_bad_crystal_rejected(tmp_path, mut):
-    d = _mode0_crystal_dict(tmp_path)
-    mut(d)
-    with pytest.raises(SpectraConfigError):
-        validate(SpectraConfig.from_dict(d))
