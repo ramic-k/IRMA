@@ -139,8 +139,9 @@ def _add_emit_options(p):
                         "classic cards, Card 6e partial spectra for the "
                         "other species); 1/2 = phonopy-backed directional "
                         "decks. Not applicable to disordered bundles")
+    # default None, not "mef": the build records its options in the bundle
+    # manifest, and the emitters apply the mef default
     p.add_argument("--elastic-format", choices=("mef", "sef"),
-                   default="mef",
                    help="elastic output convention of the emitted ENDF "
                         "decks: mef writes both elastic components for "
                         "every species (default), sef assigns the complete "
@@ -281,7 +282,8 @@ def _do_emit(bundle, targets, args) -> int:
             nuclides=nuclides, overrides=overrides, out_dir=out_dir,
             overwrite=args.overwrite, allow_unstable=args.allow_unstable,
             inelastic_mode=args.inelastic_mode,
-            elastic_format=args.elastic_format, min_phonon_energy_mev=min_e)
+            elastic_format=args.elastic_format or "mef",
+            min_phonon_energy_mev=min_e)
     if "spectra" in targets:
         produced.append(emit_spectra_yaml(
             bundle, temperature_k=args.temperature,
