@@ -87,18 +87,23 @@ def _cfg_dict(**physics_over):
     }
 
 
-def test_config_accepts_and_defaults_incoherent_elastic_mode():
-    cfg = validate(SpectraConfig.from_dict(_cfg_dict()))
-    assert cfg.physics.incoherent_elastic_mode == "isotropic"
-    cfg = validate(SpectraConfig.from_dict(
-        _cfg_dict(incoherent_elastic_mode="directional")))
-    assert cfg.physics.incoherent_elastic_mode == "directional"
-
-
-def test_config_rejects_bad_incoherent_elastic_mode():
-    with pytest.raises(SpectraConfigError, match="incoherent_elastic_mode"):
-        validate(SpectraConfig.from_dict(
-            _cfg_dict(incoherent_elastic_mode="banana")))
+@pytest.mark.parametrize("section,key,default,good", [
+    ("physics", "incoherent_elastic_mode", "isotropic", "directional"),
+    ("physics", "gain_side", "direct", "detailed_balance"),
+    ("instrument", "resolution_shape", "gaussian", "lorentzian"),
+])
+def test_config_enum(section, key, default, good):
+    """Each enum field has its default, accepts its other value and rejects
+    a typo by name."""
+    d = _cfg_dict()
+    assert getattr(getattr(validate(SpectraConfig.from_dict(d)), section),
+                   key) == default
+    d[section][key] = good
+    assert getattr(getattr(validate(SpectraConfig.from_dict(d)), section),
+                   key) == good
+    d[section][key] = "typo"
+    with pytest.raises(SpectraConfigError, match=key):
+        validate(SpectraConfig.from_dict(d))
 
 
 def test_config_rejects_directional_with_mode0():

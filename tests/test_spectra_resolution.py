@@ -1,7 +1,7 @@
 """Resolution line-shape backend gate (Gaussian + Lorentzian).
 
 Pure-math checks on ``irma.spectra.sqe.resolution_convolve`` / ``elastic_line``
-and the config wiring -- no external validation data needed. The Gaussian path
+-- no external validation data needed. The Gaussian path
 is the OCLIMAX-equivalent (OCLIMAX applies only a Gaussian resolution function);
 the Lorentzian is the extra heavier-tailed option. These pin the normalization,
 the heavier Lorentzian tails and the elastic-line window.
@@ -100,41 +100,6 @@ def test_unknown_shape_rejected():
     I_in = np.ones_like(E)
     with pytest.raises(ValueError):
         si.resolution_convolve(E, I_in, (1.0, 0, 0), shape="voigt")
-
-
-# ---- config wiring ----------------------------------------------------------
-def test_config_accepts_resolution_shape():
-    from irma.spectra.config import SpectraConfig, validate
-    cfg = SpectraConfig.from_dict({
-        "material": {"phonopy_yaml": "x.yaml",
-                     "scatterers": [{"symbol": "C", "sigma_bound_b": 5.55,
-                                     "awr": 11.898, "b_coh_fm": 6.646}]},
-        "instrument": {"geometry": "indirect", "e_fixed_meV": 3.5,
-                       "angles_deg": [45.0, 135.0],
-                       "resolution_shape": "lorentzian"},
-    })
-    assert cfg.instrument.resolution_shape == "lorentzian"
-    validate(cfg)
-    # round-trips through to_dict
-    assert cfg.to_dict()["instrument"]["resolution_shape"] == "lorentzian"
-
-
-def test_config_rejects_bad_resolution_shape():
-    from irma.spectra.config import SpectraConfig, validate, SpectraConfigError
-    cfg = SpectraConfig.from_dict({
-        "material": {"phonopy_yaml": "x.yaml",
-                     "scatterers": [{"symbol": "C", "sigma_bound_b": 5.55,
-                                     "awr": 11.898, "b_coh_fm": 6.646}]},
-        "instrument": {"geometry": "indirect", "e_fixed_meV": 3.5,
-                       "angles_deg": [45.0], "resolution_shape": "voigt"},
-    })
-    with pytest.raises(SpectraConfigError):
-        validate(cfg)
-
-
-def test_default_resolution_shape_is_gaussian():
-    from irma.spectra.config import InstrumentConfig
-    assert InstrumentConfig().resolution_shape == "gaussian"
 
 
 # ---- elastic_line: renormalize only when the peak is inside the window -------

@@ -216,30 +216,6 @@ def test_map_gain_side_direct_vs_mirror_agree():
                        rtol=1e-9, atol=1e-16)
 
 
-def test_config_validates_gain_side(tmp_path):
-    from irma.spectra.config import SpectraConfig, SpectraConfigError, validate
-    rows = "".join(f"{w} {((w / 40.0) ** 2 if w <= 40.0 else 0.0)}\n"
-                   for w in range(0, 121))
-    dos = tmp_path / "c.dos"
-    dos.write_text("# freq_meV dos\n" + rows)
-    d = {"material": {"temperature_K": T_K,
-                      "scatterers": [{"symbol": "C", "dos_file": str(dos),
-                                      "dos_unit": "meV", "awr": 11.898,
-                                      "sigma_bound_b": 5.551}]},
-         "physics": {"inelastic_mode": 0, "elastic": False,
-                     "max_phonon_order": 40},
-         "grid": {"e_min_meV": -20.0, "e_max_meV": 60.0, "de_meV": 1.5,
-                  "dq_max_invA": 0.1},
-         "instrument": {"geometry": "direct", "e_fixed_meV": 250.0,
-                        "angles_deg": [30.0, 120.0]}}
-    cfg = SpectraConfig.from_dict(d)
-    assert cfg.physics.gain_side == "direct"                    # the default
-    validate(cfg)
-    d["physics"]["gain_side"] = "mirror-ish"
-    with pytest.raises(SpectraConfigError):
-        validate(SpectraConfig.from_dict(d))
-
-
 def test_direct_gain_low_temperature_sane():
     """5 K: the gain side must collapse toward zero (almost no thermal phonons
     to annihilate) and stay finite/non-negative under the FFT ladder."""
