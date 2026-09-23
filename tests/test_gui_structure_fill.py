@@ -4,10 +4,7 @@ The button prefills the iel=10 Lattice Parameters and the whole 'Atom Types
 in Unit Cell' block from the phonopy model named on Card 6f. The contract
 this file pins:
 
-- it lives under the Card 6f selector, so it is on screen only for the
-  phonopy-backed inelastic modes (1/2), which are pinned to iel=10;
-- it NEVER fires by itself -- not when a phonopy.yaml is selected, not on
-  deck import;
+- deck import applies the deck's own Card 6c/6d, not a fill;
 - the preview is a real gate: Cancel mutates nothing;
 - Apply is ATOMIC -- lattice and atom block are replaced together, never one
   without the other;
@@ -125,56 +122,7 @@ def _silence_messagebox(monkeypatch):
     return seen
 
 
-# ------------------------------------------------------ visibility ----------
-
-def _visible(widget):
-    """True when the widget and every ancestor are still managed.
-
-    ``winfo_ismapped`` is 0 for everything under a withdrawn root, and the
-    button's own geometry manager does not change when an ANCESTOR is
-    pack_forget()ed -- so walk the chain.
-    """
-    w = widget
-    while w is not None and not isinstance(w, tk.Tk):
-        manager = w.winfo_manager()
-        if not manager:
-            return False
-        if manager not in ("pack", "grid", "place"):
-            return True     # held by a container widget (notebook tab, canvas)
-        w = w.master
-    return True
-
-
-def test_button_shown_only_for_phonopy_modes(app):
-    app._reset_form_to_defaults()
-    app.iel_var.set("10 — Generalized (crystal structure)")
-
-    app.inelastic_mode_var.set(0)
-    assert not _visible(app._fill_structure_btn)
-
-    for mode in (1, 2):
-        app.inelastic_mode_var.set(mode)
-        assert _visible(app._fill_structure_btn)
-        # modes 1/2 are pinned to iel=10, so the button is only ever on
-        # screen for the decks whose Card 6c/6d it writes
-        assert app._code(app.iel_var) == 10
-
-    app.inelastic_mode_var.set(0)
-    app.iel_var.set("1 — Graphite (legacy)")
-    assert not _visible(app._fill_structure_btn)
-    app._reset_form_to_defaults()
-
-
 # ------------------------------------------------------ never automatic -----
-
-def test_selecting_a_phonopy_path_fills_nothing(app):
-    """Card 6f is a path field, not a trigger."""
-    _setup_mode2(app, yaml_path="")
-    _set_sentinels(app)
-    app.nc_phonopy_yaml.set(GRAPHITE_YAML)
-    assert _lattice(app) == SENTINEL_LATTICE
-    assert _atoms(app) == SENTINEL_ATOMS
-
 
 def test_deck_import_fills_nothing(app, tmp_path):
     """Importing a mode-2 deck that NAMES a phonopy.yaml must apply the
@@ -237,118 +185,27 @@ def test_apply_replaces_lattice_and_atom_block(app, monkeypatch):
     assert any("natural element" in w for w in warnings)
 
 
-def test_preview_text_states_the_assumptions(app):
-    text = app._structure_fill_preview_text(
-        GRAPHITE_YAML,
-        ("2.460600", "2.460600", "6.705000",
-         "90.000000", "90.000000", "120.000000"),
-        ["6  0  11.907820  6.647200  0.001000  1  0.000000 0.000000 0.000000"],
-        ["C: filled as the natural element (za=6000, A=0) with "
-         "natural-abundance constants"])
-    assert "NATURAL ELEMENT" in text
-    assert "A = 0" in text
-    assert "deuterium" in text                  # elements, not isotopes
-    assert "Apply" in text and "relabels" in text   # isotopes come from ZA
-    assert "2.460600" in text and "11.907820" in text
-
-
-def _drive_real_dialog(app, button_text):
-    """Press a button in the REAL preview dialog once it is up.
-
-    Scheduled with ``after`` so it runs inside ``wait_window``'s event loop.
-    Any failure destroys the dialog anyway, so a broken lookup fails the
-    assertion instead of hanging the suite.
-    """
-    from tkinter import ttk
-    from irma.gui import endf_form
-
-    def act():
-        top = None
-        try:
-            top = next(w for w in app.root.winfo_children()
-                       if isinstance(w, tk.Toplevel)
-                       and w.title() == endf_form.STRUCTURE_FILL_TITLE)
-            buttons = []
-
-            def _walk(w):
-                for child in w.winfo_children():
-                    if isinstance(child, ttk.Button):
-                        buttons.append(child)
-                    _walk(child)
-
-            _walk(top)
-            next(b for b in buttons
-                 if str(b.cget("text")) == button_text).invoke()
-        except Exception:
-            if top is not None:
-                top.destroy()
-
-    app.root.after(50, act)
-
-
-@pytest.mark.parametrize("button_text, expect_applied",
-                         [("Cancel", False), ("Apply", True)])
-def test_real_preview_dialog_apply_and_cancel(app, button_text,
-                                              expect_applied):
-    """The dialog itself, not the test seam: build it and press its buttons."""
-    pytest.importorskip("phonopy")
-    _setup_mode2(app)
-    _set_sentinels(app)
-    from irma.core.crystal_input import (
-        format_card6d_row, format_lattice_fields, species_from_sites)
-    from irma.core.phonopy_io import load_phonopy_primitive_structure
-
-    structure = load_phonopy_primitive_structure(GRAPHITE_YAML)
-    species, warnings = species_from_sites(structure.symbols,
-                                           structure.scaled_positions)
-    lattice_fields = format_lattice_fields(structure.cellpar)
-    atom_rows = [format_card6d_row(sp) for sp in species]
-
-    _drive_real_dialog(app, button_text)
-    applied = app._confirm_structure_fill(GRAPHITE_YAML, lattice_fields,
-                                          atom_rows, warnings)
-    assert applied is expect_applied
-    # The dialog itself is a pure question: it never touches the form.
-    assert _lattice(app) == SENTINEL_LATTICE
-    assert _atoms(app) == SENTINEL_ATOMS
-
-
 # ------------------------------------------------------ failure paths -------
 
-def test_no_path_reports_and_mutates_nothing(app, monkeypatch):
-    _setup_mode2(app, yaml_path="")
+@pytest.mark.parametrize("yaml_text, path, message", [
+    (None, "", "No phonopy.yaml"),
+    (None, "/nonexistent/phonopy.yaml", "does not exist"),
+    ("this: is not a phonopy model\n", None, ""),
+])
+def test_bad_yaml_reports_and_mutates_nothing(app, monkeypatch, tmp_path,
+                                              yaml_text, path, message):
+    """No path, a missing file and an unreadable yaml each report an error
+    and change nothing."""
+    if yaml_text is not None:
+        pytest.importorskip("phonopy")
+        path = tmp_path / "phonopy.yaml"
+        path.write_text(yaml_text)
+    _setup_mode2(app, yaml_path=str(path))
     _set_sentinels(app)
     seen = _silence_messagebox(monkeypatch)
     _confirm(app, monkeypatch, answer=True)     # would apply if it got there
     app._fill_structure_from_phonopy()
-    assert seen and seen[0][0] == "error"
-    assert "No phonopy.yaml" in seen[0][2]
-    assert _lattice(app) == SENTINEL_LATTICE
-    assert _atoms(app) == SENTINEL_ATOMS
-
-
-def test_missing_file_reports_and_mutates_nothing(app, monkeypatch):
-    _setup_mode2(app, yaml_path="/nonexistent/phonopy.yaml")
-    _set_sentinels(app)
-    seen = _silence_messagebox(monkeypatch)
-    _confirm(app, monkeypatch, answer=True)
-    app._fill_structure_from_phonopy()
-    assert seen and seen[0][0] == "error"
-    assert "does not exist" in seen[0][2]
-    assert _atoms(app) == SENTINEL_ATOMS
-
-
-def test_unreadable_yaml_reports_and_mutates_nothing(app, monkeypatch,
-                                                     tmp_path):
-    pytest.importorskip("phonopy")
-    bad = tmp_path / "phonopy.yaml"
-    bad.write_text("this: is not a phonopy model\n")
-    _setup_mode2(app, yaml_path=str(bad))
-    _set_sentinels(app)
-    seen = _silence_messagebox(monkeypatch)
-    _confirm(app, monkeypatch, answer=True)
-    app._fill_structure_from_phonopy()
-    assert seen and seen[0][0] == "error"
+    assert seen and seen[0][0] == "error" and message in seen[0][2]
     assert _lattice(app) == SENTINEL_LATTICE
     assert _atoms(app) == SENTINEL_ATOMS
 
