@@ -2489,7 +2489,8 @@ class EndfFormMixin:
                         str(code)))
 
     def _read_phonopy_dos(self, filename):
-        """Read a phonopy total_dos.dat as (delta_e [eV], rho with unit area)."""
+        """Read a phonopy total_dos.dat as (delta_e [eV], rho with unit area)
+        on the grid 0, delta_e, 2 delta_e, ... that Cards 11-12 describe."""
         import numpy as np
         from irma.core.constants import THZ_TO_EV
         freq, dos = np.loadtxt(filename, usecols=(0, 1), unpack=True)
@@ -2497,10 +2498,18 @@ class EndfFormMixin:
         freq_ev = freq[keep] * THZ_TO_EV
         dos_ev = dos[keep] / THZ_TO_EV
         dos_ev[dos_ev < 0] = 0
+        delta = freq_ev[1] - freq_ev[0]
+        if freq_ev[0] != 0.0:
+            # phonopy's default range starts below 0, so the first kept row
+            # is not at E = 0: resample onto the zero-anchored grid with the
+            # file's spacing (a --fmin=0 file is used as it is)
+            e = np.arange(int(np.floor(freq_ev[-1] / delta + 1e-9)) + 1) * delta
+            dos_ev = np.interp(e, freq_ev, dos_ev, left=0.0)
+            freq_ev = e
         integral = np.trapezoid(dos_ev, freq_ev)
         if integral > 0:
             dos_ev /= integral
-        return freq_ev[1] - freq_ev[0], dos_ev
+        return delta, dos_ev
 
     def _on_ext_model_change(self, event=None):
         """When the extinction model changes, restrict the distribution dropdown to

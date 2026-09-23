@@ -768,3 +768,22 @@ def test_clicking_mode_2_selects_linlin_and_setting_the_variable_does_not(app):
     assert app._code(app.iint) == 0
     app.inelastic_mode_var.set(0)
     app._on_inelastic_mode_click()
+
+
+def test_phonopy_dos_with_an_offset_grid_is_read_from_zero(app, tmp_path):
+    """phonopy's default range starts below 0, so the first kept row is not
+    E = 0; the DOS is resampled onto 0, delta, 2 delta, ... (Cards 11-12)
+    instead of being shifted down by that offset."""
+    import numpy as np
+    from irma.core.constants import THZ_TO_EV
+    f = -0.53 + 0.1 * np.arange(320)                    # THz; first kept row 0.07
+    rho = np.where(f > 0, f ** 2 * np.exp(-((f - 12.0) / 6.0) ** 2), 0.0)
+    path = tmp_path / "total_dos.dat"
+    np.savetxt(path, np.column_stack([f, rho]))
+    delta, dos = app._read_phonopy_dos(str(path))
+    e = np.arange(dos.size) * delta
+    kept = f >= 0
+    exact = (np.trapezoid(rho[kept] * f[kept], f[kept])
+             / np.trapezoid(rho[kept], f[kept]) * THZ_TO_EV)
+    assert delta == pytest.approx(0.1 * THZ_TO_EV)
+    assert np.trapezoid(dos * e, e) == pytest.approx(exact, rel=1e-3)
