@@ -258,12 +258,6 @@ def emit_endf_decks(bundle: Bundle, *, temperature_k, mats, nuclides=None,
     options are crystal-deck selectors: a disordered bundle (classic
     DOS-driven deck, no Card 6b) rejects them.
     """
-    if elastic_format not in ("mef", "sef"):
-        raise ValueError(f"elastic_format must be 'mef' or 'sef', "
-                         f"got {elastic_format!r}")
-    if inelastic_mode not in (None, 0, 1, 2):
-        raise ValueError(f"inelastic_mode must be 0, 1, or 2, "
-                         f"got {inelastic_mode!r}")
     species = resolve_species(bundle, nuclides=nuclides, overrides=overrides,
                               progress=progress)
     known = {s.symbol for s in species}

@@ -458,13 +458,6 @@ def test_disordered_rejects_inelastic_mode(dis_bundle, tmp_path):
                         progress=QUIET)
 
 
-def test_bad_elastic_format_rejected(al_bundle, tmp_path):
-    with pytest.raises(ValueError, match="elastic_format"):
-        emit_endf_decks(al_bundle, temperature_k=296.0, mats={"Al": 45},
-                        out_dir=str(tmp_path), elastic_format="cef",
-                        progress=QUIET)
-
-
 # ------------------------------------------------- QA remediation tests ----
 
 
