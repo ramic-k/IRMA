@@ -5,20 +5,22 @@ sint) and the Skold correction previously had byte-identity coverage only
 in the slow, manually-run expected validation (7-temperature ortho/para-H).
 This pins them in CI: a miniature ortho-H deck (6 alpha x 10 beta, 14 K,
 diffusion translation + one discrete oscillator + a 12-point S(kappa)
-table, ncold=1 + nsk=2) must reproduce the vendored NJOY2016.78 tape
-BYTE-IDENTICALLY in MF7. The deck exercises contin, trans (diffusion:
-stable/besk1/terps), discre, coldh (ortho rotational sums + SCT) and
-skold in one run. MF1 is excluded: IRMA deliberately writes a consistent
+table, nsk=2) must reproduce the vendored NJOY tape BYTE-IDENTICALLY in
+MF7. With ncold=1 the deck exercises contin, trans (diffusion:
+stable/besk1/terps), discre and coldh (ortho rotational sums + SCT); NJOY
+and IRMA run the Skold step only for ncold=0, so the same deck with
+ncold=0 pins skold. MF1 is excluded: IRMA deliberately writes a consistent
 NWD and exact directory counts where NJOY does not.
 """
 import gzip
 import os
 import tempfile
 
+import pytest
+
 from irma.core.engine import run_leapr
 
-_REF = os.path.join(os.path.dirname(__file__), "njoy_minitape_references",
-                    "coldh_skold.endf.gz")
+_REFS = os.path.join(os.path.dirname(__file__), "njoy_minitape_references")
 
 _DECK = """20 /
 'mini ortho-H coldh+skold deck'/
@@ -49,18 +51,23 @@ def _mf7_lines(text):
             if len(ln) >= 75 and ln[70:72] == " 7"]
 
 
-def test_coldh_skold_mf7_byte_identical_to_njoy():
+@pytest.mark.parametrize("ncold, ref", [
+    (1, "coldh_skold.endf.gz"),    # cold-hydrogen kernel
+    (0, "skold.endf.gz"),          # Skold correction (runs only for ncold=0)
+])
+def test_coldh_skold_mf7_byte_identical_to_njoy(ncold, ref):
     d = tempfile.mkdtemp()
     inp = os.path.join(d, "coldh.input")
     out = os.path.join(d, "coldh.endf")
     with open(inp, "w") as f:
-        f.write(_DECK)
+        f.write(_DECK.replace(".99917 20.43634 2 0 1 2/",
+                              f".99917 20.43634 2 0 {ncold} 2/"))
     run_leapr(inp, out)
 
-    with gzip.open(_REF, "rt") as f:
+    with gzip.open(os.path.join(_REFS, ref), "rt") as f:
         ref = _mf7_lines(f.read())
     with open(out) as f:
         thw = _mf7_lines(f.read())
 
-    assert len(ref) > 50
+    assert len(ref) > 40
     assert thw == ref
