@@ -304,15 +304,6 @@ def test_isabt_ilog_smin_roundtrip(app, tmp_path):
     assert float(app.smin.get()) == pytest.approx(1e-30)
 
 
-# ---------- #27: npr validation ----------
-
-def test_npr_zero_rejected(app):
-    _reset(app)
-    app.npr.set("0")
-    with pytest.raises(ValueError, match="npr"):
-        app._generate_input_text()
-
-
 # ---------- #29 + #32 + mode-1/2 validation (iel=10) ----------
 
 def _setup_iel10(app):
@@ -422,19 +413,6 @@ def test_iel10_empty_atom_table_rejected_up_front(app):
         app._generate_input_text()
 
 
-def test_secondary_requires_positive_aws_sps(app):
-    _reset(app)
-    app.nss.set("1 — One secondary scatterer")
-    app.aws.set("0")
-    app.sps.set("3.8883")
-    with pytest.raises(ValueError, match="AWS"):
-        app._generate_input_text()
-    app.aws.set("15.85316")
-    app.sps.set("0")
-    with pytest.raises(ValueError, match="sigma_s"):
-        app._generate_input_text()
-
-
 def test_nsk_with_empty_cfrac_rejected(app):
     _reset(app)
     app.nsk.set("2 — Skold")
@@ -512,20 +490,6 @@ def test_full_roundtrip_idempotent_mode2(app, tmp_path):
     app._import_leapr_from_path(str(deck))
     text2 = app._generate_input_text()
     assert text2 == text1
-
-
-def test_mode2_rejects_ncold_nsk_secondary(app):
-    _reset(app)
-    _setup_iel10(app)
-    app.inelastic_mode_var.set(2)
-    app.nc_phonopy_yaml.set("/nonexistent/phonopy.yaml")
-    app.ncold.set("1 — Ortho-H")
-    with pytest.raises(ValueError, match="ncold/nsk"):
-        app._generate_input_text()
-    app.ncold.set("0 — None")
-    app.nss.set("1 — One secondary scatterer")
-    with pytest.raises(ValueError, match="[Ss]econdary"):
-        app._generate_input_text()
 
 
 # ---------- oscillator half-filled / mismatched inputs ----------

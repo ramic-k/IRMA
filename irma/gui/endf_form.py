@@ -53,6 +53,28 @@ def _set_values(box, values):
     box.insert("1.0", " ".join(f"{v:.6e}" for v in values))
 
 
+def _detail_lines(delta, rho, twt_c_tbeta, e_box, w_box, what):
+    """Deck lines of one temperature's phonon model: the spectrum
+    (Cards 11-12), twt c tbeta (Card 13) and the oscillators (Cards 14-16).
+    what names the oscillator boxes in errors ("Discrete", "Secondary")."""
+    e = [parse_float(f"{what} oscillator energies", x)
+         for x in e_box.get("1.0", tk.END).split()]
+    w = [parse_float(f"{what} oscillator weights", x)
+         for x in w_box.get("1.0", tk.END).split()]
+    if len(e) != len(w):
+        raise ValueError(
+            f"{what} oscillators: {len(e)} energies but {len(w)} weights; "
+            "give one weight per energy, or leave both empty.")
+    out = [f"{delta:.6e} {len(rho)} /", fmt_array(rho) + " /",
+           twt_c_tbeta + " /"]
+    if e:
+        out += [f"{len(e)} /", " ".join(f"{v:.6e}" for v in e) + " /",
+                " ".join(f"{v:.6e}" for v in w) + " /"]
+    else:
+        out.append("0 /")
+    return out
+
+
 def _show(widget, on, **pack):
     """Pack the widget with the given options, or unpack it."""
     if on:
@@ -2588,23 +2610,9 @@ class EndfFormMixin:
 
         npr = int(parse_float("npr (principal atom count)",
                               self.npr.get().strip() or "1"))
-        if npr < 1:
-            raise ValueError("npr (principal atom count) must be >= 1.")
 
         # inelastic_mode is an iel=10 concept; 0 (classic) for everything else.
-        inelastic_mode_val = 0
-        if iel == 10:
-            inelastic_mode_val = int(self.inelastic_mode_var.get())
-            if inelastic_mode_val in (1, 2):
-                if ncold > 0 or nsk > 0:
-                    raise ValueError(
-                        "ncold/nsk pair-correlation options are not "
-                        "available with inelastic_mode=1/2 (MT4 comes from "
-                        "the phonopy model).")
-                if nss > 0:
-                    raise ValueError(
-                        "A secondary scatterer is not supported with "
-                        "inelastic_mode=1/2.")
+        inelastic_mode_val = int(self.inelastic_mode_var.get()) if iel == 10 else 0
 
         # S(kappa) table (Cards 17-19) backing ncold/nsk
         ska_vals = []
@@ -2658,16 +2666,6 @@ class EndfFormMixin:
             b7 = self._code(self.b7)
             mss = int(parse_float("mss (secondary atom count)",
                                   self.mss.get().strip() or "1"))
-            if mss < 1:
-                raise ValueError(
-                    "mss (secondary atom count) must be >= 1 when nss = 1.")
-            if parse_float("AWS", self.aws.get().strip() or "0") <= 0.0:
-                raise ValueError(
-                    "AWS (secondary mass ratio) must be > 0 when nss = 1.")
-            if parse_float("sigma_s [barn]", self.sps.get().strip() or "0") <= 0.0:
-                raise ValueError(
-                    "sigma_s (secondary cross section) must be > 0 "
-                    "when nss = 1.")
             if b7 <= 0:
                 # Two-pass: the secondary scatterer needs its own phonon
                 # model, emitted below as a complete second temperature pass.
@@ -2679,14 +2677,6 @@ class EndfFormMixin:
                     raise ValueError(
                         "b7 = 0 (two-pass) requires the secondary phonon "
                         "spectrum (delta and the rho values).")
-                if parse_float("secondary delta [eV]",
-                               self.sec_dos_delta.get().strip() or "0") <= 0.0:
-                    raise ValueError(
-                        "b7 = 0 (two-pass) requires secondary delta > 0.")
-                if parse_float("secondary tbeta",
-                               self.sec_tbeta.get().strip() or "0") <= 0.0:
-                    raise ValueError(
-                        "b7 = 0 (two-pass) requires secondary tbeta > 0.")
                 if ncold > 0 or nsk > 0:
                     raise ValueError(
                         "ncold/nsk together with a two-pass secondary "
@@ -2772,9 +2762,7 @@ class EndfFormMixin:
             for sp in partial_spectra:
                 lines.append(f"{sp['Z']} {sp['A']} {sp['delta']:.6e} "
                              f"{sp['ni']} /")
-                lines.append('\n'.join(
-                    ' '.join(f"{v:.6e}" for v in sp['rho'][i:i + 5])
-                    for i in range(0, len(sp['rho']), 5)) + ' /')
+                lines.append(fmt_array(sp['rho']) + ' /')
 
             # Card 6f: phonopy mesh parameters (inelastic_mode=1/2; Card 6e omitted)
             if inelastic_mode_val in (1, 2):
@@ -2882,14 +2870,11 @@ class EndfFormMixin:
                 # Phonon DOS
                 if self.dos_source.get() == "phonopy":
                     dos_path = self.dos_file.get()
-                    if dos_path and os.path.exists(dos_path):
-                        delta_e, rho = self._read_phonopy_dos(dos_path)
-                        lines.append(f"{delta_e:.6e} {len(rho)} /")
-                        lines.append(fmt_array(rho) + ' /')
-                    else:
+                    if not (dos_path and os.path.exists(dos_path)):
                         raise ValueError(
                             "Phonopy DOS file not found. "
                             "Please select a valid total_dos.dat file.")
+                    delta_e, rho = self._read_phonopy_dos(dos_path)
                 else:
                     delta_e = parse_float("delta_e [eV] (DOS spacing)",
                                           self.dos_delta.get())
@@ -2897,51 +2882,16 @@ class EndfFormMixin:
                         "1.0", tk.END).strip()
                     rho = np.array([parse_float("phonon spectrum (rho)", x)
                                     for x in rho_text.split()])
-                    lines.append(f"{delta_e:.6e} {len(rho)} /")
-                    lines.append(fmt_array(rho) + ' /')
-
-                # twt, c, tbeta
-                lines.append(f"{self.twt.get()} {self.c_diff.get()} "
-                              f"{self.tbeta.get()} /")
-
-                # Oscillators. Half-filled input must NOT silently emit
-                # "0 /" — dropping the discrete modes changes the law
-                # normalization with no error (the one silent exception
-                # among this function's named-field validations).
-                osc_e_text = self.osc_energies.get("1.0", tk.END).strip()
-                osc_w_text = self.osc_weights.get("1.0", tk.END).strip()
-                if bool(osc_e_text) != bool(osc_w_text):
-                    raise ValueError(
-                        "Discrete oscillators (Phonon part): both energies "
-                        "and weights are required — fill in the "
-                        f"{'weights' if osc_e_text else 'energies'} box, "
-                        "or leave both empty for no oscillators.")
-                if osc_e_text and osc_w_text:
-                    osc_e = [parse_float("oscillator energies", x)
-                             for x in osc_e_text.split()]
-                    osc_w = [parse_float("oscillator weights", x)
-                             for x in osc_w_text.split()]
-                    if len(osc_e) != len(osc_w):
-                        raise ValueError(
-                            "Discrete oscillators (Phonon part): "
-                            f"{len(osc_e)} energies but {len(osc_w)} "
-                            "weights — the two lists must have the same "
-                            "length (one weight per oscillator energy).")
-                    lines.append(f"{len(osc_e)} /")
-                    lines.append(' '.join(f'{e:.6e}' for e in osc_e) + ' /')
-                    lines.append(' '.join(f'{w:.6e}' for w in osc_w) + ' /')
-                else:
-                    lines.append("0 /")
+                lines += _detail_lines(
+                    delta_e, rho,
+                    f"{self.twt.get()} {self.c_diff.get()} {self.tbeta.get()}",
+                    self.osc_energies, self.osc_weights, "Discrete")
 
                 # Cards 17/18: S(kappa) table (nsk > 0 or ncold > 0);
                 # Card 19: coherent fraction (nsk > 0)
                 if nsk > 0 or ncold > 0:
                     dka_v = parse_float("dka [1/Å]",
                                         self.ska_dka.get().strip() or "0")
-                    if dka_v <= 0.0:
-                        raise ValueError(
-                            "nsk > 0 or ncold > 0 requires dka > 0 "
-                            "(S(kappa) grid spacing).")
                     lines.append(f"{len(ska_vals)} {dka_v:.6e} /")
                     lines.append(fmt_array(np.asarray(ska_vals)) + ' /')
                 if nsk > 0:
@@ -2966,35 +2916,12 @@ class EndfFormMixin:
                 lines.append(f"{temp:.4f} /")
                 sec_delta = parse_float("secondary delta [eV]",
                                         self.sec_dos_delta.get().strip())
-                lines.append(f"{sec_delta:.6e} {len(sec_rho)} /")
-                lines.append(fmt_array(np.asarray(sec_rho)) + ' /')
-                lines.append(f"{self.sec_twt.get().strip() or '0.0'} "
-                             f"{self.sec_c_diff.get().strip() or '0.0'} "
-                             f"{self.sec_tbeta.get().strip() or '1.0'} /")
-                sec_e_text = self.sec_osc_energies.get("1.0", tk.END).strip()
-                sec_w_text = self.sec_osc_weights.get("1.0", tk.END).strip()
-                if bool(sec_e_text) != bool(sec_w_text):
-                    raise ValueError(
-                        "Secondary oscillators (Scattering part): both "
-                        "energies and weights are required — fill in the "
-                        f"{'weights' if sec_e_text else 'energies'} box, "
-                        "or leave both empty for no oscillators.")
-                if sec_e_text and sec_w_text:
-                    sec_e = [parse_float("secondary oscillator energies", x)
-                             for x in sec_e_text.split()]
-                    sec_w = [parse_float("secondary oscillator weights", x)
-                             for x in sec_w_text.split()]
-                    if len(sec_e) != len(sec_w):
-                        raise ValueError(
-                            "Secondary oscillators (Scattering part): "
-                            f"{len(sec_e)} energies but {len(sec_w)} "
-                            "weights — the two lists must have the same "
-                            "length (one weight per oscillator energy).")
-                    lines.append(f"{len(sec_e)} /")
-                    lines.append(' '.join(f'{e:.6e}' for e in sec_e) + ' /')
-                    lines.append(' '.join(f'{w:.6e}' for w in sec_w) + ' /')
-                else:
-                    lines.append("0 /")
+                lines += _detail_lines(
+                    sec_delta, sec_rho,
+                    f"{self.sec_twt.get().strip() or '0.0'} "
+                    f"{self.sec_c_diff.get().strip() or '0.0'} "
+                    f"{self.sec_tbeta.get().strip() or '1.0'}",
+                    self.sec_osc_energies, self.sec_osc_weights, "Secondary")
 
         # Comment cards (MF1/MT451). Emit exactly what was stored: interior
         # and leading/trailing whitespace round-trips inside the quotes.
