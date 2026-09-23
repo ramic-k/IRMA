@@ -157,7 +157,7 @@ def test_button_shown_only_for_phonopy_modes(app):
         assert _visible(app._fill_structure_btn)
         # modes 1/2 are pinned to iel=10, so the button is only ever on
         # screen for the decks whose Card 6c/6d it writes
-        assert app._parse_iel() == 10
+        assert app._code(app.iel_var) == 10
 
     app.inelastic_mode_var.set(0)
     app.iel_var.set("1 — Graphite (legacy)")

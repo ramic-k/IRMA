@@ -50,7 +50,7 @@ def parse_atoms_text(text):
     """Parse Card 6d-style atom type lines from raw widget text.
 
     Pure text parsing (Tk-free) so the validation is headlessly
-    testable; the GUI's `_parse_atoms` delegates here. Returns a list
+    testable; the GUI deck writer calls it. Returns a list
     of dicts with keys: Z, A, awr, b_coh, sigma_inc, npos, positions.
     """
     atoms = []

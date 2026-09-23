@@ -38,6 +38,7 @@ def _set_text(widget, text):
 
 def _reset(app):
     """Put every field the tests rely on into a known classic-deck state."""
+    app.inelastic_mode_var.set(0)       # first: mode 1/2 pins iel to 10
     app.iel_var.set("0 — None")
     app.za.set("125")
     app.awr.set("0.99917")
@@ -80,7 +81,6 @@ def _reset(app):
     _set_text(app.osc_energies, "")
     _set_text(app.osc_weights, "")
     app.comments_text.clear()
-    app.inelastic_mode_var.set(0)
     app._imported_partial_spectra = []
 
 
@@ -120,7 +120,7 @@ def test_import_classic_deck_populates_fields(app, tmp_path):
     summary = app._import_leapr_from_path(str(deck))   # NameError before fix
     assert "iel=0" in summary
     assert app.npr.get() == "2"
-    assert app._parse_iel() == 0
+    assert app._code(app.iel_var) == 0
     assert app.temps_var.get().startswith("300")
 
 
@@ -142,7 +142,7 @@ def test_iint_linlin_exports_and_roundtrips(app, tmp_path):
     deck.write_text(text)
     _reset(app)                                # back to default (iint=0)
     app._import_leapr_from_path(str(deck))
-    assert app._parse_combo_int(app.iint) == 1  # survived the round trip
+    assert app._code(app.iint) == 1  # survived the round trip
     assert "0 0 1e-75 1 /" in app._generate_input_text()
 
 
@@ -163,8 +163,8 @@ def test_secondary_free_gas_roundtrip(app, tmp_path):
     deck.write_text(text)
     _reset(app)
     app._import_leapr_from_path(str(deck))
-    assert app._parse_nss() == 1
-    assert app._parse_combo_int(app.b7) == 1
+    assert app._code(app.nss) == 1
+    assert app._code(app.b7) == 1
     assert app.mss.get() == "1"
     assert "1 1 15.85316 3.8883 1 /" in app._generate_input_text()
 
@@ -204,7 +204,7 @@ def test_two_pass_secondary_roundtrip(app, tmp_path):
     deck.write_text(text1)
     _reset(app)
     app._import_leapr_from_path(str(deck))
-    assert app._parse_combo_int(app.b7) == 0
+    assert app._code(app.b7) == 0
     assert len(app.sec_dos_rho_text.get("1.0", "end").split()) == 6
     assert float(app.sec_tbeta.get()) == pytest.approx(1.0)
     assert app._generate_input_text() == text1         # idempotent
@@ -245,7 +245,7 @@ def test_skold_exports_cards_17_18_19_and_roundtrips(app, tmp_path):
     deck.write_text(text)
     _reset(app)
     app._import_leapr_from_path(str(deck))
-    assert app._parse_nsk() == 2
+    assert app._code(app.nsk) == 2
     assert float(app.ska_dka.get()) == pytest.approx(0.5)
     assert len(app.ska_text.get("1.0", "end").split()) == 6
     assert float(app.cfrac.get()) == pytest.approx(0.3)
@@ -299,8 +299,8 @@ def test_isabt_ilog_smin_roundtrip(app, tmp_path):
     deck.write_text(text)
     _reset(app)
     app._import_leapr_from_path(str(deck))
-    assert app._parse_combo_int(app.isabt) == 1
-    assert app._parse_combo_int(app.ilog) == 1
+    assert app._code(app.isabt) == 1
+    assert app._code(app.ilog) == 1
     assert float(app.smin.get()) == pytest.approx(1e-30)
 
 
@@ -633,19 +633,17 @@ def test_import_keeps_explicit_auto_order_off(app, tmp_path):
 
 # ---------- phonon-tab banner tracks the EFFECTIVE mode ----------
 
-def test_phonon_note_clears_when_iel_leaves_10(app):
-    """iel=10 + mode 2 shows the 'cards are NOT read' banner; switching iel
-    to a classic material makes those cards read again (deck generation
-    forces inelastic_mode=0), so the banner must clear -- a stale banner would
-    persist and mislead."""
+def test_phonon_note_tracks_the_mode(app):
+    """iel=10 + mode 2 shows the 'cards are NOT read' banner and mode 0
+    clears it. A classic iel cannot be combined with mode 1/2: it snaps
+    back to iel=10, so the banner stays."""
     _reset(app)
     app.iel_var.set("10 — Generalized (crystal structure)")
     app.inelastic_mode_var.set(2)
     assert app._phonon_ignored_note.winfo_manager() == "pack"
     app.iel_var.set("0 — None")
-    assert app._phonon_ignored_note.winfo_manager() == ""
-    app.iel_var.set("10 — Generalized (crystal structure)")
-    assert app._phonon_ignored_note.winfo_manager() == "pack"   # re-shows
+    assert app._code(app.iel_var) == 10
+    assert app._phonon_ignored_note.winfo_manager() == "pack"
     app.inelastic_mode_var.set(0)
     assert app._phonon_ignored_note.winfo_manager() == ""
 
@@ -859,8 +857,8 @@ def test_switching_to_a_phonopy_mode_clears_the_special_modes(app):
 
     app.iel_var.set("10 — Generalized (crystal structure)")
     app.inelastic_mode_var.set(2)
-    assert app._parse_ncold() == 0 and app._parse_nsk() == 0
-    assert app._parse_nss() == 0
+    assert app._code(app.ncold) == 0 and app._code(app.nsk) == 0
+    assert app._code(app.nss) == 0
     assert app.ska_dka.get() == "0" and app.cfrac.get() == "0"
     assert app.ska_text.get("1.0", "end").strip() == ""
     assert app.aws.get() == "0" and app.sps.get() == "0"
@@ -871,7 +869,7 @@ def test_switching_to_a_phonopy_mode_clears_the_special_modes(app):
 
     # ... and the values do NOT come back with the sections
     app.inelastic_mode_var.set(0)
-    assert app._parse_nsk() == 0 and app._parse_nss() == 0
+    assert app._code(app.nsk) == 0 and app._code(app.nss) == 0
     _reset(app)
 
 
@@ -901,7 +899,7 @@ def test_mode0_deck_with_nsk_then_mode2_generates_cleanly(app, tmp_path):
 def test_special_modes_hidden_for_phonopy_modes(app):
     """iel=10 + inelastic_mode 1/2 rejects ncold/nsk/nss at generation, so
     the Special Modes and Secondary Scatterer sections hide behind a note;
-    mode 0 or a classic iel restores them."""
+    mode 0 restores them."""
     _reset(app)
     app.iel_var.set("10 — Generalized (crystal structure)")
     app.inelastic_mode_var.set(2)
@@ -912,13 +910,6 @@ def test_special_modes_hidden_for_phonopy_modes(app):
     for w, _ in app._special_scatter_sections:
         assert w.winfo_manager() == "pack"
     assert app._special_modes_note.winfo_manager() == ""
-    # a classic iel forces inelastic_mode=0 at generation: sections shown
-    app.inelastic_mode_var.set(1)
-    app.iel_var.set("0 — None")
-    for w, _ in app._special_scatter_sections:
-        assert w.winfo_manager() == "pack"
-    assert app._special_modes_note.winfo_manager() == ""
-    app.inelastic_mode_var.set(0)
 
 
 # ---------- Inelastic Mode section placement + iel coupling ----------
@@ -957,17 +948,17 @@ def test_phonopy_modes_restrict_iel_choices_to_generalized(app):
     app.inelastic_mode_var.set(2)
     assert list(app._iel_combo.cget("values")) == [
         "10 — Generalized (crystal structure)"]
-    assert app._parse_iel() == 10
+    assert app._code(app.iel_var) == 10
 
     app.inelastic_mode_var.set(0)
     assert len(app._iel_combo.cget("values")) == 8
-    assert app._parse_iel() == 10       # mode 0 leaves the selection alone
+    assert app._code(app.iel_var) == 10       # mode 0 leaves the selection alone
 
     app.iel_var.set("3 — BeO (legacy)")
     app.inelastic_mode_var.set(1)       # mode 1 couples the same way
     assert list(app._iel_combo.cget("values")) == [
         "10 — Generalized (crystal structure)"]
-    assert app._parse_iel() == 10
+    assert app._code(app.iel_var) == 10
     _reset(app)
 
 
@@ -988,7 +979,7 @@ def test_classic_deck_import_restores_full_iel_choices(app, tmp_path):
     assert len(app._iel_combo.cget("values")) == 1
     app._import_leapr_from_path(str(deck))
     assert len(app._iel_combo.cget("values")) == 8
-    assert app._parse_iel() == 1
+    assert app._code(app.iel_var) == 1
     assert int(app.inelastic_mode_var.get()) == 0
     _reset(app)
 
@@ -1023,9 +1014,8 @@ def test_nphon_greyed_when_auto_sized(app):
     assert str(app.nphon.entry.cget("state")) == "normal"
     app.nc_auto_order_var.set(1)
     assert str(app.nphon.entry.cget("state")) == "disabled"
-    app.iel_var.set("0 — None")           # classic iel forces mode 0
-    assert str(app.nphon.entry.cget("state")) == "normal"
     app.inelastic_mode_var.set(0)
+    assert str(app.nphon.entry.cget("state")) == "normal"
 
 
 def test_c_diff_greyed_without_twt(app):
@@ -1053,17 +1043,17 @@ def test_clicking_mode_2_selects_linlin_and_setting_the_variable_does_not(app):
     app.inelastic_mode_var.set(0)
     app.iint.set(app.IINT_LOGLIN)
     app.inelastic_mode_var.set(2)                 # trace only, no click
-    assert app._parse_combo_int(app.iint) == 0
+    assert app._code(app.iint) == 0
     app._on_inelastic_mode_click()                # the click
-    assert app._parse_combo_int(app.iint) == 1
+    assert app._code(app.iint) == 1
     app.inelastic_mode_var.set(1)
     app._on_inelastic_mode_click()
-    assert app._parse_combo_int(app.iint) == 0
+    assert app._code(app.iint) == 0
     # the user's later choice is kept until the next click
     app.inelastic_mode_var.set(2)
     app._on_inelastic_mode_click()
     app.iint.set(app.IINT_LOGLIN)
     app.inelastic_mode_var.set(2)
-    assert app._parse_combo_int(app.iint) == 0
+    assert app._code(app.iint) == 0
     app.inelastic_mode_var.set(0)
     app._on_inelastic_mode_click()
