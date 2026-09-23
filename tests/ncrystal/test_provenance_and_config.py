@@ -457,7 +457,7 @@ def test_mesh_rejects_fractional_entries():
 
 
 def test_site_groups_reject_fractional_and_duplicate_indices():
-    with pytest.raises(SpectraConfigError, match="EXACT integer"):
+    with pytest.raises(SpectraConfigError, match="must be an integer"):
         NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[[0.9, 1]]))
     with pytest.raises(SpectraConfigError, match="more than once"):
         NCrystalExportConfig.from_dict(_cfg_dict(site_groups=[[0, 1], [1]]))

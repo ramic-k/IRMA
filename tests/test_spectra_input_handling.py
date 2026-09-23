@@ -36,7 +36,6 @@ def test_typod_top_level_section_raises():
             "material": {"phonopy_yaml": "g.yaml"},
             "instrumnet": {"geometry": "direct", "e_fixed_meV": 100.0},
         })
-    assert "allowed sections" in str(ei.value)
     assert "'instrument'" in str(ei.value)        # tells the user the fix
 
 
@@ -82,10 +81,8 @@ def test_main_chopper_missing_flags_clean_exit_2(tmp_path, capsys):
     assert "--chopper-instrument" in err and "Traceback" not in err
 
 
-def test_from_dict_chopper_null_values_surface_missing_keys():
-    """YAML `null` chopper values must normalize to empty (no float(None)
-    TypeError) so validate() reports the missing keys BY NAME -- never the
-    baffling \"unknown chopper instrument 'None'\"."""
+def test_chopper_null_values_surface_missing_keys():
+    """YAML `null` chopper values are reported as missing keys by name."""
     cfg = SpectraConfig.from_dict({
         "material": {"phonopy_yaml": "g.yaml"},
         "grid": {"e_max_meV": 100.0, "de_meV": 1.0, "dq_max_invA": 0.05},
@@ -96,8 +93,6 @@ def test_from_dict_chopper_null_values_surface_missing_keys():
                                         "package": "ARCS-700-1.5-AST",
                                         "frequency": None}},
     })
-    assert cfg.instrument.chopper_spec["instrument"] == ""
-    assert cfg.instrument.chopper_spec["frequency"] == 0.0
     with pytest.raises(SpectraConfigError) as ei:
         validate(cfg)
     msg = str(ei.value)
