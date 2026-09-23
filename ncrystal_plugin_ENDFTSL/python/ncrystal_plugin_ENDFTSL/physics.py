@@ -59,6 +59,11 @@ def incoherent_msd(ev, T):
 
 
 def physical_inelastic(ev, T) -> InelasticLaw:
+    if ev.lasym == 1:
+        # LEAPR writes LASYM=1 (S for -beta..+beta) for cold H2/D2 (ncold != 0)
+        raise NotImplementedError(
+            "LASYM=1 (S stored for -beta..+beta, as LEAPR writes for cold H2/D2) "
+            "is not supported")
     if ev.lasym in (2, 3):
         raise NotImplementedError(
             "LASYM=2/3 (asymmetric SS, stored with NO e^{±β/2} factor) is deferred (spec §11)")

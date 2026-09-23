@@ -22,7 +22,8 @@ def _write_cfg(tmp_path, symbols, mid="poly"):
 
 def test_cli_writes_pack_and_ncmat(tmp_path):
     rc = main([str(TAPE), "-o", str(tmp_path), "--material-id", "graphite",
-               "--symbol", "C", "--mass", "12.0107", "--temperature", "296"])
+               "--symbol", "C", "--mass", "12.0107", "--density", "2.26",
+               "--temperature", "296"])
     assert rc == 0
     pk = tmp_path / "graphite.endftslpack"
     nc = tmp_path / "graphite.ncmat"
@@ -33,11 +34,18 @@ def test_cli_writes_pack_and_ncmat(tmp_path):
     assert str(pk.resolve()) in nc.read_text()
 
 
+def test_cli_single_requires_the_identity_flags(tmp_path):
+    # the tape does not name its element: no silent carbon default
+    with pytest.raises(SystemExit):
+        main([str(TAPE), "-o", str(tmp_path / "out"), "--symbol", "C"])
+    assert not (tmp_path / "out").exists()
+
+
 def test_cli_single_rejects_bad_symbol(tmp_path):
     out = tmp_path / "out"
     with pytest.raises(SystemExit, match="species symbol"):
         main([str(TAPE), "-o", str(out), "--material-id", "g", "--symbol", "c",
-              "--mass", "12.0107", "--temperature", "296"])
+              "--mass", "12.0107", "--density", "2.26", "--temperature", "296"])
     assert not out.exists(), "rejection must leave the output tree untouched"
 
 
@@ -79,7 +87,8 @@ def test_cli_config_valid_polyatomic_one_pack_per_species(tmp_path):
 # ---- reviews IO-1 + CLI-1c: args validated before work; clean boundaries ---
 
 def test_cli_density_zero_exits_2_before_writing_anything(tmp_path, capsys):
-    rc = main([str(TAPE), "-o", str(tmp_path / "out"), "--density", "0"])
+    rc = main([str(TAPE), "-o", str(tmp_path / "out"), "--symbol", "C",
+               "--mass", "12.0107", "--density", "0"])
     assert rc == 2
     err = capsys.readouterr().err
     assert "density" in err and "Traceback" not in err
@@ -87,7 +96,8 @@ def test_cli_density_zero_exits_2_before_writing_anything(tmp_path, capsys):
 
 
 def test_cli_missing_tape_exits_3_cleanly(tmp_path, capsys):
-    rc = main([str(tmp_path / "nope.endf"), "-o", str(tmp_path / "out")])
+    rc = main([str(tmp_path / "nope.endf"), "-o", str(tmp_path / "out"),
+               "--symbol", "C", "--mass", "12.0107", "--density", "2.26"])
     assert rc == 3
     err = capsys.readouterr().err
     assert "ENDFTSL converter failed" in err and "Traceback" not in err
