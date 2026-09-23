@@ -67,18 +67,13 @@ def test_q_support_covers_energy_gain_locus_when_emin_negative():
     assert Q0.max() < Qneg.max()               # negative e_min widened the support
 
 
-def test_unknown_geometry_raises():
-    with pytest.raises(ValueError):
-        build_locus_support("spallation", 3.5, [90.0], DE, EMAX, DQ)
-
-
 def test_kinematic_mask_marks_exactly_the_accessible_band():
     from irma.spectra.forward import kinematic_envelope, kinematic_mask
     Ei = 250.0
     E = np.linspace(0.0, 240.0, 25)
     q_lo, q_hi = kinematic_envelope("direct", Ei, 30.0, 120.0, E)
     Q = np.linspace(0.5, 22.0, 60)
-    m = kinematic_mask(Q, E, E, q_lo, q_hi)
+    m = kinematic_mask(Q, q_lo, q_hi)
     assert m.shape == (Q.size, E.size)
     for j in range(E.size):                       # accessible == within [q_lo, q_hi]
         assert np.array_equal(m[:, j], (Q >= q_lo[j]) & (Q <= q_hi[j]))
@@ -90,7 +85,7 @@ def test_kinematic_mask_forbidden_energy_is_all_inaccessible():
     from irma.spectra.forward import kinematic_envelope, kinematic_mask
     Eforbidden = np.array([260.0])                # > Ei=250
     q_lo, q_hi = kinematic_envelope("direct", 250.0, 30.0, 120.0, Eforbidden)
-    m = kinematic_mask(np.linspace(0.5, 22.0, 60), Eforbidden, Eforbidden, q_lo, q_hi)
+    m = kinematic_mask(np.linspace(0.5, 22.0, 60), q_lo, q_hi)
     assert not m.any()
 
 

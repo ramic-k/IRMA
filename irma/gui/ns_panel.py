@@ -1783,8 +1783,7 @@ class NSPanel(ttk.Frame):
         have_env = "envelope_E" in d.files
         if self.map_mask.get() and have_env:
             from irma.spectra.forward import kinematic_mask
-            m = kinematic_mask(Q, E, d["envelope_E"],
-                               d["envelope_q_lo"], d["envelope_q_hi"])
+            m = kinematic_mask(Q, d["envelope_q_lo"], d["envelope_q_hi"])
             S = np.where(m, S, np.nan)         # blank the inaccessible (q,E) region
         for w in self._plot_holder.winfo_children():
             w.destroy()

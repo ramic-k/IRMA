@@ -261,7 +261,7 @@ def test_save_sqe_map_full_and_masked(tmp_path):
     E = np.linspace(0.0, 100.0, 11)
     S = np.ones((Q.size, E.size))
     env = (E, np.full_like(E, 2.0), np.full_like(E, 8.0))   # accessible 2..8 /A
-    m = kinematic_mask(Q, E, *env)
+    m = kinematic_mask(Q, *env[1:])
 
     full = np.load(save_sqe_map(str(tmp_path / "m.npz"), Q, E, S, envelope=env))
     assert np.array_equal(full["S"], S) and "envelope_E" in full.files
