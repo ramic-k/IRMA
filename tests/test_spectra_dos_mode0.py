@@ -101,7 +101,7 @@ def test_builds_a_finite_powdersqe_through_the_forward_model():
                                 out["sqe_barn_per_meV"], T_K=T_K,
                                 sigma_b=out["sigma_b_total"])
     sim = ins.simulate(p, ins.VISION(), np.linspace(0, 150, 300),
-                       elastic_model=None, per_angle=False)
+                       elastic_model=None)
     assert np.all(np.isfinite(sim["I_inelastic"])) and sim["I_inelastic"].max() > 0
 
 

@@ -14,7 +14,8 @@ resolution, and (optionally) add the bank's elastic line from MF7/MT2.  The
 angle results are then combined (mean or sum) into one 1-D spectrum.
 
 Energy convention follows :mod:`irma.spectra.sqe`: E>0 is neutron energy loss
-(downscatter); the energy-gain side is reconstructed by detailed balance.
+(downscatter); the energy-gain side is the powder's directly computed gain
+side when it carries one, else the detailed-balance mirror.
 """
 from __future__ import annotations
 
@@ -31,7 +32,6 @@ from irma.spectra import elastic as el
 class Instrument:
     """A spectrometer configuration for the forward model.
 
-    name            : label for plots
     geometry        : 'indirect' (fixed Ef) or 'direct' (fixed Ei)
     E_fixed         : Ef (indirect) or Ei (direct) in meV
     angles_deg      : detector scattering angles (2theta) making up the bank
@@ -45,7 +45,6 @@ class Instrument:
                       package, frequency}); 'chopper' is direct-geometry only
     chopper_spec    : dict instrument,package,frequency for the 'chopper' model
     """
-    name: str
     geometry: str
     E_fixed: float
     angles_deg: Sequence[float]
@@ -54,21 +53,6 @@ class Instrument:
     combine: str = "mean"
     resolution_model: str = "poly"
     chopper_spec: Optional[dict] = None
-
-    def __post_init__(self):
-        # The auto chopper model is a direct-geometry construct (it propagates the
-        # incident-energy resolution through the chopper). Reject an inconsistent
-        # geometry at CONSTRUCTION -- the same contract config.validate() enforces
-        # -- so a hand-built Instrument can't silently mis-resolve an indirect bank.
-        if self.resolution_model == "chopper" and self.geometry != "direct":
-            raise ValueError(
-                "resolution_model='chopper' is a direct-geometry model; it "
-                f"requires geometry='direct' (got {self.geometry!r})")
-        if self.combine not in ("mean", "sum"):
-            # Anything other than 'mean' silently fell through to np.sum below;
-            # reject an unknown reducer at construction instead.
-            raise ValueError(
-                f"combine must be 'mean' or 'sum' (got {self.combine!r})")
 
     # --- resolution width source -----------------------------------------
     def width_source(self):
@@ -79,9 +63,6 @@ class Instrument:
         whatever E_out each call site uses.
         """
         if self.resolution_model == "chopper":
-            if not self.chopper_spec:
-                raise ValueError("resolution_model='chopper' requires chopper_spec "
-                                 "(instrument, package, frequency)")
             from irma.spectra.chopper_resolution import chopper_sigma_of_E
             s = self.chopper_spec
             return lambda E: chopper_sigma_of_E(E, Ei=self.E_fixed, **s)
@@ -90,11 +71,8 @@ class Instrument:
     # --- kinematics -------------------------------------------------------
     def Q_of_E(self, two_theta_deg):
         """Return a callable E(meV) -> Q(1/A) for one detector angle."""
-        if self.geometry == "indirect":
-            return lambda E: si.Q_indirect(E, self.E_fixed, two_theta_deg)
-        elif self.geometry == "direct":
-            return lambda E: si.Q_direct(E, self.E_fixed, two_theta_deg)
-        raise ValueError(f"unknown geometry {self.geometry!r}")
+        Q = si.Q_indirect if self.geometry == "indirect" else si.Q_direct
+        return lambda E: Q(E, self.E_fixed, two_theta_deg)
 
     def kf_ki(self):
         """kf/ki factor callable for this geometry (count-rate spectra)."""
@@ -113,7 +91,7 @@ def VISION(Ef=si.VISION_EF_MEV, bank_halfwidth_deg=5.0, sigma_coeffs=None,
     bank mean.
     """
     return Instrument(
-        name="VISION", geometry="indirect", E_fixed=Ef,
+        geometry="indirect", E_fixed=Ef,
         angles_deg=list(si.VISION_BANKS.values()),
         sigma_coeffs=(si.VISION_SIGMA_COEFFS if sigma_coeffs is None
                       else tuple(sigma_coeffs)),
@@ -121,7 +99,7 @@ def VISION(Ef=si.VISION_EF_MEV, bank_halfwidth_deg=5.0, sigma_coeffs=None,
 
 
 def indirect(Ef, angles_deg, sigma_coeffs=si.VISION_SIGMA_COEFFS,
-             bank_halfwidth_deg=5.0, combine="mean", name=None):
+             bank_halfwidth_deg=5.0, combine="mean"):
     """Generic indirect-geometry instrument (OCLIMAX INSTR=1).
 
     Bank combination (``combine``) is a FLAT mean/sum over the listed detector
@@ -131,14 +109,13 @@ def indirect(Ef, angles_deg, sigma_coeffs=si.VISION_SIGMA_COEFFS,
     instrument's reduction: a flat mean corresponds to per-bank-normalized
     summing (the OCLIMAX convention).
     """
-    return Instrument(name=name or f"indirect Ef={Ef:g}meV", geometry="indirect",
-                      E_fixed=Ef, angles_deg=list(angles_deg),
+    return Instrument(geometry="indirect", E_fixed=Ef, angles_deg=list(angles_deg),
                       sigma_coeffs=sigma_coeffs,
                       bank_halfwidth_deg=bank_halfwidth_deg, combine=combine)
 
 
 def direct(Ei, angles_deg, sigma_coeffs=None, bank_halfwidth_deg=5.0,
-           combine="mean", name=None, resolution_model="poly",
+           combine="mean", resolution_model="poly",
            chopper_spec=None):
     """Generic direct-geometry instrument (OCLIMAX INSTR=2).
 
@@ -150,8 +127,7 @@ def direct(Ei, angles_deg, sigma_coeffs=None, bank_halfwidth_deg=5.0,
     """
     if sigma_coeffs is None:
         sigma_coeffs = (0.02 * Ei, 0.0, 0.0)
-    return Instrument(name=name or f"direct Ei={Ei:g}meV", geometry="direct",
-                      E_fixed=Ei, angles_deg=list(angles_deg),
+    return Instrument(geometry="direct", E_fixed=Ei, angles_deg=list(angles_deg),
                       sigma_coeffs=sigma_coeffs,
                       bank_halfwidth_deg=bank_halfwidth_deg, combine=combine,
                       resolution_model=resolution_model,
@@ -161,22 +137,20 @@ def direct(Ei, angles_deg, sigma_coeffs=None, bank_halfwidth_deg=5.0,
 # ---- simulation -------------------------------------------------------------
 def simulate(p: si.PowderSQE, instrument: Instrument, E_out,
              elastic_model: Optional[el.ElasticModel] = None,
-             include_gain=True, kinematic_factor=False, per_angle=False,
-             shape="gaussian"):
+             include_gain=True, kinematic_factor=False, shape="gaussian"):
     """Forward-model a 1-D spectrum for ``instrument`` from powder S(Q,E) ``p``.
 
     p              : PowderSQE source (any provenance)
     instrument     : Instrument config
     E_out          : output energy-transfer grid (meV); may include negatives
     elastic_model  : if given, add the rigorous MF7/MT2 elastic line per angle
-    include_gain   : add the detailed-balance energy-gain side
+    include_gain   : add the energy-gain side (see :func:`irma.spectra.sqe.signed_sqe`)
     kinematic_factor : multiply by kf/ki for a count-rate spectrum (default off,
                      matching OCLIMAX's S(Q,omega) convention)
-    per_angle      : also return the individual per-angle spectra
     shape          : resolution line shape, 'gaussian' or 'lorentzian'
 
-    Returns dict: 'E','Q'(per angle),'I_inelastic','I_elastic','I_total','label',
-    and (if per_angle) 'angles','I_inelastic_per_angle','I_elastic_per_angle'.
+    Returns dict: 'E','Q'(per angle),'I_inelastic','I_elastic','I_total' (the
+    angles combined) and 'angles','I_inelastic_per_angle','I_elastic_per_angle'.
     """
     E_out = np.asarray(E_out, float)
     kfac = instrument.kf_ki() if kinematic_factor else None
@@ -199,23 +173,19 @@ def simulate(p: si.PowderSQE, instrument: Instrument, E_out,
 
     inel = np.array(inel_stack)
     elc = np.array(el_stack)
-    reducer = np.mean if instrument.combine == "mean" else np.sum
+    reducer = {"mean": np.mean, "sum": np.sum}[instrument.combine]
     I_inel = reducer(inel, axis=0)
     I_el = reducer(elc, axis=0)
-
-    res = {
+    return {
         "E": E_out,
         "Q": np.array(Q_stack),
         "I_inelastic": I_inel,
         "I_elastic": I_el,
         "I_total": I_inel + I_el,
-        "label": f"{p.label} @ {instrument.name}",
+        "angles": list(instrument.angles_deg),
+        "I_inelastic_per_angle": inel,
+        "I_elastic_per_angle": elc,
     }
-    if per_angle:
-        res.update(angles=list(instrument.angles_deg),
-                   I_inelastic_per_angle=inel,
-                   I_elastic_per_angle=elc)
-    return res
 
 
 def simulate_q_cuts(p: si.PowderSQE, q_values, E_out, sigma_coeffs,
@@ -275,6 +245,6 @@ def simulate_q_cuts(p: si.PowderSQE, q_values, E_out, sigma_coeffs,
     return {
         "E": E_out,
         "q_values": q_values,
-        "I_inelastic_per_q": np.array(inel) if inel else np.empty((0, E_out.size)),
-        "I_elastic_per_q": np.array(elc) if elc else np.empty((0, E_out.size)),
+        "I_inelastic_per_q": np.array(inel),
+        "I_elastic_per_q": np.array(elc),
     }

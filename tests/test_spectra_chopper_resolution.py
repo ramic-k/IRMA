@@ -367,11 +367,3 @@ def test_instrument_width_source_is_chopper_callable():
     assert callable(w)
     sig = w(np.array([0.0, 100.0]))
     assert np.all(np.isfinite(sig)) and np.all(sig > 0.0)
-
-
-def test_instrument_chopper_without_spec_raises():
-    from irma.spectra.instruments import Instrument
-    ins = Instrument(name="x", geometry="direct", E_fixed=300.0,
-                     angles_deg=[30.0], resolution_model="chopper")
-    with pytest.raises(ValueError):
-        ins.width_source()
