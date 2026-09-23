@@ -20,8 +20,7 @@ import pytest
 from irma.spectra import sqe as _sqe
 from irma.spectra.dos_mode0 import (compute_mode0_gain_direct, compute_mode0_sqe,
                                     GainGridTooLargeError)
-from irma.spectra.forward import (compute_spectrum, compute_sqe_map,
-                                   _resolve_gain_side)
+from irma.spectra.forward import compute_spectrum, compute_sqe_map
 
 T_K = 296.0
 KT = _sqe.KB * T_K
@@ -260,25 +259,6 @@ def test_map_gain_side_direct_vs_mirror_agree():
     assert np.nanmax(m_db.S[:, gn]) > 0.0
     assert np.allclose(np.nan_to_num(m_dir.S), np.nan_to_num(m_db.S),
                        rtol=1e-9, atol=1e-16)
-
-
-def test_resolve_gain_side_contract():
-    """Both the DOS path (mode 0) and the eigenvector engine (modes 1/2, i.e.
-    dos_species=None) resolve a 'direct' request to 'direct' silently -- the
-    engine now computes the gain side directly too (emit_gain_side). Explicit
-    'detailed_balance', or include_gain=False, gives the mirror."""
-    for dos in (None, [_carbon()]):
-        notes = []
-        used = _resolve_gain_side(gain_side="direct", include_gain=True,
-                                  dos_species=dos, progress=notes.append)
-        assert used == "direct" and not notes        # no fallback, no NOTE
-    assert _resolve_gain_side(gain_side="detailed_balance", include_gain=True,
-                              dos_species=None, progress=lambda *a: None) == "detailed_balance"
-    assert _resolve_gain_side(gain_side="direct", include_gain=False,
-                              dos_species=None, progress=lambda *a: None) == "detailed_balance"
-    with pytest.raises(ValueError):
-        _resolve_gain_side(gain_side="bogus", include_gain=True,
-                           dos_species=None, progress=lambda *a: None)
 
 
 def test_direct_gain_skipped_for_loss_only_grid():

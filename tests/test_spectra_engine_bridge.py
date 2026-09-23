@@ -17,23 +17,9 @@ from irma.core.standalone_sab import _pick_sab_key
 def test_pick_sqe_key_tracks_pick_sab_key(mode, order):
     """The sqe-key selector is the sab-key selector with prefix/suffix swap."""
     sab = _pick_sab_key(order, mode)
-    sqe = _pick_sqe_key(None, order, mode)
+    sqe = _pick_sqe_key(order, mode)
     expected = sab.replace("sab_asym_downscatter_", "sqe_") + "_barn_per_meV"
     assert sqe == expected
-
-
-def test_pick_sqe_key_rejects_bad_mode():
-    with pytest.raises(ValueError):
-        _pick_sqe_key(None, 100, 3)
-
-
-def test_pick_sqe_key_validates_presence():
-    # mode-2/order-100 selects the multiphonon-total key; absent -> clear KeyError
-    with pytest.raises(KeyError):
-        _pick_sqe_key({"some_other_key": None}, 100, 2)
-    # present -> returns it
-    key = "sqe_one_phonon_total_plus_incoherent_approx_multiphonon_barn_per_meV"
-    assert _pick_sqe_key({key: object()}, 100, 2) == key
 
 
 def test_from_noncubic_arrays_no_inversion_and_orientation():

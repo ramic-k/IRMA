@@ -95,23 +95,11 @@ def test_kinematic_mask_forbidden_energy_is_all_inaccessible():
 
 
 # ---- parallelism: the forward model must NOT default to serial --------------
-def test_resolve_jobs_auto_uses_all_cores(monkeypatch):
-    monkeypatch.delenv("IRMA_JOBS", raising=False)
-    monkeypatch.delenv("IRMA_NCPU", raising=False)
+def test_resolve_jobs_auto_uses_all_cores():
     assert _resolve_jobs(None) == max(1, os.cpu_count() or 1)
     assert _resolve_jobs(None) > 1 or (os.cpu_count() or 1) == 1
 
 
-def test_resolve_jobs_explicit_is_honored(monkeypatch):
-    monkeypatch.setenv("IRMA_JOBS", "6")
-    assert _resolve_jobs(8) == 8          # explicit beats env + auto
+def test_resolve_jobs_explicit_is_honored():
+    assert _resolve_jobs(8) == 8          # explicit beats auto
     assert _resolve_jobs(1) == 1          # explicit serial still allowed
-
-
-def test_resolve_jobs_env_override(monkeypatch):
-    monkeypatch.delenv("IRMA_NCPU", raising=False)
-    monkeypatch.setenv("IRMA_JOBS", "5")
-    assert _resolve_jobs(None) == 5
-    monkeypatch.delenv("IRMA_JOBS", raising=False)
-    monkeypatch.setenv("IRMA_NCPU", "3")
-    assert _resolve_jobs(None) == 3
