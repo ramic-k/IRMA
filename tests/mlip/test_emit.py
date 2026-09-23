@@ -23,34 +23,31 @@ SPEC = CalculatorSpec("emt")
 QUIET = lambda *a, **k: None                        # noqa: E731
 
 
-def _make_bundle(tmpdir, atoms, disordered=False, mesh=(4, 4, 4)):
-    rr = relax(atoms, EMT(), fmax=0.01, nmax=200)
-    pr = compute_force_constants(
-        rr.atoms, SPEC, supercell=(2, 2, 2), delta=0.03, jobs=1,
-        scratch_dir=os.path.join(str(tmpdir), "scratch"), progress=QUIET)
+def _bundle(tmpdir, model, mesh=(4, 4, 4), **kw):
+    rr, pr = model
     return write_bundle(str(tmpdir), phonon_result=pr,
                         relax_result=rr, calc_meta={"potential": "emt"},
-                        args_used={}, mesh=mesh, disordered=disordered,
-                        progress=QUIET)
+                        args_used={}, mesh=mesh, progress=QUIET, **kw)
 
 
 @pytest.fixture(scope="module")
-def al_bundle(tmp_path_factory):
-    return _make_bundle(tmp_path_factory.mktemp("al"),
-                        bulk("Al", "fcc", a=4.05, cubic=True))
+def al_bundle(tmp_path_factory, al_model):
+    return _bundle(tmp_path_factory.mktemp("al"), al_model)
 
 
 @pytest.fixture(scope="module")
 def cuau_bundle(tmp_path_factory):
-    atoms = bulk("CuAu", "rocksalt", a=4.1)
-    return _make_bundle(tmp_path_factory.mktemp("cuau"), atoms)
+    tmpdir = tmp_path_factory.mktemp("cuau")
+    rr = relax(bulk("CuAu", "rocksalt", a=4.1), EMT(), fmax=0.01, nmax=200)
+    pr = compute_force_constants(
+        rr.atoms, SPEC, supercell=(2, 2, 2), delta=0.03, jobs=1,
+        scratch_dir=os.path.join(str(tmpdir), "scratch"), progress=QUIET)
+    return _bundle(tmpdir, (rr, pr))
 
 
 @pytest.fixture(scope="module")
-def dis_bundle(tmp_path_factory):
-    return _make_bundle(tmp_path_factory.mktemp("dis"),
-                        bulk("Al", "fcc", a=4.05, cubic=True),
-                        disordered=True)
+def dis_bundle(tmp_path_factory, al_model):
+    return _bundle(tmp_path_factory.mktemp("dis"), al_model, disordered=True)
 
 
 def _parse(path):
@@ -295,22 +292,10 @@ def test_emit_overwrite_guard(al_bundle, tmp_path):
     assert open(path).read() == original
 
 
-def test_born_bundle_emits_use_born_zero_with_embedded_nac(tmp_path):
-    from phonopy.structure.symmetry import Symmetry
-    atoms = bulk("Al", "fcc", a=4.05, cubic=True)
-    rr = relax(atoms, EMT(), fmax=0.01, nmax=100)
-    pr = compute_force_constants(
-        rr.atoms, SPEC, supercell=(2, 2, 2), delta=0.03, jobs=1,
-        scratch_dir=str(tmp_path / "scratch"), progress=QUIET)
-    n_indep = len(Symmetry(pr.phonon.primitive).get_independent_atoms())
-    born = tmp_path / "BORN"
-    born.write_text("14.4\n2.0 0 0  0 2.0 0  0 0 2.0\n"
-                    + "\n".join(["1.5 0 0  0 1.5 0  0 0 1.5"] * n_indep)
-                    + "\n")
-    b = write_bundle(str(tmp_path / "bundle"), phonon_result=pr,
-                     relax_result=rr, calc_meta={"potential": "emt"},
-                     args_used={}, mesh=(4, 4, 4), born_path=str(born),
-                     progress=QUIET)
+def test_born_bundle_emits_use_born_zero_with_embedded_nac(tmp_path, al_model,
+                                                            born_file):
+    born = born_file(tmp_path, al_model[1].phonon)
+    b = _bundle(tmp_path / "bundle", al_model, born_path=born)
     from irma.core.phonopy_io import phonopy_yaml_embeds_nac
     assert phonopy_yaml_embeds_nac(b.phonopy_yaml)
     (path,) = emit_endf_decks(b, temperature_k=296.0, mats={"Al": 45},
@@ -349,15 +334,14 @@ def test_emitted_classic_deck_RUNS_and_carries_bound_total_sb(dis_bundle,
     assert mt2["SB"] == pytest.approx(lookup("Al").sigma_bound_b, rel=1e-4)
 
 
-def test_species_dos_survives_gamma_only_mesh(tmp_path):
+def test_species_dos_survives_gamma_only_mesh(tmp_path, al_model):
     """The disordered path defaults to a Gamma-only mesh,
     where EVERY band has zero tetrahedron width -- _species_dos must
     fall back to smearing instead of silently emitting an empty DOS."""
     from irma.mlip.bundle import load_bundle
     from irma.mlip.emit import _species_dos
 
-    _make_bundle(tmp_path, bulk("Al", "fcc", a=4.05, cubic=True),
-                 disordered=True, mesh=(1, 1, 1))
+    _bundle(tmp_path, al_model, disordered=True, mesh=(1, 1, 1))
     bundle = load_bundle(str(tmp_path))
     species = resolve_species(bundle, progress=QUIET)
     dos = _species_dos(bundle, species, QUIET)

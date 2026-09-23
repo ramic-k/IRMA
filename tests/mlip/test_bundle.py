@@ -1,9 +1,9 @@
 """Bundle write/load/validate tests on the EMT dev backend.
 
-Each test gets its own output directory; the shared module fixture only
-provides the (immutable-by-contract) relax/FC results, and the no-leak test
-pins that write_bundle cannot contaminate a later bundle through the shared
-phonon object."""
+Each test gets its own output directory; the shared al_model fixture
+(conftest.py) only provides the (immutable-by-contract) relax/FC results,
+and the no-leak assert pins that write_bundle cannot contaminate a later
+bundle through the shared phonon object."""
 import json
 import os
 import sys
@@ -14,29 +14,10 @@ import pytest
 ase = pytest.importorskip("ase")
 pytest.importorskip("phonopy")
 
-from ase.build import bulk                          # noqa: E402
-from ase.calculators.emt import EMT                 # noqa: E402
-
 from irma.mlip.bundle import (                      # noqa: E402
     Bundle, load_bundle, validate_bundle, write_bundle)
-from irma.mlip.calculators import CalculatorSpec    # noqa: E402
-from irma.mlip.phonons import compute_force_constants  # noqa: E402
-from irma.mlip.relax import relax                   # noqa: E402
 
-SPEC = CalculatorSpec("emt")
 QUIET = lambda *a, **k: None                        # noqa: E731
-
-
-@pytest.fixture(scope="module")
-def model(tmp_path_factory):
-    """One relaxed fcc-Al model + FC shared by all tests (read-only)."""
-    scratch = tmp_path_factory.mktemp("model-scratch")
-    atoms = bulk("Al", "fcc", a=4.05, cubic=True)
-    rr = relax(atoms, EMT(), fmax=0.01, nmax=100)
-    pr = compute_force_constants(
-        rr.atoms, SPEC, supercell=(2, 2, 2), delta=0.03, jobs=1,
-        scratch_dir=str(scratch / "scratch"), progress=QUIET)
-    return rr, pr
 
 
 def _write(outdir, model, **kw):
@@ -48,26 +29,10 @@ def _write(outdir, model, **kw):
     return write_bundle(str(outdir), phonon_result=pr, relax_result=rr, **kw)
 
 
-def _born_file(tmp_path, with_factor, phonon):
-    """Synthetic BORN with exactly the symmetry-independent atom rows the
-    parser demands for this model."""
-    from phonopy.structure.symmetry import Symmetry
-    n_indep = len(Symmetry(phonon.primitive).get_independent_atoms())
-    # line 1 is ALWAYS the factor line; a non-numeric token means "use the
-    # code default" (phonopy file_IO.get_born_parameters)
-    lines = ["14.4" if with_factor else "default"]
-    lines.append("2.0 0 0  0 2.0 0  0 0 2.0")       # dielectric
-    for _ in range(n_indep):
-        lines.append("1.5 0 0  0 1.5 0  0 0 1.5")
-    path = tmp_path / "BORN"
-    path.write_text("\n".join(lines) + "\n")
-    return str(path)
-
-
-def test_bundle_roundtrip_and_validation(model, tmp_path):
-    b = _write(tmp_path, model)
+def test_bundle_roundtrip_and_validation(al_model, tmp_path):
+    b = _write(tmp_path, al_model)
     assert isinstance(b, Bundle)
-    rr, pr = model
+    rr, pr = al_model
 
     for name in ("phonopy.yaml", "structure_relaxed.vasp", "manifest.json",
                  "dos.dat"):
@@ -100,37 +65,37 @@ def test_bundle_roundtrip_and_validation(model, tmp_path):
     assert validate_bundle(str(tmp_path)) == []
 
 
-def test_input_structure_hash_recorded(model, tmp_path):
+def test_input_structure_hash_recorded(al_model, tmp_path):
     src = tmp_path / "input.cif"
     src.write_text("fake structure input\n")
-    b = _write(tmp_path / "b", model, input_structure_path=str(src))
+    b = _write(tmp_path / "b", al_model, input_structure_path=str(src))
     assert b.manifest["input"]["structure_sha256"] is not None
     assert b.manifest["input"]["structure_path"].endswith("input.cif")
 
 
-def test_overwrite_guard_covers_everything(model, tmp_path):
-    _write(tmp_path, model)
+def test_overwrite_guard_covers_everything(al_model, tmp_path):
+    _write(tmp_path, al_model)
     with pytest.raises(FileExistsError, match="overwrite"):
-        _write(tmp_path, model)
+        _write(tmp_path, al_model)
 
     # any non-scratch content triggers the guard, not just owned files
     other = tmp_path / "fresh"
     other.mkdir()
     (other / "users_notes.txt").write_text("keep me?")
     with pytest.raises(FileExistsError):
-        _write(other, model)
+        _write(other, al_model)
 
     # overwrite replaces owned files, incl. a stale dos.png
     stale_png = tmp_path / "dos.png"
     stale_png.write_bytes(b"stale")
-    b = _write(tmp_path, model, overwrite=True)
+    b = _write(tmp_path, al_model, overwrite=True)
     assert validate_bundle(b.path) == []
 
 
-def test_born_roundtrip_explicit_factor(model, tmp_path):
-    rr, pr = model
-    born = _born_file(tmp_path, with_factor=True, phonon=pr.phonon)
-    b = _write(tmp_path / "b", model, born_path=born)
+def test_born_roundtrip_explicit_factor(al_model, tmp_path, born_file):
+    rr, pr = al_model
+    born = born_file(tmp_path, pr.phonon)
+    b = _write(tmp_path / "b", al_model, born_path=born)
     from irma.core.phonopy_io import phonopy_yaml_embeds_nac
     assert phonopy_yaml_embeds_nac(b.phonopy_yaml)
     assert b.manifest["nac_embedded"] is True
@@ -140,14 +105,15 @@ def test_born_roundtrip_explicit_factor(model, tmp_path):
     assert pr.phonon.nac_params is None
 
 
-def test_born_roundtrip_without_factor_uses_phonopy_default(model, tmp_path,
+def test_born_roundtrip_without_factor_uses_phonopy_default(al_model, tmp_path,
+                                                            born_file,
                                                             monkeypatch):
     # the default factor comes from phonopy.physical_units; the deprecated
     # phonopy.units module must not be needed
     monkeypatch.setitem(sys.modules, "phonopy.units", None)
-    rr, pr = model
-    born = _born_file(tmp_path, with_factor=False, phonon=pr.phonon)
-    b = _write(tmp_path / "b", model, born_path=born)
+    rr, pr = al_model
+    born = born_file(tmp_path, pr.phonon, with_factor=False)
+    b = _write(tmp_path / "b", al_model, born_path=born)
     assert b.manifest["nac_embedded"] is True
     import phonopy
     from irma.core.phonopy_io import pinned_primitive_matrix_kwargs
@@ -157,10 +123,10 @@ def test_born_roundtrip_without_factor_uses_phonopy_default(model, tmp_path,
     assert ph.nac_params["factor"] == pytest.approx(14.3996517, rel=1e-6)
 
 
-def test_check_born_rows_fail_fast(model, tmp_path):
+def test_check_born_rows_fail_fast(al_model, tmp_path, born_file):
     from irma.mlip.bundle import check_born_rows
-    rr, pr = model
-    good = _born_file(tmp_path, with_factor=True, phonon=pr.phonon)
+    rr, pr = al_model
+    good = born_file(tmp_path, pr.phonon)
     assert check_born_rows(good, rr.atoms) is None
 
     # phonopy's own writers put a '# ...' comment on line 1
@@ -179,21 +145,21 @@ def test_check_born_rows_fail_fast(model, tmp_path):
     assert check_born_rows(tmp_path / "missing", rr.atoms) is not None
 
 
-def test_validate_ignores_a_stray_born_in_the_cwd(model, tmp_path,
-                                                  monkeypatch):
+def test_validate_ignores_a_stray_born_in_the_cwd(al_model, tmp_path,
+                                                  born_file, monkeypatch):
     # found live in the ZrO2 campaign: an unrelated ./BORN file next to
     # where validate runs must not leak NAC into the reload check
-    b = _write(tmp_path / "clean", model)
+    b = _write(tmp_path / "clean", al_model)
     workdir = tmp_path / "elsewhere"
     workdir.mkdir()
-    _born_file(workdir, with_factor=True, phonon=model[1].phonon)
+    born_file(workdir, al_model[1].phonon)
     assert (workdir / "BORN").exists()
     monkeypatch.chdir(workdir)
     assert validate_bundle(b.path) == []
 
 
-def test_validate_catches_tampering(model, tmp_path):
-    b = _write(tmp_path, model)
+def test_validate_catches_tampering(al_model, tmp_path):
+    b = _write(tmp_path, al_model)
 
     # content change -> sha mismatch
     with open(b.structure, "a") as fh:
@@ -202,7 +168,7 @@ def test_validate_catches_tampering(model, tmp_path):
     assert any("sha256 mismatch" in p for p in problems)
 
     # manifest claiming NAC the yaml lacks
-    b2 = _write(tmp_path / "b2", model)
+    b2 = _write(tmp_path / "b2", al_model)
     mpath = os.path.join(b2.path, "manifest.json")
     m = json.load(open(mpath))
     m["nac_embedded"] = True
@@ -211,7 +177,7 @@ def test_validate_catches_tampering(model, tmp_path):
     assert any("nac_embedded" in p for p in problems)
 
     # missing file
-    b3 = _write(tmp_path / "b3", model)
+    b3 = _write(tmp_path / "b3", al_model)
     os.remove(b3.structure)
     assert any("missing file" in p for p in validate_bundle(b3.path))
 
@@ -263,12 +229,12 @@ def test_dos_mixed_flat_and_dispersive_triggers_fallback():
     assert np.all(np.diff(e) < 0.51)            # pitch never coarser than 0.5
 
 
-def test_dos_dispersive_bands_keep_tetrahedron(model):
+def test_dos_dispersive_bands_keep_tetrahedron(al_model):
     """A normal dispersive crystal must NOT trigger the smearing fallback
     (the tetrahedron DOS already integrates to the band count)."""
     from irma.mlip.bundle import _dos_and_census
 
-    _rr, pr = model
+    _rr, pr = al_model
     e, rho, census = _dos_and_census(pr.phonon, [6, 6, 6])
     assert "dos_smearing_fallback_mev" not in census
     # tetrahedron integral approximates the band count (coarse-mesh
@@ -291,13 +257,13 @@ def _rehash_manifest(bundle_path):
     json.dump(m, open(mpath, "w"))
 
 
-def test_validate_rejects_a_python_tagged_phonopy_yaml(model, tmp_path):
+def test_validate_rejects_a_python_tagged_phonopy_yaml(al_model, tmp_path):
     """A received bundle whose phonopy.yaml carries a `!!python/` tag must
     be REJECTED before phonopy parses it -- `validate` is the documented
     first action on an untrusted artifact, and phonopy's YAML loader
     executes those tags at parse time. The manifest hash gate does not
     help: this bundle is internally consistent."""
-    b = _write(tmp_path / "hostile", model)
+    b = _write(tmp_path / "hostile", al_model)
     canary = tmp_path / "pwned"
     # PREPENDED, deliberately: this exact file was verified to load
     # successfully under phonopy.load AND execute the payload (phonopy's
