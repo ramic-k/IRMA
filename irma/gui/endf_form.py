@@ -1977,20 +1977,10 @@ class EndfFormMixin:
             freq_row, text="Detect from phonopy.yaml",
             command=self._detect_freq_from_fc)
         self._detect_fc_btn.pack(side=tk.LEFT, padx=5)
-        # The seven converged-grid knobs come from the ONE shared builder
-        # (irma.gui.grid_form.build_auto_grid_entries) that the NCrystal
-        # panel also uses: labels, help text, and defaults are defined once
-        # (defaults from irma.core.grids.AUTO_GRID_DEFAULTS), so a change
-        # there updates both panels and the export config together.
+        # the seven converged-grid knobs, shared with the NCrystal panel
         from irma.gui.grid_form import build_auto_grid_entries
-        _knobs = build_auto_grid_entries(self.auto_frame)
-        self.n_lower = _knobs["n_lower"]
-        self.n_phonon = _knobs["n_phonon"]
-        self.n_upper = _knobs["n_upper"]
-        self.beta_max = _knobs["beta_max"]
-        self.alpha_dq = _knobs["alpha_dq"]
-        self.alpha_qcut = _knobs["alpha_qcut"]
-        self.alpha_nlog = _knobs["alpha_nlog"]
+        for name, w in build_auto_grid_entries(self.auto_frame).items():
+            setattr(self, name, w)
 
         # Manual grid entry
         self.manual_frame = ttk.Frame(gf)

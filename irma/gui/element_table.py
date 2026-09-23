@@ -23,6 +23,8 @@ contract.
 import tkinter as tk
 from tkinter import ttk, filedialog
 
+from irma.core.nuclear_data import isotopes, lookup
+
 # (key, header, entry width in chars)
 _COLS = [
     ("symbol", "Sym", 5),
@@ -77,19 +79,16 @@ def _safe_lookup(key):
     if not key:
         return None
     try:
-        from irma.core.nuclear_data import lookup
         return lookup(key)
-    except (KeyError, ValueError, ImportError):
+    except (KeyError, ValueError):
         return None
 
 
 class ElementTable(ttk.Frame):
     """Editable rows of scattering elements with context-dependent columns."""
 
-    def __init__(self, parent, on_browse_filetypes=None, nuclide_editor=False):
+    def __init__(self, parent, nuclide_editor=False):
         super().__init__(parent)
-        self._browse_ft = on_browse_filetypes or [
-            ("DOS / text", "*.txt *.dat *.dos *.csv"), ("All files", "*.*")]
         self.nuclide_editor = bool(nuclide_editor)
         # the editor's two columns sit straight after the symbol, so the row
         # reads left-to-right as identity then constants
@@ -134,11 +133,6 @@ class ElementTable(ttk.Frame):
             self._hint.pack(anchor="w", before=self.body)
         else:
             self._hint.pack_forget()
-
-    @property
-    def hint(self):
-        """The hint currently shown ('' when the grid is showing)."""
-        return self._hint.cget("text")
 
     def _relayout(self):
         """Re-grid all rows after an add or remove."""
@@ -272,14 +266,8 @@ class ElementTable(ttk.Frame):
                 if r["_var"][key].get() == machine_value:
                     r["_var"][key].set("")
             r["_autofill"] = {"symbol": symbol, "values": {}}
-        if not symbol:
-            return False
-        try:
-            from irma.core.nuclear_data import lookup
-            nuc = lookup(symbol)
-        except (KeyError, ValueError, ImportError):
-            return False
-        if nuc.energy_dependent:
+        nuc = _safe_lookup(symbol)
+        if nuc is None or nuc.energy_dependent:
             return False
         filled = {}
         for key, value in (("sigma_bound_b", nuc.sigma_bound_b),
@@ -295,31 +283,6 @@ class ElementTable(ttk.Frame):
             record["symbol"] = symbol
             record["values"].update(filled)
         return bool(filled)
-
-    def add_default_row(self, symbol):
-        """Prefilled default row whose constants count as machine-filled.
-
-        Unlike ``add_row(nuclear_defaults(symbol))``, the values are
-        recorded in the autofill provenance, so typing a different symbol
-        over the default refreshes them instead of keeping them.
-        """
-        r = self.add_row(self.nuclear_defaults(symbol))
-        r["_autofill"] = {
-            "symbol": symbol,
-            "values": {k: r["_var"][k].get()
-                       for k in NUCLEAR if k != "symbol"}}
-        return r
-
-    @staticmethod
-    def nuclear_defaults(symbol):
-        """Prefill dict for `add_row` from the built-in nuclear table."""
-        from irma.core.nuclear_data import lookup
-        nuc = lookup(symbol)
-        return {"symbol": symbol,
-                "sigma_bound_b": f"{nuc.sigma_bound_b:.6g}",
-                "awr": f"{nuc.awr:.6g}",
-                "b_coh_fm": f"{nuc.b_coh_fm:.6g}",
-                "sigma_inc_b": f"{nuc.sigma_inc_b:.6g}"}
 
     def set_symbols(self, syms):
         """Rebuild the table with one row per symbol, carrying matching
@@ -353,7 +316,8 @@ class ElementTable(ttk.Frame):
 
     def _browse(self, var):
         """Open a file dialog for the row's DOS-file column."""
-        p = filedialog.askopenfilename(filetypes=self._browse_ft)
+        p = filedialog.askopenfilename(filetypes=[
+            ("DOS / text", "*.txt *.dat *.dos *.csv"), ("All files", "*.*")])
         if p:
             var.set(p)
 
@@ -413,10 +377,6 @@ class ElementTable(ttk.Frame):
     @staticmethod
     def _isotope_labels(symbol):
         """['12-C', '13-C'] -- the labels ``--nuclide`` and lookup() take."""
-        try:
-            from irma.core.nuclear_data import isotopes
-        except ImportError:
-            return []
         return [f"{n.A}-{n.symbol}" for n in isotopes(symbol)]
 
     def sync_nuclide_row(self, r, relayout=True):

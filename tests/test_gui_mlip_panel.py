@@ -369,12 +369,12 @@ def _set_mode(panel, symbol, mode, nuclide=None):
 def test_species_table_hints_until_a_bundle_is_set(panel, tmp_path):
     """No bundle: a short hint, not an empty grid."""
     assert panel.species_table.nuclide_rows() == []
-    assert "select a bundle" in panel.species_table.hint
+    assert "select a bundle" in panel.species_table._hint.cget("text")
 
     bundle = _write_bundle_yaml(tmp_path, [("C", 12.011)])
     panel.bundle.set(bundle)
     assert [r["symbol"] for r in panel.species_table.nuclide_rows()] == ["C"]
-    assert panel.species_table.hint == ""
+    assert panel.species_table._hint.cget("text") == ""
 
 
 def test_species_discovery_degrades_without_a_readable_phonopy_yaml(
@@ -385,14 +385,14 @@ def test_species_discovery_degrades_without_a_readable_phonopy_yaml(
     empty.mkdir()
     panel.bundle.set(str(empty))                       # no phonopy.yaml
     assert panel.species_table.nuclide_rows() == []
-    assert "could not read a species list" in panel.species_table.hint
+    assert "could not read a species list" in panel.species_table._hint.cget("text")
 
     broken = tmp_path / "broken"
     broken.mkdir()
     (broken / "phonopy.yaml").write_text("not: [a, valid, cell\n")
     panel.bundle.set(str(broken))
     assert panel.species_table.nuclide_rows() == []
-    assert "could not read a species list" in panel.species_table.hint
+    assert "could not read a species list" in panel.species_table._hint.cget("text")
 
     panel.bundle.set(str(tmp_path / "does-not-exist"))
     assert panel.species_table.nuclide_rows() == []

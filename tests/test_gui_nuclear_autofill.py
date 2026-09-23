@@ -6,9 +6,8 @@ irma.core.nuclear_data instead of hardcoded literals:
   1. ElementTable.autofill_row -- leaving the symbol cell fills the still-empty
      nuclear columns; user-typed values always win; energy-dependent nuclides
      (B, Cd, Gd, ...) and unknown symbols are never prefilled.
-  2. ElementTable.nuclear_defaults -- a machine-filled row is built from the
-     table, so a row the user asks for tracks the compilation. (The panels
-     themselves ship ONE BLANK row: the scatterer list is material identity.)
+  2. Panel auto-fill from phonopy.yaml -- new rows take the table's constants.
+     (The panels ship ONE BLANK row: the scatterer list is material identity.)
   3. EndfFormMixin._fill_from_za -- the explicit button fills AWR + sigma_free
      (spr) from ZA, refusing energy-dependent and unknown nuclides.
 
@@ -41,6 +40,13 @@ def table(root):
 
 
 # -- 1. symbol autofill -----------------------------------------------------
+
+def _machine_row(table, symbol):
+    """A row whose constants were filled from the table, not typed."""
+    r = table.add_row({"symbol": symbol})
+    assert table.autofill_row(r) is True
+    return r
+
 
 def test_autofill_fills_blank_nuclear_columns(table):
     r = table.add_row({"symbol": "Be"})
@@ -85,7 +91,7 @@ def test_isotope_labels_autofill_too(table):
 def test_symbol_change_refreshes_machine_filled_constants(table):
     """Typing a new symbol over a machine-filled
     row must refresh the constants, not silently keep the old element's."""
-    r = table.add_default_row("C")
+    r = _machine_row(table, "C")
     r["_var"]["symbol"].set("Be")
     assert table.autofill_row(r) is True
     be = lookup("Be")
@@ -95,7 +101,7 @@ def test_symbol_change_refreshes_machine_filled_constants(table):
 
 
 def test_symbol_change_keeps_user_edited_fields(table):
-    r = table.add_default_row("C")
+    r = _machine_row(table, "C")
     r["_var"]["awr"].set("99")                              # user override
     r["_var"]["symbol"].set("Be")
     table.autofill_row(r)
@@ -107,7 +113,7 @@ def test_symbol_change_keeps_user_edited_fields(table):
 def test_symbol_change_to_refused_nuclide_blanks_stale_constants(table):
     """C -> Cd: carbon's machine constants must not linger on a Cd row the
     table refuses to prefill."""
-    r = table.add_default_row("C")
+    r = _machine_row(table, "C")
     r["_var"]["symbol"].set("Cd")
     assert table.autofill_row(r) is False
     assert r["_var"]["sigma_bound_b"].get() == ""
@@ -115,7 +121,7 @@ def test_symbol_change_to_refused_nuclide_blanks_stale_constants(table):
 
 
 def test_typo_then_correct_symbol_recovers(table):
-    r = table.add_default_row("C")
+    r = _machine_row(table, "C")
     r["_var"]["symbol"].set("Xx")                           # typo blanks machine values
     table.autofill_row(r)
     r["_var"]["symbol"].set("Be")                           # corrected
@@ -150,16 +156,6 @@ def test_plain_table_is_unchanged_by_the_nuclide_editor_mode(table, root):
 
 
 # -- 2. panel default rows --------------------------------------------------
-
-def test_nuclear_defaults_tracks_the_table():
-    d = ElementTable.nuclear_defaults("C")
-    c = lookup("C")
-    assert d["symbol"] == "C"
-    assert float(d["sigma_bound_b"]) == pytest.approx(c.sigma_bound_b, rel=1e-5)
-    assert float(d["awr"]) == pytest.approx(c.awr, rel=1e-5)
-    assert float(d["b_coh_fm"]) == pytest.approx(c.b_coh_fm, rel=1e-5)
-    assert float(d["sigma_inc_b"]) == pytest.approx(c.sigma_inc_b, rel=1e-5)
-
 
 def test_phonopy_autofill_pulls_constants_for_new_rows(root, monkeypatch):
     """Auto-fill from phonopy.yaml fills the new rows' nuclear columns from
@@ -206,7 +202,7 @@ def test_phonopy_autofill_preserves_provenance_for_later_symbol_edit(
 
 def test_set_symbols_drops_unlisted_and_carries_user_rows(table):
     table.add_row({"symbol": "H", "awr": "0.999"})          # user row
-    table.add_default_row("C")                              # machine row
+    _machine_row(table, "C")                              # machine row
     table.set_symbols(["H", "O"])
     rows = {r["symbol"]: r for r in table.get_rows()}
     assert set(rows) == {"H", "O"}                          # C dropped
