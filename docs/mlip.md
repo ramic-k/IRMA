@@ -285,8 +285,7 @@ irma mlip emit <bundle> --to endf,spectra,ncrystal \
 ```
 
 - **endf**: one ready-to-run input file per principal scatterer (`iel=10`,
-  automatic alpha/beta grids), gated through the same parser the GUI
-  uses before anything is written. The elastic convention is the mixed
+  automatic alpha/beta grids). The elastic convention is the mixed
   elastic format (MEF: both elastic components on every species' tape)
   by default; `--elastic-format sef` selects the single-channel
   convention. `--min-phonon-energy` writes the optional minimum phonon
@@ -337,10 +336,9 @@ isotope 6-Li, 10-B, 113-Cd, 155-Gd, 157-Gd and others; the flag lives
 on each nuclide, so natural Li and 11-B are fine while 6-Li and 10-B
 are not). Emission refuses to prefill those and asks for explicit
 `b_coh_fm` **and** `sigma_inc_b` via `--species`; an `awr`-only
-override does not unlock them. Because the cross-target preflight
-resolves species before publishing anything, that refusal leaves no
-files behind to edit; supply the constants on the command line and
-re-run.
+override does not unlock them. Species are resolved before any file is
+written, so that refusal leaves no files behind to edit; supply the
+constants on the command line and re-run.
 
 The GUI drives the same two flags from a per-species table rather than
 from these mini-languages; see
