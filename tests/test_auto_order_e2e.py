@@ -1,28 +1,9 @@
-"""End-to-end fast-CI coverage for Card 6g auto_multiphonon_order=1.
-
-The validation-standard sampling rule runs every mode-2 law with Card 6g
-``10000 1000 1`` (3rd field auto_order=1). That branch
-(noncubic_engine.py) MUTATES ``args.multiphonon_max_order`` up to
-``derive_required_multiphonon_order`` and sizes the whole Poisson(2W)
-multiphonon sweep that produces every production law — yet the existing
-fast deck uses Card 6g ``40 20/`` (2 fields, auto defaults to 0), so the
-mutating branch was unexercised end-to-end in CI. A regression that
-failed to raise the order (or applied it to the wrong axis) would pass CI
-and silently truncate every validation law at high Q.
-
-This drives ``run_leapr`` end-to-end on the vendored graphite phonopy
-model with the same deliberately tiny configuration as the existing fast
-deck (mesh 4^3, ndir=40, mpdir=20, 6 alpha x 8 beta), but with a low deck
-order (Card 3 nphon=2) and auto_order ON, and asserts:
-
-  * the effective order is auto-raised above the requested deck nphon,
-  * the resulting MT4 law differs from the same deck with auto_order=0 at
-    the same nphon (mirroring test_two_pass_minitape's "law changed"
-    assertion).
-
-A pure, phonopy-free assertion of the order-formula path
-(``derive_required_multiphonon_order``) is included separately so the
-mutating policy keeps coverage even on a phonopy-less CI runner.
+"""End-to-end check that Card 6g auto_multiphonon_order=1 raises the
+multiphonon order above the deck's nphon and changes the MT4 law, on the
+vendored graphite phonopy model with a tiny configuration (mesh 4^3,
+ndir=40, mpdir=20, 6 alpha x 8 beta, nphon=2). A phonopy-free test of
+derive_required_multiphonon_order keeps the order formula covered on
+runners without phonopy.
 """
 import io
 import math
