@@ -74,16 +74,6 @@ E2K = 0.48259640293390343        # k[1/A]  = sqrt(E2K * E[meV])
 SIGMA2FWHM = 2.3548200450309493  # FWHM = SIGMA2FWHM * sigma  (= 2 sqrt(2 ln2))
 SIGMA2FWHMSQ = SIGMA2FWHM ** 2
 
-# Disk-chopper energy-loss lever-arm coefficient: the disk-chopper resolution
-# treatment weights the chopper burst more strongly on the energy-loss side than
-# the Fermi lever arm. The extra term K*(vratio-1)*x2/x0 captures this; for a
-# given instrument K is constant to <0.5% across Ei and energy transfer (verified
-# vs the reference). K is NOT universal across instruments, however -- it encodes the
-# specific multi-disk chopper-cascade layout, so each disk spectrometer carries its
-# own reference-calibrated `disk_chpfac_k` (LET 0.379, CNCS 0.190). This module-level
-# value is only the fallback for a disk entry that omits the field.
-_DISK_CHPFAC_K = 0.379
-
 # He-3 detector tube: 10 atm, reference macroscopic absorption 1.4323 cm^-1 =
 # 143.23 m^-1 at k = 3.49416 1/A (1/v law), wall/radius ratio 0.063 -- the
 # standard He-tube constants (cf. CKL / Mantid detector model).
@@ -179,14 +169,13 @@ def _chopper_var_s2(Ei, freq_hz, pslit_m, radius_m, rho_m):
     veloc = E2V * np.sqrt(Ei)
     gamm = (2.0 * radius_m ** 2 / pslit_m) * np.abs(1.0 / rho_m - 2.0 * w / veloc)
     pre = (pslit_m / (2.0 * radius_m * w)) ** 2 / 6.0
+    sg = np.sqrt(gamm)                     # gamm >= 0 (built with abs)
     gsqr = np.where(
         gamm <= 1.0,
         np.divide(1.0 - (gamm ** 2) ** 2 / 10.0, 1.0 - (gamm ** 2) / 6.0,
                   out=np.ones_like(gamm), where=(gamm <= 1.0)),
         # 1 < gamma < 4 regime (uses sqrt(gamma)); gamma>=4 -> NaN below
-        0.6 * gamm * (np.sqrt(np.clip(gamm, 0, None)) - 2.0) ** 2
-        * (np.sqrt(np.clip(gamm, 0, None)) + 8.0)
-        / (np.sqrt(np.clip(gamm, 0, None)) + 4.0))
+        0.6 * gamm * (sg - 2.0) ** 2 * (sg + 8.0) / (sg + 4.0))
     var = pre * gsqr
     return np.where(gamm >= 4.0, np.nan, var)
 
@@ -198,7 +187,6 @@ def _chopper_fwhm_us(Ei, freq_hz, geom):
     resolution-disk opening time sigma = C/f (C the geometric opening constant,
     microsecond*Hz), so the burst is purely geometric x 1/f (Ei-independent).
     """
-    freq_hz = _norm_frequency(freq_hz)
     if geom["chopper_type"] == "fermi":
         pk = geom["fermi"]
         var = _chopper_var_s2(Ei, freq_hz, pk["pslit"], pk["radius"], pk["rho"])
@@ -230,7 +218,6 @@ def direct_resolution_fwhm(Etrans, *, Ei, frequency, geom):
     # All component time widths enter the propagation as FWHM^2 (s^2).
     tsqmod = (_moderator_fwhm_us(Ei, geom["moderator"]) * 1.0e-6) ** 2
     tsqchp = (_chopper_fwhm_us(Ei, frequency, geom) * 1.0e-6) ** 2
-    tsqjit = (geom.get("tjit_us", 0.0) * 1.0e-6) ** 2 * SIGMA2FWHMSQ
 
     omega = frequency * 2.0 * np.pi
     Ef = Ei - Etrans
@@ -242,8 +229,10 @@ def direct_resolution_fwhm(Etrans, *, Ei, frequency, geom):
     modfac = (x1 + vratio * x2) / x0
     chpfac = 1.0 + modfac
     if geom["chopper_type"] == "disk":
-        chpfac = chpfac + geom.get("disk_chpfac_k", _DISK_CHPFAC_K) * (vratio - 1.0) * x2 / x0
-    var = tsqmod * modfac ** 2 + tsqchp * chpfac ** 2 + tsqjit * chpfac ** 2
+        # the disk burst weighs more on the energy-loss side than the Fermi
+        # lever arm; K is calibrated per instrument against the reference
+        chpfac = chpfac + geom["disk_chpfac_k"] * (vratio - 1.0) * x2 / x0
+    var = tsqmod * modfac ** 2 + tsqchp * chpfac ** 2
 
     # aperture (Fermi instruments with a defined moderator aperture): the
     # moderator-tilt-corrected aperture lever arms; also yields the sample arm.
@@ -553,7 +542,7 @@ INSTRUMENT_DB = {
         "x0": 34.785, "x1": 1.48, "x2": 3.5,        # x0 = resolution-disk distance
         "moderator": _table("CNCS"),
         "dd": 0.025, "sy": 0.010, "sample_scale": 1.0 / 8.0,     # isam=2
-        "disk_chpfac_k": 0.190,                       # reference-calibrated (see _DISK_CHPFAC_K)
+        "disk_chpfac_k": 0.190,                       # reference-calibrated disk lever-arm K
         "max_frequency": 300, "default_frequency": 300,
         "packages": {"Standard": {"C_us_hz": 7503.3}},
     },
@@ -562,7 +551,7 @@ INSTRUMENT_DB = {
         "x0": 23.5, "x1": 1.5, "x2": 3.5,           # x0 = resolution-disk (Disk 5)
         "moderator": _table("LET"),
         "dd": None, "sy": None,                       # LET: moderator + chopper only
-        "disk_chpfac_k": 0.379,                       # reference-calibrated (see _DISK_CHPFAC_K)
+        "disk_chpfac_k": 0.379,                       # reference-calibrated disk lever-arm K
         "max_frequency": 300, "default_frequency": 240,
         "packages": {"High-Resolution": {"C_us_hz": 3231.9}},
     },
@@ -580,14 +569,8 @@ def available_packages(instrument):
 
 
 def default_frequency(instrument):
-    """Sensible default chopper/disk frequency (Hz) for ``instrument``.
-
-    Used by the GUI to seed the frequency field when the instrument changes,
-    so a disk machine (CNCS/LET, max 300 Hz) never inherits a Fermi default
-    that lies outside its operating range.
-    """
-    base = _lookup(instrument)
-    return float(base.get("default_frequency", base.get("max_frequency", 600)))
+    """Default chopper/disk frequency (Hz) for ``instrument`` (seeds the GUI field)."""
+    return float(_lookup(instrument)["default_frequency"])
 
 
 # Detector angular coverage (2theta min..max, degrees) per instrument -- the

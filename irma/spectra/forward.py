@@ -526,7 +526,7 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
     if produce_angle_spectra:
         sim = _ins.simulate(powder, instr, E_out, elastic_model=elastic_model,
                             include_gain=include_gain, kinematic_factor=kinematic_factor,
-                            per_angle=True, shape=resolution_shape)
+                            shape=resolution_shape)
     else:
         # constant-Q-only output: no detector-angle spectra are produced.
         z = np.zeros(E_out.size)
