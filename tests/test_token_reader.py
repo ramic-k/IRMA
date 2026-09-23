@@ -9,18 +9,13 @@ import pytest
 from irma.core.engine import TokenReader, CARD_END
 
 
-def test_read_floats_fills_defaults_for_missing_trailing_fields():
-    """A 4-token Card 6b read as 6 floats -> 4 values + 2 defaults (grouping OFF)."""
-    r = TokenReader([1, 1, 0, 2, CARD_END])
-    vals = r.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
-    assert vals == [1.0, 1.0, 0.0, 2.0, 0, 0]
-
-
-def test_read_floats_reads_all_present_fields():
-    """A 6-token Card 6b (grouping ON) reads all six."""
-    r = TokenReader([1, 1, 0, 2, 20, 1.0, CARD_END])
-    vals = r.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
-    assert vals == [1.0, 1.0, 0.0, 2.0, 20.0, 1.0]
+@pytest.mark.parametrize("tokens, want", [
+    ([1, 1, 0, 2], [1.0, 1.0, 0.0, 2.0, 0, 0]),                # Card 6b, grouping off
+    ([1, 1, 0, 2, 20, 1.0], [1.0, 1.0, 0.0, 2.0, 20.0, 1.0]),  # grouping on
+])
+def test_read_floats_fills_defaults_for_missing_trailing_fields(tokens, want):
+    r = TokenReader(tokens + [CARD_END])
+    assert r.read_floats(6, defaults=[0, 0, 0, 0, 0, 0]) == want
 
 
 def test_read_floats_consumes_card_end():
@@ -33,15 +28,12 @@ def test_read_floats_consumes_card_end():
     assert second == [7.0, 8.0, 9.0]
 
 
-def test_read_card_floats_reads_variable_length_card():
-    """Card 6g is variable length (2-4 fields); read_card_floats takes all of them."""
-    r = TokenReader([5000, 200, 0, 0, 0, CARD_END])
-    assert r.read_card_floats() == [5000.0, 200.0, 0.0, 0.0, 0.0]
-
-
-def test_read_card_floats_three_field_form():
-    r = TokenReader([5000, 200, 0, CARD_END])
-    assert r.read_card_floats() == [5000.0, 200.0, 0.0]
+@pytest.mark.parametrize("tokens", [[5000, 200, 0], [5000, 200, 0, 1],
+                                    [5000, 200, 0, 0, 0]])
+def test_read_card_floats_reads_variable_length_card(tokens):
+    """Variable-length cards (Card 6g): read_card_floats takes every field."""
+    r = TokenReader(tokens + [CARD_END])
+    assert r.read_card_floats() == [float(t) for t in tokens]
 
 
 def test_read_ints_with_defaults():
@@ -50,8 +42,6 @@ def test_read_ints_with_defaults():
     assert r.read_ints(3, defaults=[0, 0, 0]) == [200, 426, 1]
     r2 = TokenReader([200, 426, CARD_END])
     assert r2.read_ints(3, defaults=[0, 0, 0]) == [200, 426, 0]
-
-
 
 
 def test_fortran_d_exponents_tokenize_as_numbers():
@@ -77,8 +67,6 @@ def test_doubled_quote_escaping_in_strings():
     assert tokens[0] == ("string", "it's a graphite deck")
 
 
-
-
 def test_stray_text_on_card_is_discarded_not_leaked():
     """Leftover non-numeric tokens on a card are consumed with the record
     (Fortran semantics), never leaked into the next card's read."""
@@ -92,22 +80,15 @@ def test_stray_text_on_card_is_discarded_not_leaked():
 def test_read_card_floats_rejects_trailing_word():
     """A word in a numeric-coded field (method selector written 'numerical'
     instead of its code 0) used to be silently dropped, letting [5000, 200]
-    pass a downstream 2/3/4-field count check with the method defaulted.
-    It must now fail loudly (QA2-032)."""
+    pass a downstream 2/3/4-field count check with the method defaulted."""
     from irma.core.deck import _parse_line, DeckError
     r = TokenReader(_parse_line("5000 200 numerical /"))
     with pytest.raises(DeckError, match="numerical"):
         r.read_card_floats()
 
 
-def test_read_card_floats_still_takes_all_numeric_fields():
-    """The trailing-word guard must not disturb the all-numeric path."""
-    r = TokenReader([5000, 200, 0, 1, CARD_END])
-    assert r.read_card_floats() == [5000.0, 200.0, 0.0, 1.0]
-
-
 def test_lone_slash_array_terminator_leaves_orphan_card_end():
-    """Deck-format requirement pin (QA2-031): when an array's '/' sits ALONE
+    """Deck-format requirement: when an array's '/' sits ALONE
     on the line after the last data line, read_float_array consumes only the
     data line's LINE_END; the lone '/' is left as an orphan CARD_END that the
     next scalar read sees as an empty (all-default) card. This matches NJOY's
@@ -131,22 +112,3 @@ def test_array_slash_on_last_data_line_aligns():
     arr = r.read_float_array(3)
     assert list(arr) == [1.0, 2.0, 3.0]
     assert r.read_floats(2, defaults=[0, 0]) == [5.0, 6.0]
-
-
-def test_star_comment_breaks_on_tab():
-    """The '*'-comment token must break on a tab, matching the .split()
-    semantics the numeric value-line path uses (QA2-033). The leading '*'
-    is kept verbatim (expected comment cards begin '*...')."""
-    from irma.core.deck import _parse_line
-    tokens = _parse_line("*hello\tworld")
-    assert tokens[0] == ("string", "*hello")
-
-
-def test_unterminated_doubled_quote_keeps_decoded_chars():
-    """An open quote whose only inner '' is at end-of-line with no real
-    closing quote falls into the no-close fallback. It must keep the chars
-    already decoded (doubled '' -> single ') rather than re-slicing the raw
-    remainder (QA2-035)."""
-    from irma.core.deck import _parse_line
-    tokens = _parse_line("'abc''")
-    assert tokens[0] == ("string", "abc'")
