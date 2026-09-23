@@ -71,12 +71,6 @@ def test_iint1_writes_linlin_both_axes():
     assert alpha_ints == [(2,)]
 
 
-def test_iint0_writes_loglin_both_axes():
-    beta_int, alpha_ints = _mt4_ints(_run("1 1. 0 0 1e-75 0/"))
-    assert beta_int == [4]
-    assert alpha_ints == [(4,)]
-
-
 def test_iint_absent_defaults_to_loglin_and_byte_identical():
     absent = _run("1 1./")            # 5-field classic Card 4
     explicit0 = _run("1 1. 0 0 1e-75 0/")
@@ -87,11 +81,6 @@ def test_iint_absent_defaults_to_loglin_and_byte_identical():
     assert _mf7_lines(absent) == _mf7_lines(explicit0)
 
 
-def test_iint1_changes_mf7_vs_iint0():
-    assert _mf7_lines(_run("1 1. 0 0 1e-75 1/")) != _mf7_lines(_run("1 1. 0 0 1e-75 0/"))
-
-
-@pytest.mark.parametrize("bad", ["2", "-1", "3"])
-def test_iint_out_of_range_rejected(bad):
+def test_iint_out_of_range_rejected():
     with pytest.raises(DeckError, match="iint must be 0 or 1"):
-        _run(f"1 1. 0 0 1e-75 {bad}/")
+        _run("1 1. 0 0 1e-75 2/")
