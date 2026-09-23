@@ -1,10 +1,8 @@
 """Fast CI coverage for the in-process noncubic MT4 assembly (modes 1/2).
 
-The core noncubic physics previously had no fast test: only pure helpers
-ran in CI, while the full harnesses are slow and manual. This drives
-run_leapr end-to-end (NOT stubbed) on the vendored graphite phonopy model
-with a deliberately tiny configuration (mesh 4^3, ndir=40, mpdir=20,
-nphon=6, 6 alpha x 8 beta) and pins:
+Drives run_leapr end-to-end (not stubbed) on the vendored graphite phonopy
+model with a tiny configuration (mesh 4^3, ndir=40, mpdir=20, nphon=6,
+6 alpha x 8 beta) and pins:
 
   * the alpha-summed S integral for mode 1 (incoherent-approx n=1 +
     multiphonon) and mode 2 (exact n=1 + multiphonon) to frozen values,
@@ -51,13 +49,7 @@ _DECK = """20 /
 /
 """
 
-# Frozen regression pins (deterministic ordered pool; see module docstring).
-# Re-blessed for QA4 F16 (first-energy-bin clamp): with the energy grid
-# starting at 0, the first bin's width halved from [-de/2, de/2] to
-# [0, de/2], DOUBLING the tabulated density at beta=0 (deposited weight and
-# integrals are unchanged; every other row is bit-identical — verified at
-# the 40^3 production gauge). The raw sum-of-S pins below include that row,
-# hence the one-time shift (previously 8.394240797286e-01 / 1.728225100629).
+# Frozen regression pins; re-bless only for an intended physics change.
 _PINS = {1: 9.098600568286e-01, 2: 2.633836729729e+00}
 _TEFF0 = 707.2952
 
@@ -127,15 +119,12 @@ def test_user_cutoff_reaches_complete_mode2_calculation(tapes, tmp_path, capsys)
 
 
 def test_parallel_pool_matches_serial_byte_for_byte(tapes):
-    """Cross-ncpu byte identity is STRUCTURAL: the block partitions are
-    jobs-independent (fixed multiphonon direction chunk, see
+    """Cross-ncpu byte identity is structural: the block partitions are
+    jobs-independent (fixed multiphonon direction chunk,
     noncubic_inelastic_context._MULTIPHONON_DIR_CHUNK; incoherent shell
-    blocks own disjoint Q rows) and the ordered pool accumulates identical
-    block lists in fixed order, so a 2-worker run reproduces the serial
-    float64 sums bit-for-bit — not merely to within the ENDF writer's
-    6-significant-figure rounding, as the old ceil(mpdir/num_jobs)
-    partition did. Also exercises the ProcessPoolExecutor path (incl. its
-    dead-worker detection wiring)."""
+    blocks own disjoint Q rows) and the ordered pool accumulates them in
+    fixed order, so a 2-worker run reproduces the serial float64 sums bit
+    for bit. Also exercises the ProcessPoolExecutor path."""
     d = tempfile.mkdtemp()
     inp = os.path.join(d, "ncpu2.input")
     out = os.path.join(d, "ncpu2.endf")
