@@ -183,7 +183,7 @@ def test_emit_command_deck_and_ncrystal_selectors(panel, tmp_path):
     panel.material_id.set("")
     ns = _build_parser().parse_args(panel.emit_command()[5:])
     assert ns.inelastic_mode is None
-    assert ns.elastic_format == "mef"
+    assert ns.elastic_format is None        # the emitters apply mef
     assert ns.material_id is None
 
 
