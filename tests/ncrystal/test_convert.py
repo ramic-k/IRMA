@@ -57,8 +57,8 @@ def test_negative_fringe_clipped_within_guard():
 
 
 def test_large_negative_rejected():
-    # -50 exceeds the 1%-of-max guard
-    with pytest.raises(ValueError, match="non-negative"):
+    # -50 exceeds the 1%-of-max guard; the message names the remedy
+    with pytest.raises(ValueError, match="num_directions"):
         _pack([0.1, 0.2], [0.0, 0.5], [[100.0, -50.0], [50.0, 25.0]])
 
 

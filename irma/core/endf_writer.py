@@ -391,6 +391,10 @@ def _endf_s(s, be, isym, ilog, smin, beta_card=0.0, temp_k=0.0):
     temperature. NJOY writes 0 in its isym=0 additional-temperature records
     (leapr.f90:3482), which THERMR reads as S = exp(0) = 1.
     """
+    # A species' share of the coherent law can be negative where the
+    # interference is destructive. ENDF cannot hold negative S, so those
+    # cells become zero (ln S = -999), and the summed material law is then
+    # slightly larger than the exact total.
     shift = (-be / 2.0, be / 2.0, 0.0, 0.0)[isym]
     if ilog:
         return sigfig(log(s) + shift, 7, 0) if s > 0.0 else -999.0

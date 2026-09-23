@@ -50,16 +50,25 @@ def pack_from_irma_sab(
     alpha_scale = float(alpha_mass_ratio)
     rows = [[float(value) for value in row] for row in sab_asym_downscatter]
     max_sab = max((value for row in rows for value in row), default=0.0)
-    # Mode-2 coherent interference histograms can leave negative cancellation
-    # bins in principal-partitioned laws. IRMA's ENDF writer projects those
-    # non-positive linear-S entries to zero before NJOY sees them. Mirror that
-    # behavior, but keep a table-scale guard so genuinely negative laws fail.
+    # A species' share of the coherent law can be negative where the
+    # interference is destructive. NCrystal tables cannot hold negative
+    # values, so those cells are set to zero, as the ENDF writer does, and
+    # the summed material law is then slightly larger than the exact total.
+    # A cell below -1% of the table maximum means the direction sampling is
+    # too coarse for the share, so the export stops.
     negative_tolerance = max(1.0e-15, 1.0e-2 * max_sab)
     clipped_count = 0
     clipped_min = 0.0
-    for row in rows:
-        if any(value < -negative_tolerance for value in row):
-            raise ValueError("sab_asym_downscatter values must be non-negative")
+    for i, row in enumerate(rows):
+        worst = min(row, default=0.0)
+        if worst < -negative_tolerance:
+            j = row.index(worst)
+            raise ValueError(
+                f"the coherent share has a cell at {worst:.3g} (alpha={alpha[i]:g}, "
+                f"beta={beta[j]:g}), below -1% of the table maximum "
+                f"{max_sab:.3g}: the direction sampling is too coarse for this "
+                f"species' share; raise export.num_directions (S values must be "
+                f"non-negative)")
         for index, value in enumerate(row):
             if value < 0.0:
                 clipped_count += 1
