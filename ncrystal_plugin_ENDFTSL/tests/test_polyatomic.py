@@ -53,9 +53,29 @@ def test_fraction_weighting_recovers_per_atom_all_channels():
         assert math.isclose(summed, raw, rel_tol=1e-12, abs_tol=1e-15)
 
 
-def test_build_packs_rejects_unknown_convention():
-    with pytest.raises(ValueError, match="coherent_convention"):
-        build_packs(_specs(0.5, 0.5), 296.0, "x", coherent_convention="bogus")
+def test_sole_coherent_carrier_is_scaled_by_its_fraction(tmp_path, monkeypatch):
+    # species B's tape stands in for an LTHR=2 tape: no coherent elastic, so A
+    # is the only coherent carrier; its edges still get A's atom fraction
+    import copy
+    from ncrystal_plugin_ENDFTSL import convert
+    no_coh = tmp_path / "no_coherent.endf"
+    no_coh.write_bytes(TAPE.read_bytes())
+    real = convert.read_tsl
+
+    def read(path):
+        ev = real(path)
+        if str(path) == str(no_coh):
+            ev = copy.copy(ev)
+            ev.coh_temps = ev.coh_edges_ev = ev.coh_cumS = None
+        return ev
+    monkeypatch.setattr(convert, "read_tsl", read)
+    single = build_pack(read_tsl(str(TAPE)), 296.0, "g", 12.0107)
+    specs = [SpeciesSpec(str(TAPE), "A", 12.0107, 0.3),
+             SpeciesSpec(str(no_coh), "B", 12.0107, 0.7)]
+    a, b = build_packs(specs, 296.0, "sole")
+    assert b.coh_cumS == []
+    for scaled, raw in zip(a.coh_cumS, single.coh_cumS):
+        assert math.isclose(scaled, 0.3 * raw, rel_tol=1e-12, abs_tol=1e-15)
 
 
 # Optional local multi-temperature tape. Point ENDFTSL_UO2_TAPE at a tsl-UinUO2.endf

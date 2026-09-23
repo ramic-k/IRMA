@@ -23,10 +23,8 @@ def build_pack(ev: TSLEvaluation, T: float, material_id: str,
     #   - inelastic + incoherent elastic: * inelastic_scale (= the atom fraction f),
     #     so sum_i f_i*sigma_i = per-atom-average. This is unambiguous: those laws
     #     are genuinely per-species.
-    #   - coherent Bragg edges: * coherent_scale. The whole-crystal edge structure
-    #     is a per-atom quantity, but tapes store it under different conventions (per-atom
-    #     replicated -> f; SEF S/f single carrier -> f; per-atom single carrier ->
-    #     1), so the caller decides coherent_scale (see build_packs).
+    #   - coherent Bragg edges: * coherent_scale, which build_packs sets to the
+    #     atom fraction f for every coherent-bearing tape.
     # Monatomic (both scales = 1) is unchanged. The physical species bound is kept
     # in metadata.
     coh = physics.coherent_edges(ev, T)
@@ -60,27 +58,16 @@ class SpeciesSpec:
     fraction: float | None = None  # atom fraction; weights this tape's coherent Bragg edges
 
 
-def build_packs(specs, T: float, material_id: str,
-                coherent_convention: str = "auto"):
+def build_packs(specs, T: float, material_id: str):
     """Build one ENDFTSLPack per principal scatterer (e.g. BeO -> Be + O packs).
 
-    Inelastic + incoherent elastic are always scaled by the species atom fraction
-    (those laws are genuinely per-species, so sum_i f_i*sigma_i = per-atom-average).
-
-    Coherent elastic is the whole-crystal per-atom Bragg-edge structure, but tapes
-    store it differently and the convention is NOT always recoverable from one tape:
-      - per-atom edges replicated on >=2 coherent tapes (standard ENDF/B-VIII.1,
-        IRMA MEF): scale each by f -> sum_i f_i*sigma = sigma_coh. Unambiguous.
-      - sole coherent carrier (the other species are LTHR=2): a single LTHR=1 edge set
-        is INDISTINGUISHABLE between "per-atom" (standard, e.g. a hydride where only
-        the metal scatters coherently -> take as-is, scale 1) and "1/f_DC-scaled"
-        (IRMA SEF -> scale f; the 'cef_scaled' value name keeps the
-        format's historical CEF spelling as frozen API). The caller MUST
-        disambiguate via
-        ``coherent_convention`` ('per_atom' or 'cef_scaled'); 'auto' raises so the
-        ambiguity is never resolved silently.
-    Monatomic / fraction==1 is unchanged either way. ``specs`` is a list of
-    SpeciesSpec, each needing its atom ``fraction``.
+    Every channel of a tape is scaled by its species' atom fraction f, as
+    transport codes do: each tape's cross section is per atom of its species,
+    so the material's per-atom cross section is sum_i f_i*sigma_i. That holds
+    for the coherent Bragg edges too, whether they are replicated on several
+    tapes (standard ENDF/B-VIII.1, IRMA MEF) or carried by one tape (a hydride
+    whose metal alone scatters coherently, IRMA SEF with its 1/f_DC edges).
+    ``specs`` is a list of SpeciesSpec, each needing its atom ``fraction``.
     """
     fracs = [sp.fraction for sp in specs]
     if any(f is None for f in fracs):
@@ -90,9 +77,6 @@ def build_packs(specs, T: float, material_id: str,
         raise ValueError(f"atom fractions must each lie in (0, 1], got {fracs}")
     if abs(sum(float(f) for f in fracs) - 1.0) > 1e-6:
         raise ValueError(f"atom fractions must sum to 1, got {sum(float(f) for f in fracs)}")
-    if coherent_convention not in ("auto", "per_atom", "cef_scaled"):
-        raise ValueError("coherent_convention must be 'auto', 'per_atom' or "
-                         f"'cef_scaled', got {coherent_convention!r}")
 
     evs = [read_tsl(sp.tape) for sp in specs]
     coh_data = [physics.coherent_edges(ev, T) for ev in evs]
@@ -147,21 +131,7 @@ def build_packs(specs, T: float, material_id: str,
     packs = []
     for sp, ev, hc in zip(specs, evs, has_coh):
         f = float(sp.fraction)
-        if not hc:
-            coh_scale = 1.0                      # no Bragg edges on this tape
-        elif n_coh >= 2 or f >= 1.0 - 1e-12:
-            coh_scale = f                        # replicated per-atom (or monatomic)
-        elif coherent_convention == "cef_scaled":
-            coh_scale = f                        # 1/f_DC edges -> x f = per-atom
-        elif coherent_convention == "per_atom":
-            coh_scale = 1.0                      # per-atom edges -> take as-is
-        else:
-            raise ValueError(
-                f"{sp.symbol!r} is the SOLE coherent-elastic carrier (atom fraction "
-                f"{f}); a single LTHR=1 edge set is ambiguous between per-atom edges "
-                "(standard ENDF, scale 1) and 1/f_DC-scaled edges (IRMA SEF, scale "
-                "f). Set coherent_convention to 'per_atom' or 'cef_scaled'.")
         packs.append(build_pack(
             ev, T, f"{material_id}__{sp.symbol}", sp.mass,
-            inelastic_scale=f, coherent_scale=coh_scale))
+            inelastic_scale=f, coherent_scale=f if hc else 1.0))
     return packs
