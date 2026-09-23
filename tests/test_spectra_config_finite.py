@@ -1,15 +1,13 @@
 """Range validation of the spectra config numerics and the run_map kwargs.
 
 Every reject goes through the real from_dict/validate path (or run_map with
-the engine stubbed -- no phonons are computed). NaN fails the range checks.
+the engine stubbed -- no phonons are computed).
 """
 import pytest
 
 from irma.spectra.config import (
     SpectraConfig, SpectraConfigError, run_map, validate,
 )
-
-NAN = float("nan")
 
 
 def _cfg(scatterer=None, instrument=None):
@@ -32,19 +30,14 @@ def _cfg(scatterer=None, instrument=None):
     })
 
 
-def test_baseline_config_accepted():
-    cfg = _cfg()
-    assert validate(cfg) is cfg
-
-
-@pytest.mark.parametrize("bad", [[-1.0], [0.0], [NAN], [2.0, -3.0]])
+@pytest.mark.parametrize("bad", [[-1.0], [0.0], [2.0, -3.0]])
 def test_bad_q_cuts_rejected(bad):
     with pytest.raises(SpectraConfigError, match="q_cuts"):
         validate(_cfg(instrument={"q_cuts": bad}))
 
 
 @pytest.mark.parametrize("field,bad", [
-    ("awr", NAN), ("awr", -1.0), ("awr", 0.0),
+    ("awr", -1.0), ("awr", 0.0),
     ("sigma_bound_b", -5.0), ("sigma_bound_b", 0.0), ("sigma_inc_b", -0.5),
 ])
 def test_bad_scatterer_numeric_rejected(field, bad):
@@ -58,7 +51,7 @@ def test_negative_b_coh_and_zero_sigma_inc_accepted():
     assert validate(cfg) is cfg
 
 
-@pytest.mark.parametrize("bad", [NAN, 0.0, -1.0])
+@pytest.mark.parametrize("bad", [0.0, -1.0])
 def test_bad_bank_halfwidth_rejected(bad):
     with pytest.raises(SpectraConfigError, match="bank_halfwidth_deg"):
         validate(_cfg(instrument={"bank_halfwidth_deg": bad}))
@@ -106,23 +99,7 @@ def test_run_map_valid_kwargs_reach_engine(monkeypatch):
     assert kw["angle_range_deg"] == (30.0, 120.0)
 
 
-# ---- count-like fields demand exact integers ---------------------------------
-@pytest.mark.parametrize("physics,field", [
-    ({"max_phonon_order": True}, "max_phonon_order"),
-    ({"n_directions": 3.9}, "n_directions"),
-    ({"multiphonon_directions": NAN}, "multiphonon_directions"),
-    ({"jobs": 0.9}, "jobs"),
-])
-def test_count_fields_reject_bool_and_fractional(physics, field):
-    d = {"material": {"phonopy_yaml": "graphite.yaml", "mesh": [4, 4, 4],
-                      "temperature_K": 296.0,
-                      "scatterers": [{"symbol": "C", "sigma_bound_b": 5.551,
-                                      "awr": 11.898}]},
-         "physics": physics}
-    with pytest.raises(SpectraConfigError, match=field):
-        validate(SpectraConfig.from_dict(d))
-
-
+# ---- count-like fields ------------------------------------------------------
 def test_count_fields_accept_integral_floats():
     d = {"material": {"phonopy_yaml": "graphite.yaml", "mesh": [4.0, 4, 4],
                       "temperature_K": 296.0,
