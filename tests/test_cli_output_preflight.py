@@ -197,41 +197,6 @@ def test_spectra_scalar_section_is_clean_schema_error(section):
         SpectraConfig.from_dict(d)
 
 
-# ---- review S9: auto-created engine workdirs must not leak -----------------
-
-def test_spectrum_engine_failure_leaves_no_tempdir(tmp_path, monkeypatch):
-    """Even an early engine failure must remove the auto-created workdir
-    (it used to leak one empty irma_spectra_* dir per mode-1/2 call)."""
-    import tempfile as _tempfile
-
-    import irma.spectra.forward as fwd
-
-    made = []
-    real_mkdtemp = _tempfile.mkdtemp
-
-    def spy_mkdtemp(*a, **kw):
-        d = real_mkdtemp(*a, **kw)
-        made.append(d)
-        return d
-
-    monkeypatch.setattr(fwd.tempfile, "mkdtemp", spy_mkdtemp)
-    # Force the failure INSIDE the engine try-block (after mkdtemp) so the
-    # test exercises the cleanup path, not an earlier argument check.
-    def boom(**kw):
-        raise RuntimeError("synthetic engine-context failure")
-
-    monkeypatch.setattr(fwd, "_get_engine_context", boom)
-    with pytest.raises(RuntimeError, match="synthetic engine-context"):
-        fwd.compute_spectrum(
-            phonopy_yaml=str(tmp_path / "missing_phonopy.yaml"),
-            mesh=(2, 2, 2), temperature_k=296.0, inelastic_mode=1,
-            e_max=10.0, geometry="vision",
-            sab_mass_ratio=11.898, sab_sigma_barn=5.551)
-    assert made, "the auto workdir path was never reached"
-    leaked = [d for d in made if os.path.isdir(d)]
-    assert leaked == [], f"auto workdir(s) leaked: {leaked}"
-
-
 def test_ncrystal_cli_missing_pyyaml_message(tmp_path, capsys, monkeypatch):
     """On a bare core install the exporter fails with a clean PyYAML hint,
     not a ModuleNotFoundError traceback (caught by the bare-install CI gate)."""

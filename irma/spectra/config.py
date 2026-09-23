@@ -914,7 +914,7 @@ def _elastic_inputs(m, p):
     return None, True, elastic_scatterers
 
 
-def run_spectra(cfg: SpectraConfig, *, workdir=None, label=None, progress=print):
+def run_spectra(cfg: SpectraConfig, *, progress=print):
     """Run the forward model described by ``cfg`` and return a ``SpectrumResult``.
 
     Thin, deterministic mapping from the validated config onto
@@ -995,11 +995,11 @@ def run_spectra(cfg: SpectraConfig, *, workdir=None, label=None, progress=print)
         incoherent_elastic_mode=p.incoherent_elastic_mode,
         include_gain=p.include_energy_gain, gain_side=p.gain_side,
         kinematic_factor=p.kinematic_kf_ki, q_pad=g.q_pad_invA,
-        workdir=workdir, label=label, progress=progress)
+        progress=progress)
 
 
 def run_map(cfg, *, q_min=0.0, q_max=None, dQ_map=None, angle_range=None,
-            broaden=True, workdir=None, label=None, progress=print):
+            broaden=True, progress=print):
     """Run a dense 2-D S(Q,E) powder map for ``cfg`` (config -> compute_sqe_map).
 
     Config-driven defaults (a None argument defers to the config):
@@ -1113,4 +1113,4 @@ def run_map(cfg, *, q_min=0.0, q_max=None, dQ_map=None, angle_range=None,
         dos_crystal=dos_crystal,
         scattering_lengths_json=(json.dumps(b_map) if b_map else None),
         incoherent_cross_sections_json=(json.dumps(inc_map) if inc_map else None),
-        workdir=workdir, label=label, progress=progress)
+        progress=progress)

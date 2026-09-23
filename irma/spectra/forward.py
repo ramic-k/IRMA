@@ -15,28 +15,14 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import shutil
-import tempfile
-from pathlib import Path
 
 import numpy as np
 
 
 def _resolve_jobs(jobs):
-    """Resolve the worker count for the engine's parallel block loops.
-
-    The noncubic engine parallelizes the coherent / incoherent / multiphonon
-    direction-block sums across ``jobs`` fork workers; the forward model must
-    NOT silently default to serial. ``jobs=None`` (the default) means AUTO: the
-    ``IRMA_JOBS`` / ``IRMA_NCPU`` env override if set, else every CPU core. An
-    explicit positive int is honored as-is.
-    """
+    """Worker count for the engine: ``jobs`` when positive, else every CPU core."""
     if jobs is not None and int(jobs) > 0:
         return int(jobs)
-    for env in ("IRMA_JOBS", "IRMA_NCPU"):
-        v = os.environ.get(env)
-        if v and v.strip().isdigit() and int(v) > 0:
-            return int(v)
     return max(1, os.cpu_count() or 1)
 
 
@@ -82,38 +68,11 @@ def _get_engine_context(*, phonopy_yaml, force_constants, force_sets,
         context_cache=_ENGINE_CONTEXT_CACHE)
 
 
-def _pick_sqe_key(output_arrays, multiphonon_max_order, inelastic_mode):
-    """Select the physical ``sqe_*_barn_per_meV`` key for (mode, effective order).
-
-    Mirrors ``irma.core.standalone_sab._pick_sab_key`` EXACTLY -- the same
-    ``(inelastic_mode, multiphonon_max_order)`` branch -- with the
-    ``sab_asym_downscatter_`` prefix replaced by ``sqe_`` and the
-    ``_barn_per_meV`` suffix appended. The ``sqe_*`` maps are the physical
-    ``d2sigma/dOmega/dE'`` (= ``PowderSQE.S``); the ``sab_*`` maps carry the
-    extra ``4*pi*kT/sigma_b`` thermal-scattering-law factor, so reading
-    ``sqe_*`` is what the forward model wants.
-
-    ``output_arrays`` is used only to validate the key is present, turning a
-    desync between this mapping and the engine's population guards into a clear
-    error instead of a silent zero / bare KeyError downstream.
-    """
-    if inelastic_mode == 2:
-        base = ("one_phonon_total_plus_incoherent_approx_multiphonon"
-                if multiphonon_max_order >= 2 else "one_phonon_total")
-    elif inelastic_mode == 1:
-        base = ("incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"
-                if multiphonon_max_order >= 2 else "incoherent_approx_n1_term")
-    else:
-        raise ValueError(
-            f"_pick_sqe_key: inelastic_mode must be 1 or 2, got {inelastic_mode}")
-    key = f"sqe_{base}_barn_per_meV"
-    if output_arrays is not None and key not in output_arrays:
-        raise KeyError(
-            f"_pick_sqe_key selected '{key}' for inelastic_mode={inelastic_mode}, "
-            f"multiphonon_max_order={multiphonon_max_order}, but it is absent from "
-            "the engine output arrays -- the sqe-key mapping and the engine's "
-            "array-population guards have desynchronized.")
-    return key
+def _pick_sqe_key(multiphonon_max_order, inelastic_mode):
+    """Physical ``sqe_*`` key: the SAB key without the 4*pi*kT/sigma_b factor."""
+    from irma.core.standalone_sab import _pick_sab_key
+    sab = _pick_sab_key(multiphonon_max_order, inelastic_mode)
+    return sab.replace("sab_asym_downscatter_", "sqe_") + "_barn_per_meV"
 
 
 @dataclasses.dataclass
@@ -216,54 +175,6 @@ def _report_mode0_order(m0, auto_order, q_grid, progress):
         progress(f"WARNING: mode-0 required phonon order ~{req} exceeds the "
                  f"safety cap ({eff}); the highest-Q rows fall back to the "
                  "short-collision-time tail short of full convergence.")
-
-
-def _resolve_gain_side(*, gain_side, include_gain, dos_species, progress):
-    """Resolve the requested energy-gain evaluation.
-
-    ``"direct"`` computes the gain side with explicit Bose occupation factors
-    (annihilation weight ``n(omega)``), never a detailed-balance mirror. Both
-    the DOS path (mode 0, ``compute_mode0_gain_direct``) and the eigenvector
-    engine (modes 1/2, ``emit_gain_side``) support it; the mode-0 path may still
-    degrade to the mirror for an extreme grid (handled in ``_mode0_direct_gain``),
-    and the engine path degrades only if it surfaced no gain arrays (handled at
-    the call site). ``"detailed_balance"`` selects the mirror explicitly.
-
-    ``dos_species`` is accepted for signature stability and has no effect
-    on the decision (the engine computes the gain side directly).
-    """
-    if gain_side not in ("direct", "detailed_balance"):
-        raise ValueError(
-            f"gain_side must be 'direct' or 'detailed_balance', got {gain_side!r}")
-    if not include_gain or gain_side == "detailed_balance":
-        return "detailed_balance"
-    return "direct"
-
-
-def _engine_direct_gain(*, out, loss_key, gain_side_used, progress):
-    """Extract the engine's directly-computed gain side (modes 1/2).
-
-    Returns ``(gain_kwargs, gain_used)``: the ``{E_gain, S_gain}`` kwargs for
-    :func:`irma.spectra.sqe.from_noncubic_arrays` plus the resolved gain mode.
-    Passes through unchanged when the gain side was not requested; downgrades to
-    ``"detailed_balance"`` with a NOTE if the engine surfaced no gain arrays
-    (defensive -- ``emit_gain_side`` should always produce them). The gain key
-    is the selected loss key with ``_gain`` inserted, on the engine's
-    ``e_gain_mev`` grid (strictly negative, the mirror of the positive loss
-    grid) -- so the layout matches what ``signed_sqe`` expects.
-    """
-    if gain_side_used != "direct":
-        return {}, gain_side_used
-    gain_key = loss_key.replace("_barn_per_meV", "_gain_barn_per_meV")
-    if gain_key in out and "e_gain_mev" in out:
-        progress("energy-gain side: DIRECT engine evaluation (explicit Bose "
-                 "annihilation factors at -hw + signed multiphonon ladder; no "
-                 "detailed-balance mirror)")
-        return ({"E_gain": np.asarray(out["e_gain_mev"], float),
-                 "S_gain": np.asarray(out[gain_key], float)}, "direct")
-    progress("NOTE: gain_side='direct' but the engine surfaced no gain arrays "
-             f"for {gain_key!r}; falling back to the detailed-balance mirror.")
-    return {}, "detailed_balance"
 
 
 def _mode0_direct_gain(*, dos_species, temperature_k, q, E_loss, nphon, progress):
@@ -374,16 +285,10 @@ def _build_engine_elastic_model(*, elastic_state, elastic_scatterers,
     ``elastic_scatterers`` maps each primitive symbol to
     ``{b_coh_fm, sigma_inc_b, awr}``; the Debye-Waller state comes from the
     engine's thermal-displacement matrices, so the line shares the DW physics
-    with the inelastic kernel by construction. Returns ``None`` (with a
-    WARNING) when the engine surfaced no elastic state. Shared by
-    ``compute_spectrum`` and ``compute_sqe_map``.
+    with the inelastic kernel. Shared by ``compute_spectrum`` and
+    ``compute_sqe_map``.
     """
     es = elastic_state
-    if es is None:
-        progress("WARNING: elastic=True but the engine surfaced no "
-                 "elastic_state (no thermal-displacement matrices); "
-                 "elastic line skipped.")
-        return None
     if not elastic_scatterers:
         raise ValueError(
             "elastic=True requires "
@@ -411,6 +316,129 @@ def _build_engine_elastic_model(*, elastic_state, elastic_scatterers,
     return elastic_model
 
 
+def _instrument(geometry, e_fixed_meV, angles_deg, *, sigma_coeffs,
+                bank_halfwidth_deg, combine, resolution_model, chopper_spec,
+                resolution_shape):
+    """The instrument preset for ``geometry``, shared by the spectrum and the map."""
+    from irma.spectra import sqe as _sqe, instruments as _ins
+    # A chopper model gives a Gaussian sigma; config.validate() rejects the
+    # combination too, but direct callers bypass it.
+    if resolution_model == "chopper" and resolution_shape == "lorentzian":
+        raise ValueError(
+            "resolution_model='chopper' computes a Gaussian sigma and is "
+            "incompatible with resolution_shape='lorentzian'; use "
+            "resolution_shape='gaussian' (or resolution_model='poly').")
+    if geometry == "vision":
+        return _ins.VISION(Ef=(e_fixed_meV or _sqe.VISION_EF_MEV),
+                           bank_halfwidth_deg=bank_halfwidth_deg,
+                           sigma_coeffs=sigma_coeffs, combine=combine)
+    if geometry == "indirect":
+        return _ins.indirect(e_fixed_meV, angles_deg,
+                             sigma_coeffs=sigma_coeffs or _sqe.VISION_SIGMA_COEFFS,
+                             bank_halfwidth_deg=bank_halfwidth_deg, combine=combine)
+    if geometry == "direct":
+        return _ins.direct(e_fixed_meV, angles_deg, sigma_coeffs=sigma_coeffs,
+                           bank_halfwidth_deg=bank_halfwidth_deg, combine=combine,
+                           resolution_model=resolution_model,
+                           chopper_spec=chopper_spec)
+    raise ValueError(f"unknown geometry {geometry!r}")
+
+
+def _powder_sqe(*, caller, geometry, Q, E, gain_side_used, label, temperature_k,
+                dos_species, inelastic_mode, auto_multiphonon_order,
+                multiphonon_max_order, progress, **engine_kw):
+    """Powder S(Q,E) on (Q, E): mode 0 from the DOS, modes 1/2 from the engine.
+
+    Returns ``(powder, key, eff_order, gain_side_used, m0, result)``; ``m0`` is
+    the mode-0 result (None for the engine) and ``result`` the engine result
+    (a metadata stand-in for mode 0). ``engine_kw`` are the engine inputs.
+    """
+    from irma.spectra import sqe as _sqe
+    nphon = "auto" if auto_multiphonon_order else int(multiphonon_max_order)
+    if dos_species is not None:
+        # Mode 0: each species scatters by its own partial DOS, mass and
+        # Debye-Waller factor (compute_mode0_sqe).
+        from irma.spectra.dos_mode0 import compute_mode0_sqe
+        progress(f"{caller}[{geometry}]: mode-0 DOS ({len(dos_species)} species) "
+                 f"nQ={Q.size} nE={E.size} T={temperature_k} K ...")
+        m0 = compute_mode0_sqe(species=dos_species, temperature_k=float(temperature_k),
+                               q_ang_inv=Q, e_mev=E, nphon=nphon)
+        q = np.asarray(m0["q_ang_inv"], float)
+        E_loss = np.asarray(m0["e_mev"], float)
+        _report_mode0_order(m0, auto_multiphonon_order, Q, progress)
+        result = {"metadata": {"mode": 0, "n_species": len(dos_species),
+                               "per_species": m0["per_species"],
+                               "sigma_b_total": m0["sigma_b_total"]},
+                  "elastic_state": None}
+        gain_kw = {}
+        if gain_side_used == "direct":
+            gain_kw, gain_side_used = _mode0_direct_gain(
+                dos_species=dos_species, temperature_k=temperature_k, q=q,
+                E_loss=E_loss, nphon=nphon, progress=progress)
+        powder = _sqe.from_noncubic_arrays(
+            q, E_loss, np.asarray(m0["sqe_barn_per_meV"], float),
+            T_K=float(temperature_k), sigma_b=float(m0["sigma_b_total"]),
+            label=label, **gain_kw)
+        return (powder, "mode0_dos", int(m0["nphon_effective"]), gain_side_used,
+                m0, result)
+
+    from irma.core.noncubic_inelastic import run_noncubic_sab_inprocess
+    e = engine_kw
+    n_jobs = _resolve_jobs(e["jobs"])
+    progress(f"{caller}[{geometry}]: engine mode={inelastic_mode} "
+             f"mesh={tuple(int(m) for m in e['mesh'])} nQ={Q.size} "
+             f"nE={E.size} T={temperature_k} K jobs={n_jobs} ...")
+    context = _get_engine_context(
+        phonopy_yaml=e["phonopy_yaml"], force_constants=e["force_constants"],
+        force_sets=e["force_sets"], born_path=e["born_path"], mesh=e["mesh"],
+        Q_support=Q, E_support=E, num_directions=e["num_directions"],
+        multiphonon_num_directions=e["multiphonon_num_directions"], n_jobs=n_jobs,
+        site_scattering_lengths_angstrom=e["site_scattering_lengths_angstrom"],
+        site_incoherent_cross_sections_barn=e["site_incoherent_cross_sections_barn"],
+        scattering_lengths_json=e["scattering_lengths_json"],
+        incoherent_cross_sections_json=e["incoherent_cross_sections_json"])
+    result = run_noncubic_sab_inprocess(
+        inelastic_mode=int(inelastic_mode), phonopy_yaml=str(e["phonopy_yaml"]),
+        force_constants=e["force_constants"], force_sets=e["force_sets"],
+        born_path=e["born_path"], temperature_k=float(temperature_k),
+        mesh=tuple(int(m) for m in e["mesh"]), q_grid_ang_inv=Q, e_grid_mev=E,
+        sab_mass_ratio=float(e["sab_mass_ratio"]),
+        num_directions=int(e["num_directions"]),
+        multiphonon_num_directions=int(e["multiphonon_num_directions"]),
+        jobs=n_jobs, multiphonon_max_order=int(multiphonon_max_order),
+        auto_multiphonon_order=bool(auto_multiphonon_order),
+        min_phonon_energy_mev=float(e["min_phonon_energy_mev"]),
+        sab_sigma_barn=float(e["sab_sigma_barn"]),
+        site_scattering_lengths_angstrom=e["site_scattering_lengths_angstrom"],
+        site_incoherent_cross_sections_barn=e["site_incoherent_cross_sections_barn"],
+        scattering_lengths_json=e["scattering_lengths_json"],
+        incoherent_cross_sections_json=e["incoherent_cross_sections_json"],
+        context=context, write_output_files=False,
+        emit_gain_side=(gain_side_used == "direct"))
+    out = result["output_arrays"]
+    eff_order = int(result.get("metadata", {}).get(
+        "multiphonon_max_order", multiphonon_max_order))
+    key = _pick_sqe_key(eff_order, int(inelastic_mode))
+    gain_kw = ({"E_gain": np.asarray(out["e_gain_mev"], float),
+                "S_gain": np.asarray(out[key.replace("_barn_per_meV",
+                                                     "_gain_barn_per_meV")], float)}
+               if gain_side_used == "direct" else {})
+    powder = _sqe.from_noncubic_arrays(
+        np.asarray(out["q_ang_inv"], float), np.asarray(out["e_mev"], float),
+        np.asarray(out[key], float), T_K=float(temperature_k),
+        sigma_b=float(e["sab_sigma_barn"]), label=label, **gain_kw)
+    return powder, key, eff_order, gain_side_used, None, result
+
+
+def _gain_side_used(gain_side, include_gain, e_min):
+    """'direct' when the direct gain side is requested and sampled (e_min < 0)."""
+    if gain_side not in ("direct", "detailed_balance"):
+        raise ValueError(
+            f"gain_side must be 'direct' or 'detailed_balance', got {gain_side!r}")
+    return ("direct" if gain_side == "direct" and include_gain and float(e_min) < 0.0
+            else "detailed_balance")
+
+
 def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
                      sab_mass_ratio, sab_sigma_barn,
                      angles_deg=None, e_fixed_meV=None, q_cuts=None, cut_dq=None,
@@ -434,8 +462,7 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
                      elastic_kind="both", elastic_scatterers=None,
                      incoherent_elastic_mode="isotropic",
                      include_gain=True, gain_side="direct",
-                     kinematic_factor=False, q_pad=0.5, workdir=None,
-                     label=None, progress=print):
+                     kinematic_factor=False, q_pad=0.5, progress=print):
     """Compute a fresh-from-phonons forward INS spectrum for one instrument.
 
     Reuses the IRMA noncubic SAB engine (``run_noncubic_sab_inprocess``) on the
@@ -470,44 +497,18 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
     Debye-Waller state with
     the inelastic kernel by construction (same phonon calculation).
 
-    Energy-gain side: ``gain_side="direct"`` (default, all modes) computes E<0
-    with explicit Bose occupation factors -- phonon annihilation weights
-    ``n(omega)``, all orders, no detailed-balance mirror. Mode 0 evaluates the
-    gain ladder itself; modes 1/2 read the engine's direct gain arrays (see
-    ``_engine_direct_gain``). ``"detailed_balance"`` selects the mirror as an
-    explicit option; it is also the defensive fallback (with a NOTE) if an
-    engine result surfaces no gain sibling. Direct and mirror agree to
-    round-off for the equilibrium harmonic model (pinned in CI).
+    Energy-gain side: ``gain_side="direct"`` (default) computes E<0 with
+    explicit Bose occupation factors, no detailed-balance mirror; mode 0
+    evaluates the gain ladder itself, modes 1/2 read the engine's gain arrays.
+    ``"detailed_balance"`` selects the mirror. The two agree to round-off for
+    the harmonic model.
     """
-    from irma.spectra import sqe as _sqe, instruments as _ins
+    from irma.spectra import instruments as _ins
 
-    # A chopper model produces a Gaussian sigma; a Lorentzian shape contradicts
-    # it. config.validate() rejects this, but a direct caller of compute_spectrum
-    # bypasses that, so guard at the entry point too.
-    if resolution_model == "chopper" and resolution_shape == "lorentzian":
-        raise ValueError(
-            "resolution_model='chopper' computes a Gaussian sigma and is "
-            "incompatible with resolution_shape='lorentzian'; use "
-            "resolution_shape='gaussian' (or resolution_model='poly').")
-
-    # resolve the instrument preset + the kinematics inputs
-    if geometry == "vision":
-        # honor explicit user overrides; the preset fills the published VISION
-        # sigma polynomial and bank-mean combination otherwise
-        instr = _ins.VISION(Ef=(e_fixed_meV or _sqe.VISION_EF_MEV),
-                            bank_halfwidth_deg=bank_halfwidth_deg,
-                            sigma_coeffs=sigma_coeffs, combine=combine)
-    elif geometry == "indirect":
-        instr = _ins.indirect(e_fixed_meV, angles_deg,
-                              sigma_coeffs=sigma_coeffs or _sqe.VISION_SIGMA_COEFFS,
-                              bank_halfwidth_deg=bank_halfwidth_deg, combine=combine)
-    elif geometry == "direct":
-        instr = _ins.direct(e_fixed_meV, angles_deg, sigma_coeffs=sigma_coeffs,
-                            bank_halfwidth_deg=bank_halfwidth_deg, combine=combine,
-                            resolution_model=resolution_model,
-                            chopper_spec=chopper_spec)
-    else:
-        raise ValueError(f"compute_spectrum: unknown geometry {geometry!r}")
+    instr = _instrument(geometry, e_fixed_meV, angles_deg, sigma_coeffs=sigma_coeffs,
+                        bank_halfwidth_deg=bank_halfwidth_deg, combine=combine,
+                        resolution_model=resolution_model, chopper_spec=chopper_spec,
+                        resolution_shape=resolution_shape)
     e_fixed = instr.E_fixed
     angles = list(instr.angles_deg)
 
@@ -515,11 +516,9 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
         geometry, e_fixed, angles, dE, e_max, dQ, e_min, q_pad,
         include_gain=include_gain)
 
-    # extend the Q-support to cover any requested constant-Q cuts, else the
-    # interpolator (fill_value=0) would zero a cut that falls outside the bank
-    # loci envelope. The pad must cover the full cut BAND (cut_dq half-width),
-    # not just q_pad: band samples outside the support interpolate to exactly
-    # 0 and silently dilute the band mean.
+    # Extend the Q-support over the constant-Q cuts, padded by the full cut
+    # band (cut_dq): band samples outside the support read 0 and dilute the
+    # band mean.
     if q_cuts:
         qc = [float(x) for x in q_cuts]
         pad = max(q_pad, float(cut_dq) if cut_dq else 0.0)
@@ -539,130 +538,28 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
         q_max_invA=float(Q_support.max()), e_fixed_meV=e_fixed,
         q_cuts=q_cuts, cut_dq=cut_dq, q_res_invA=dQ)
 
-    # The energy-gain side is only ever sampled when the output grid extends
-    # below 0; computing it for a loss-only grid (the default e_min=0) is pure
-    # waste, so gate the direct evaluation on e_min < 0.
-    gain_side_used = _resolve_gain_side(
-        gain_side=gain_side, include_gain=(include_gain and float(e_min) < 0.0),
-        dos_species=dos_species, progress=progress)
+    powder, key, eff_order, gain_side_used, m0, result = _powder_sqe(
+        caller="compute_spectrum", geometry=geometry, Q=Q_support, E=E_support,
+        gain_side_used=_gain_side_used(gain_side, include_gain, e_min),
+        label=(f"IRMA {geometry} mode-0 (DOS)" if dos_species is not None
+               else f"IRMA {geometry} mode-{inelastic_mode}"),
+        temperature_k=temperature_k, dos_species=dos_species,
+        inelastic_mode=inelastic_mode, auto_multiphonon_order=auto_multiphonon_order,
+        multiphonon_max_order=multiphonon_max_order, progress=progress,
+        phonopy_yaml=phonopy_yaml, mesh=mesh, sab_mass_ratio=sab_mass_ratio,
+        sab_sigma_barn=sab_sigma_barn, num_directions=num_directions,
+        multiphonon_num_directions=multiphonon_num_directions,
+        min_phonon_energy_mev=min_phonon_energy_mev, jobs=jobs,
+        force_constants=force_constants, force_sets=force_sets, born_path=born_path,
+        site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
+        site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
+        scattering_lengths_json=scattering_lengths_json,
+        incoherent_cross_sections_json=incoherent_cross_sections_json)
+    q, E = powder.q, powder.E
 
-    if dos_species is not None:
-        # mode-0: DOS-based incoherent-approximation S(Q,E) -- no phonopy engine.
-        # Each species scatters by its OWN partial DOS, mass and Debye-Waller; the
-        # total is the cross-section/multiplicity-weighted sum (compute_mode0_sqe).
-        from irma.spectra.dos_mode0 import compute_mode0_sqe
-        progress(f"compute_spectrum[{geometry}]: mode-0 DOS "
-                 f"({len(dos_species)} species) nQ={Q_support.size} "
-                 f"nE={E_support.size} T={temperature_k} K ...")
-        m0 = compute_mode0_sqe(
-            species=dos_species, temperature_k=float(temperature_k),
-            q_ang_inv=Q_support, e_mev=E_support,
-            nphon=("auto" if auto_multiphonon_order
-                   else int(multiphonon_max_order)))
-        q = np.asarray(m0["q_ang_inv"], float)
-        E = np.asarray(m0["e_mev"], float)
-        S = np.asarray(m0["sqe_barn_per_meV"], float)
-        key = "mode0_dos"
-        eff_order = int(m0["nphon_effective"])
-        _report_mode0_order(m0, auto_multiphonon_order, Q_support, progress)
-        result = {"metadata": {"mode": 0, "n_species": len(dos_species),
-                               "per_species": m0["per_species"],
-                               "gdos_e_mev": m0["gdos_e_mev"], "gdos": m0["gdos"],
-                               "sigma_b_total": m0["sigma_b_total"]},
-                  "elastic_state": None}
-        gain_kw = {}
-        if gain_side_used == "direct":
-            gain_kw, gain_side_used = _mode0_direct_gain(
-                dos_species=dos_species, temperature_k=temperature_k, q=q,
-                E_loss=E,
-                nphon=("auto" if auto_multiphonon_order
-                       else int(multiphonon_max_order)),
-                progress=progress)
-        powder = _sqe.from_noncubic_arrays(
-            q, E, S, T_K=float(temperature_k),
-            sigma_b=float(m0["sigma_b_total"]),
-            label=label or f"IRMA {geometry} mode-0 (DOS)", **gain_kw)
-
-        # mode-0 elastic line: coherent Bragg peaks + incoherent DW from the
-        # DOS-derived isotropic Debye-Waller coefficient f0 (contin). The
-        # coherent peaks need a user-supplied crystal (dos_crystal =
-        # (a,b,c,alpha,beta,gamma) [A,deg] + per-species b_coh_fm/positions);
-        # the incoherent-only line runs lattice-free. Built here because f0 is
-        # only known after the inelastic mode-0 pass.
-        if elastic_model is None and elastic:
-            elastic_model = _build_mode0_elastic_model(
-                dos_species=dos_species, m0=m0, dos_crystal=dos_crystal,
-                elastic_kind=elastic_kind, temperature_k=temperature_k,
-                emax_eV=elastic_emax_eV, geometry=geometry, progress=progress)
-    else:
-        from irma.core.noncubic_inelastic import run_noncubic_sab_inprocess
-        # Auto-created workdirs are removed after the engine call (the engine
-        # writes nothing there with write_output_files=False; every mode-1/2
-        # call used to leak one empty tempdir -- review S9). A caller-supplied
-        # workdir is left alone.
-        wd_auto = workdir is None
-        wd = Path(workdir) if workdir is not None else Path(
-            tempfile.mkdtemp(prefix="irma_spectra_"))
-        n_jobs = _resolve_jobs(jobs)
-        progress(f"compute_spectrum[{geometry}]: engine mode={inelastic_mode} "
-                 f"mesh={tuple(int(m) for m in mesh)} nQ={Q_support.size} "
-                 f"nE={E_support.size} T={temperature_k} K jobs={n_jobs} ...")
-        try:
-            context = _get_engine_context(
-                phonopy_yaml=phonopy_yaml, force_constants=force_constants,
-                force_sets=force_sets, born_path=born_path, mesh=mesh,
-                Q_support=Q_support, E_support=E_support,
-                num_directions=num_directions,
-                multiphonon_num_directions=multiphonon_num_directions,
-                n_jobs=n_jobs,
-                site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
-                site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
-                scattering_lengths_json=scattering_lengths_json,
-                incoherent_cross_sections_json=incoherent_cross_sections_json)
-            result = run_noncubic_sab_inprocess(
-                inelastic_mode=int(inelastic_mode),
-                phonopy_yaml=str(phonopy_yaml),
-                force_constants=force_constants, force_sets=force_sets, born_path=born_path,
-                temperature_k=float(temperature_k),
-                mesh=tuple(int(m) for m in mesh),
-                q_grid_ang_inv=Q_support, e_grid_mev=E_support,
-                output_prefix=wd / "spectra_unused",
-                sab_mass_ratio=float(sab_mass_ratio),
-                num_directions=int(num_directions),
-                multiphonon_num_directions=int(multiphonon_num_directions),
-                jobs=n_jobs,
-                multiphonon_max_order=int(multiphonon_max_order),
-                auto_multiphonon_order=bool(auto_multiphonon_order),
-                min_phonon_energy_mev=float(min_phonon_energy_mev),
-                sab_sigma_barn=float(sab_sigma_barn),
-                site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
-                site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
-                scattering_lengths_json=scattering_lengths_json,
-                incoherent_cross_sections_json=incoherent_cross_sections_json,
-                context=context, write_output_files=False,
-                emit_gain_side=(gain_side_used == "direct"))
-        finally:
-            if wd_auto:
-                shutil.rmtree(wd, ignore_errors=True)
-
-        out = result["output_arrays"]
-        eff_order = int(result.get("metadata", {}).get(
-            "multiphonon_max_order", multiphonon_max_order))
-        key = _pick_sqe_key(out, eff_order, int(inelastic_mode))
-        q = np.asarray(out["q_ang_inv"], float)
-        E = np.asarray(out["e_mev"], float)
-        S = np.asarray(out[key], float)
-        gain_kw, gain_side_used = _engine_direct_gain(
-            out=out, loss_key=key, gain_side_used=gain_side_used, progress=progress)
-
-        # coverage guard: every locus point must fall inside the engine's Q grid,
-        # else the interpolator (fill_value=0) silently zeros the high-E wing.
-        if q.min() < Q_support.min() - 1e-9 or q.max() > Q_support.max() + 1e-9:
-            progress(f"WARNING: engine q_ang_inv [{q.min():.3f},{q.max():.3f}] exceeds "
-                     f"Q_support [{Q_support.min():.3f},{Q_support.max():.3f}]")
-        # high-E truncation guard: the chosen map must be non-zero up to e_max.
-        Sqe = S if S.shape == (q.size, E.size) else S.T
-        e_axis_nonzero = np.flatnonzero(np.any(np.abs(Sqe) > 0, axis=0))
+    if m0 is None:
+        # The chosen map must be non-zero up to e_max.
+        e_axis_nonzero = np.flatnonzero(np.any(np.abs(powder.S) > 0, axis=0))
         if e_axis_nonzero.size:
             e_top = float(E[e_axis_nonzero[-1]])
             if e_top < 0.95 * float(e_max):
@@ -671,19 +568,21 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
                          "small for the high-Q locus; raise max_phonon_order or keep "
                          "auto_multiphonon_order on.")
 
-        powder = _sqe.from_noncubic_arrays(
-            q, E, S, T_K=float(temperature_k), sigma_b=float(sab_sigma_barn),
-            label=label or f"IRMA {geometry} mode-{inelastic_mode}", **gain_kw)
-
-    # tape-free elastic line from the engine's surfaced DW + geometry.
-    # Mode 0 builds its own elastic above (DOS-derived), so skip this here.
-    if elastic_model is None and elastic and dos_species is None:
-        elastic_model = _build_engine_elastic_model(
-            elastic_state=result.get("elastic_state"),
-            elastic_scatterers=elastic_scatterers, elastic_kind=elastic_kind,
-            temperature_k=temperature_k, emax_eV=elastic_emax_eV,
-            geometry=geometry, progress=progress,
-            incoherent_elastic_mode=incoherent_elastic_mode)
+    # Tape-free elastic line: mode 0 from the DOS-derived Debye-Waller f0 and
+    # an optional crystal, modes 1/2 from the engine's elastic_state.
+    if elastic_model is None and elastic:
+        if m0 is not None:
+            elastic_model = _build_mode0_elastic_model(
+                dos_species=dos_species, m0=m0, dos_crystal=dos_crystal,
+                elastic_kind=elastic_kind, temperature_k=temperature_k,
+                emax_eV=elastic_emax_eV, geometry=geometry, progress=progress)
+        else:
+            elastic_model = _build_engine_elastic_model(
+                elastic_state=result.get("elastic_state"),
+                elastic_scatterers=elastic_scatterers, elastic_kind=elastic_kind,
+                temperature_k=temperature_k, emax_eV=elastic_emax_eV,
+                geometry=geometry, progress=progress,
+                incoherent_elastic_mode=incoherent_elastic_mode)
 
     E_out = np.arange(float(e_min), float(e_max) + 0.5 * dE, dE)
     if produce_angle_spectra:
@@ -831,18 +730,15 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
                     dos_crystal=None,
                     scattering_lengths_json=None, incoherent_cross_sections_json=None,
                     site_scattering_lengths_angstrom=None,
-                    site_incoherent_cross_sections_barn=None,
-                    workdir=None, label=None, progress=print):
+                    site_incoherent_cross_sections_barn=None, progress=print):
     """Compute a dense 2-D S(Q,E) powder map over a uniform Q x E grid.
 
     Unlike ``compute_spectrum`` (which samples S(Q,E) along instrument loci on
     the cheap locus grid), this runs the engine on a DENSE uniform Q grid so the
     whole S(Q,E) surface can be shown as a heatmap -- more cost, the dense grid
     P2 avoids. When the axis extends below 0 (``e_min < 0``) the energy-gain
-    side is computed directly by default (``gain_side="direct"``, all modes:
-    mode 0 evaluates the gain ladder, modes 1/2 read the engine's direct gain
-    arrays); ``"detailed_balance"`` selects the mirror explicitly and is the
-    defensive fallback when an engine result surfaces no gain sibling. The
+    side is computed directly by default (``gain_side="direct"``);
+    ``"detailed_balance"`` selects the mirror. The
     columns are optionally resolution-broadened, and the instrument kinematic
     envelope is returned when an ``angle_range_deg=(2th_min, 2th_max)`` +
     ``e_fixed_meV`` are given (for the Euphonic-style direct-geometry overlay).
@@ -863,14 +759,11 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
     """
     from irma.spectra import sqe as _sqe
 
-    # Fail fast (before the engine) on the chopper+Lorentzian contradiction: a
-    # chopper model yields a Gaussian sigma. config.validate() rejects it, but a
-    # direct caller of compute_sqe_map bypasses that.
-    if broaden and resolution_model == "chopper" and resolution_shape == "lorentzian":
-        raise ValueError(
-            "resolution_model='chopper' computes a Gaussian sigma and is "
-            "incompatible with resolution_shape='lorentzian'; use "
-            "resolution_shape='gaussian' (or resolution_model='poly').")
+    # Built first so an invalid resolution setting fails before the engine.
+    instr = _instrument(geometry, e_fixed_meV, [], sigma_coeffs=sigma_coeffs,
+                        bank_halfwidth_deg=5.0, combine="mean",
+                        resolution_model=resolution_model, chopper_spec=chopper_spec,
+                        resolution_shape=resolution_shape)
 
     Q_grid = np.arange(float(q_min), float(q_max) + 0.5 * dQ_map, dQ_map)
     # Loss grid reaches |e_min| when a deeper gain side is requested, so the gain
@@ -879,110 +772,31 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
     if include_gain and float(e_min) < 0.0:
         e_loss_max = max(e_loss_max, -float(e_min))
     E_support = np.arange(0.0, e_loss_max + 0.5 * dE, dE)         # loss side
-    # The energy-gain side is only ever sampled when the output grid extends
-    # below 0; computing it for a loss-only grid (the default e_min=0) is pure
-    # waste, so gate the direct evaluation on e_min < 0.
-    gain_side_used = _resolve_gain_side(
-        gain_side=gain_side, include_gain=(include_gain and float(e_min) < 0.0),
-        dos_species=dos_species, progress=progress)
-    if dos_species is not None:
-        # mode-0: dense map straight from the DOS expansion (no engine).
-        from irma.spectra.dos_mode0 import compute_mode0_sqe
-        progress(f"compute_sqe_map[{geometry}]: mode-0 DOS "
-                 f"({len(dos_species)} species) nQ={Q_grid.size} "
-                 f"nE={E_support.size} T={temperature_k} K ...")
-        m0 = compute_mode0_sqe(
-            species=dos_species, temperature_k=float(temperature_k),
-            q_ang_inv=Q_grid, e_mev=E_support,
-            nphon=("auto" if auto_multiphonon_order
-                   else int(multiphonon_max_order)))
-        skey = "mode0_dos"
-        eff_order = int(m0["nphon_effective"])
-        _report_mode0_order(m0, auto_multiphonon_order, Q_grid, progress)
-        res = {"metadata": {"mode": 0, "n_species": len(dos_species),
-                            "per_species": m0["per_species"],
-                            "sigma_b_total": m0["sigma_b_total"]}}
-        gain_kw = {}
-        if gain_side_used == "direct":
-            gain_kw, gain_side_used = _mode0_direct_gain(
-                dos_species=dos_species, temperature_k=temperature_k,
-                q=np.asarray(m0["q_ang_inv"], float),
-                E_loss=np.asarray(m0["e_mev"], float),
-                nphon=("auto" if auto_multiphonon_order
-                       else int(multiphonon_max_order)),
-                progress=progress)
-        powder = _sqe.from_noncubic_arrays(
-            np.asarray(m0["q_ang_inv"], float), np.asarray(m0["e_mev"], float),
-            np.asarray(m0["sqe_barn_per_meV"], float), T_K=float(temperature_k),
-            sigma_b=float(m0["sigma_b_total"]), label=label or f"IRMA {geometry} map",
-            **gain_kw)
-    else:
-        from irma.core.noncubic_inelastic import run_noncubic_sab_inprocess
-        n_jobs = _resolve_jobs(jobs)
-        # Auto-created workdirs are removed after the engine call (see the
-        # compute_spectrum sibling; review S9).
-        wd_auto = workdir is None
-        wd = Path(workdir) if workdir is not None else Path(
-            tempfile.mkdtemp(prefix="irma_map_"))
-        progress(f"compute_sqe_map[{geometry}]: mode={inelastic_mode} "
-                 f"mesh={tuple(int(m) for m in mesh)} nQ={Q_grid.size} "
-                 f"nE={E_support.size} T={temperature_k} K jobs={n_jobs} ...")
-        try:
-            context = _get_engine_context(
-                phonopy_yaml=phonopy_yaml, force_constants=force_constants,
-                force_sets=force_sets, born_path=born_path, mesh=mesh,
-                Q_support=Q_grid, E_support=E_support,
-                num_directions=num_directions,
-                multiphonon_num_directions=multiphonon_num_directions,
-                n_jobs=n_jobs,
-                site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
-                site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
-                scattering_lengths_json=scattering_lengths_json,
-                incoherent_cross_sections_json=incoherent_cross_sections_json)
-            res = run_noncubic_sab_inprocess(
-                inelastic_mode=int(inelastic_mode), phonopy_yaml=str(phonopy_yaml),
-                force_constants=force_constants, force_sets=force_sets, born_path=born_path,
-                temperature_k=float(temperature_k), mesh=tuple(int(m) for m in mesh),
-                q_grid_ang_inv=Q_grid, e_grid_mev=E_support,
-                output_prefix=wd / "map_unused", sab_mass_ratio=float(sab_mass_ratio),
-                num_directions=int(num_directions),
-                multiphonon_num_directions=int(multiphonon_num_directions), jobs=n_jobs,
-                multiphonon_max_order=int(multiphonon_max_order),
-                auto_multiphonon_order=bool(auto_multiphonon_order),
-                min_phonon_energy_mev=float(min_phonon_energy_mev),
-                sab_sigma_barn=float(sab_sigma_barn),
-                site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
-                site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
-                scattering_lengths_json=scattering_lengths_json,
-                incoherent_cross_sections_json=incoherent_cross_sections_json,
-                context=context, write_output_files=False,
-                emit_gain_side=(gain_side_used == "direct"))
-        finally:
-            if wd_auto:
-                shutil.rmtree(wd, ignore_errors=True)
-        out = res["output_arrays"]
-        eff_order = int(res.get("metadata", {}).get(
-            "multiphonon_max_order", multiphonon_max_order))
-        skey = _pick_sqe_key(out, eff_order, int(inelastic_mode))
-        gain_kw, gain_side_used = _engine_direct_gain(
-            out=out, loss_key=skey, gain_side_used=gain_side_used, progress=progress)
-        powder = _sqe.from_noncubic_arrays(
-            np.asarray(out["q_ang_inv"], float), np.asarray(out["e_mev"], float),
-            np.asarray(out[skey], float), T_K=float(temperature_k),
-            sigma_b=float(sab_sigma_barn), label=label or f"IRMA {geometry} map",
-            **gain_kw)
+    powder, skey, eff_order, gain_side_used, m0, res = _powder_sqe(
+        caller="compute_sqe_map", geometry=geometry, Q=Q_grid, E=E_support,
+        gain_side_used=_gain_side_used(gain_side, include_gain, e_min),
+        label=f"IRMA {geometry} map",
+        temperature_k=temperature_k, dos_species=dos_species,
+        inelastic_mode=inelastic_mode, auto_multiphonon_order=auto_multiphonon_order,
+        multiphonon_max_order=multiphonon_max_order, progress=progress,
+        phonopy_yaml=phonopy_yaml, mesh=mesh, sab_mass_ratio=sab_mass_ratio,
+        sab_sigma_barn=sab_sigma_barn, num_directions=num_directions,
+        multiphonon_num_directions=multiphonon_num_directions,
+        min_phonon_energy_mev=min_phonon_energy_mev, jobs=jobs,
+        force_constants=force_constants, force_sets=force_sets, born_path=born_path,
+        site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
+        site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
+        scattering_lengths_json=scattering_lengths_json,
+        incoherent_cross_sections_json=incoherent_cross_sections_json)
 
-    # tape-free elastic line: the same construction as compute_spectrum, with
-    # the Bragg enumeration stopped at the dense map's own Q reach. Routing the
-    # map's Q_max through the q_cuts tail gives the Bragg peaks the full 40-sigma
-    # Gaussian underflow headroom at the grid edge, so the q_res-broadened peaks
-    # on Q_grid are bit-identical to a full enumeration.
+    # Tape-free elastic line, as in compute_spectrum, with the Bragg enumeration
+    # stopped at the map's Q reach (with the Gaussian headroom of a q_cut there).
     if elastic_model is None and elastic:
         from irma.spectra.elastic import instrument_reach_emax_eV
         elastic_emax_eV = instrument_reach_emax_eV(
             q_max_invA=float(Q_grid.max()),
             q_cuts=[float(Q_grid.max())], q_res_invA=dQ_map)
-        if dos_species is not None:
+        if m0 is not None:
             elastic_model = _build_mode0_elastic_model(
                 dos_species=dos_species, m0=m0, dos_crystal=dos_crystal,
                 elastic_kind=elastic_kind, temperature_k=temperature_k,
@@ -1038,28 +852,9 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
                      f"[{E_out[0]:g}, {E_out[-1]:g}] meV; the elastic line "
                      "does not appear on the map.")
     if broaden:
-        if resolution_model == "chopper":
-            # Mirror Instrument.width_source()'s guard: a chopper width needs both
-            # a spec and a fixed incident energy. Without it, float(None) / **None
-            # would raise an opaque TypeError deep in the broadening loop.
-            if not chopper_spec or e_fixed_meV is None:
-                raise ValueError(
-                    "resolution_model='chopper' requires chopper_spec "
-                    "(instrument, package, frequency) and e_fixed_meV")
-            from irma.spectra.chopper_resolution import chopper_sigma_of_E
-            width = lambda E: chopper_sigma_of_E(E, Ei=float(e_fixed_meV), **chopper_spec)
-        else:
-            if sigma_coeffs is not None:
-                width = sigma_coeffs
-            elif geometry == "direct" and e_fixed_meV is not None:
-                # match instruments.direct(): a direct instrument's default poly
-                # width is ~2% of Ei, NOT the VISION indirect-geometry polynomial
-                width = (0.02 * float(e_fixed_meV), 0.0, 0.0)
-            else:
-                width = _sqe.VISION_SIGMA_COEFFS
         # one kernel for every Q row: the (nE, nE) build dominates the
         # per-row convolution cost
-        R = _sqe.resolution_kernel(E_out, width, shape=resolution_shape)
+        R = _sqe.resolution_kernel(E_out, instr.width_source(), shape=resolution_shape)
         for iq in range(Q_grid.size):
             S_map[iq] = _sqe.apply_resolution_kernel(R, E_out, S_map[iq])
 
