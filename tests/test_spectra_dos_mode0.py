@@ -41,7 +41,7 @@ def test_single_species_matches_direct_kernel_build():
     alpha = si.C_E * Q ** 2 / (awr * kT)
     ssm = np.zeros((E.size, Q.size))
     contin(ssm, alpha, beta, Q.size, E.size, 0, 1.0, BK * T_K, rho.copy(),
-           omega.size, float(omega[1] - omega[0]), 1.0, 100, 0)
+           omega.size, float(omega[1] - omega[0]), 1.0, 100)
     ref = si._law_to_sqe(ssm, beta, T_K, sig, "asym_downscatter")
     assert np.allclose(out["sqe_barn_per_meV"], ref, rtol=1e-12)
     assert out["sigma_b_total"] == pytest.approx(sig)

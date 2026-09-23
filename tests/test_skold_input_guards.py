@@ -23,10 +23,9 @@ def test_skold_zero_structure_factor_stays_finite(monkeypatch):
     monkeypatch.setattr(kern, "terpk", lambda *a, **k: 0.0)
     nalpha, nbeta, ntempr = 3, 2, 1
     alpha = np.array([0.1, 0.5, 1.0])
-    beta = np.array([0.0, 1.0])
     ssm = np.ones((nbeta, nalpha, ntempr))
     ska = np.zeros(5)
-    kern.skold_approx(ssm, alpha, beta, nalpha, nbeta, 0, ntempr, 1,
+    kern.skold_approx(ssm, alpha, nalpha, nbeta, 0, 1,
                       1.0, 12.0, 0.0253, ska, 5, 0.5, 0.5)
     assert np.all(np.isfinite(ssm)), "Skold with S(kappa)=0 produced a non-finite law"
     # coherent contribution collapses to its zero limit, so only the (1 - cfrac)

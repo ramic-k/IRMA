@@ -16,7 +16,7 @@ from irma.core.deck import (
     _read_temperature_detail_cards,
 )
 from irma.core.kernels import (
-    contin, contin_cubic_trace_dos, trans, discre, coldh, skold_approx,
+    contin, cubic_trace_tbar, trans, discre, coldh, skold_approx,
 )
 from irma.core.crystal import (
     compute_bragg_edges_general, coher,
@@ -63,12 +63,9 @@ def _noncubic_mt4_step(crystal_info, ssm, itemp, alpha, beta, nalpha, nbeta,
     thermal_mats_all = compute_thermal_displacement_matrices(nc_mesh, temperature_k)
     F_matrix_all = thermal_displacements_to_f_matrix(
         thermal_mats_all, crystal_info['nc_awr_by_atom'], tev)
-    # tbar and deltab for the SCT/Teff records come from start() alone, so
-    # the multiphonon expansion is skipped.
-    _, tbar, deltab = contin_cubic_trace_dos(
-        None, alpha, beta, nalpha, nbeta, lat, 1.0, tev,
-        dos_tensor_all[principal_site_indices], energy_grid_ev,
-        nphon, 1.0, 0, expand_ssm=False)
+    # tbar and deltab for the SCT/Teff records.
+    tbar, deltab = cubic_trace_tbar(
+        dos_tensor_all[principal_site_indices], energy_grid_ev, tev, 1.0)
     f0 = float(np.mean([
         np.trace(F_matrix_all[d_idx]) / 3.0
         for d_idx in principal_site_indices
@@ -429,8 +426,7 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
             else:
                 f0, tbar, deltab = contin(ssm[:, :, itemp], alpha, beta,
                                           nalpha, nbeta, lat, arat, tev,
-                                          p1, np1, delta1, tbeta, nphon,
-                                          iprint)
+                                          p1, np1, delta1, tbeta, nphon)
             # Modes 1/2: f0 is the principal's Tr(F)/3 from the thermal-
             # displacement matrices, tbar comes from the DOS-tensor start().
             dwpix[itemp] = f0
@@ -442,7 +438,7 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
             if twt > 0.0:
                 trans(ssm[:, :, itemp], alpha, beta, nalpha, nbeta,
                       lat, arat, tev, twt, c_diff, tbeta, f0, deltab,
-                      tbar, iprint)
+                      tbar)
                 tempf[itemp] = (tbeta * tempf[itemp] + twt * tempr_arr[itemp]) / (tbeta + twt)
                 print(f"    After trans: T_eff = {tempf[itemp]:.3f}")
 
@@ -451,7 +447,7 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
                 dwpix[itemp], tempf[itemp] = discre(
                     ssm[:, :, itemp], alpha, beta, nalpha, nbeta,
                     lat, arat, tev, twt, tbeta, nd, bdel, adel,
-                    dwpix[itemp], tempf[itemp], tempr_arr[itemp], iprint)
+                    dwpix[itemp], tempf[itemp], tempr_arr[itemp])
                 print(f"    After discre: DW = {dwpix[itemp]:.6f}, T_eff = {tempf[itemp]:.3f}")
 
             # Cold hydrogen/deuterium
@@ -459,13 +455,12 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
                 coldh(ssm[:, :, itemp], ssp[:, :, itemp],
                       alpha, beta, nalpha, nbeta, lat, arat, tev,
                       twt, tbeta, ncold, ska, nka, dka,
-                      tempf[itemp], tempr_arr[itemp], iprint)
+                      tempf[itemp], tempr_arr[itemp])
 
             # Skold option
             if nsk == 2 and ncold == 0:
-                skold_approx(ssm, alpha, beta, nalpha, nbeta,
-                            itemp, ntempr, lat, arat, awr, tev,
-                            ska, nka, dka, cfrac)
+                skold_approx(ssm, alpha, nalpha, nbeta, itemp, lat, arat,
+                             awr, tev, ska, nka, dka, cfrac)
 
         if isecs == 0 and npass == 2:
             ssm_principal = ssm.copy()

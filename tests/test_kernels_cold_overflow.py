@@ -36,7 +36,7 @@ def test_discre_cold_high_energy_oscillator_stays_finite():
     tev = BK * 4.0
     dwpix, tempf = discre(ssm, alpha, beta, nalpha, nbeta, 1, 1.0, tev,
                           0.5, 1.0, 1, np.array([0.5]), np.array([0.1]),
-                          0.0, 0.0, 4.0, 0)
+                          0.0, 0.0, 4.0)
     assert np.all(np.isfinite(ssm)), "discre wrote a non-finite law at cryogenic T"
     assert np.isfinite(dwpix) and np.isfinite(tempf)
 

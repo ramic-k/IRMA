@@ -198,7 +198,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev,
         alpha_d = C_E * Q ** 2 / (awr * kT)
         ssm = np.zeros((nE, nQ))                    # [nbeta, nalpha], filled in place
         f0, tbar, _deltab = contin(ssm, alpha_d, beta, nQ, nE, 0, 1.0, tev,
-                                   rho, np1, delta1, float(tbeta), nphon_eff, 0)
+                                   rho, np1, delta1, float(tbeta), nphon_eff)
         # asym_downscatter (the P0-validated convention): S = sigma_d/(4pi kT) * ssm
         S_d = _law_to_sqe(ssm, beta, T_K, sigma_d, law_kind="asym_downscatter")
         S_cell += mult * S_d
