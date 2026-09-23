@@ -23,7 +23,6 @@ from .pack import (
     MAGIC,
     SCHEMA_VERSION,
 )
-from irma.core.sab_grids import physical_qe_to_irma_grid
 from .convert import pack_from_irma_sab, rescale_sab_to_bound_xs
 from .config import NCrystalExportConfig
 from .build import build_packs, write_packs
@@ -44,7 +43,6 @@ __all__ = [
     "pack_from_irma_sab",
     "rescale_sab_to_bound_xs",
     "NCrystalExportConfig",
-    "physical_qe_to_irma_grid",
     "build_packs",
     "write_packs",
     "assemble_material_ncmat",

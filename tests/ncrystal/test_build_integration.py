@@ -171,7 +171,7 @@ def test_auto_grid_pack_beta_carries_linlin_cap(tmp_path):
     violates the cap, so this fails if build.py reverts to the bare builder."""
     from irma.core.constants import BK
     from irma.core.grids import (
-        generate_beta_grid, generate_beta_grid_for_iint, DELTA_BETA_MAX_LINLIN,
+        generate_beta_grid, DELTA_BETA_MAX_LINLIN,
         grid_reference_temperature_K)
     awr = 11.898
     d = {
@@ -196,7 +196,7 @@ def test_auto_grid_pack_beta_carries_linlin_cap(tmp_path):
     # generated in lat=1 THERM units, so everything scales by t_ref/T.
     t_ref = grid_reference_temperature_K(cfg.lat, 296.0)
     scale = t_ref / 296.0
-    expected = generate_beta_grid_for_iint(
+    expected = generate_beta_grid(
         0.2, t_ref, iint=1, awr=awr, n_lower=2, n_phonon=6, n_upper=4,
         beta_max_eV=1.0,
         evaluation_temperatures_K=[296.0])

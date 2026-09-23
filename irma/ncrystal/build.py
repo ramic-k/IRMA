@@ -20,7 +20,7 @@ import numpy as np
 
 from irma.core.constants import AMASSN
 from irma.core.grids import (
-    describe_beta_grid, generate_alpha_grid, generate_beta_grid_for_iint,
+    describe_beta_grid, generate_alpha_grid, generate_beta_grid,
     grid_reference_temperature_K)
 from .config import NCrystalExportConfig
 from .convert import pack_from_irma_sab
@@ -79,8 +79,8 @@ def _estimate_freq_max_eV(mat) -> float:
 
 
 def _auto_beta_grid(cfg, t_ref, recoil_awr, progress=print):
-    """Build the shared converged beta grid (generate_beta_grid_for_iint,
-    lin-lin) AND return a phonopy ``Mesh`` to reuse downstream.
+    """Build the shared converged beta grid (generate_beta_grid, lin-lin)
+    AND return a phonopy ``Mesh`` to reuse downstream.
 
     NCrystal's SAB kernel always interpolates S(alpha,beta) LINEARLY in beta
     (NCSABEval LINLIN), so the baked grid must carry the lin-lin (iint=1)
@@ -103,13 +103,12 @@ def _auto_beta_grid(cfg, t_ref, recoil_awr, progress=print):
     else:
         freq_max, mesh_data = _load_mesh_and_freq_max_eV(cfg.material)
         preloaded = mesh_data.phonopy_mesh_object
-    beta, details = generate_beta_grid_for_iint(
+    beta = generate_beta_grid(
         freq_max, t_ref, iint=1, awr=float(recoil_awr),
         n_lower=cfg.n_lower, n_phonon=cfg.n_phonon,
         n_upper=cfg.n_upper, beta_max_eV=cfg.beta_max_eV,
-        evaluation_temperatures_K=[float(cfg.material.temperature_K)],
-        return_details=True)
-    progress("  " + describe_beta_grid(details))
+        evaluation_temperatures_K=[float(cfg.material.temperature_K)])
+    progress("  " + describe_beta_grid(beta, t_ref, 1))
     return beta, preloaded
 
 

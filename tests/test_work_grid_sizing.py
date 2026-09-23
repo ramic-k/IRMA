@@ -139,23 +139,21 @@ def test_phonon_region_is_found_on_a_grid_read_back_from_a_deck_file():
     """A deck carries six significant digits, so the phonon region's equal
     steps read back unequal in the last digit: the detector must still see
     one run. This is the graphite automatic grid as the engine gets it."""
-    from irma.core.grids import AUTO_GRID_DEFAULTS as D, generate_beta_grid_for_iint, grid_reference_temperature_K
+    from irma.core.grids import AUTO_GRID_DEFAULTS as D, generate_beta_grid, grid_reference_temperature_K
     from irma.core.noncubic_numerics import phonon_region_spacing
     t_ref = grid_reference_temperature_K(1, 296.0)
-    beta = generate_beta_grid_for_iint(0.2007, t_ref, iint=1, awr=11.898,
-                                       n_lower=D["n_lower"], n_phonon=D["n_phonon"],
-                                       n_upper=D["n_upper"], beta_max_eV=5.0)
+    beta = generate_beta_grid(0.2007, t_ref, iint=1, awr=11.898,
+                              n_lower=D["n_lower"], n_phonon=D["n_phonon"],
+                              n_upper=D["n_upper"], beta_max_eV=5.0)
     kT_mev = 8.617333262e-5 * t_ref * 1.0e3
     written = np.array([float(f"{x:.6e}") for x in beta]) * kT_mev
     step = phonon_region_spacing(written, 200.692)
     assert step == pytest.approx(0.2007e3 / D["n_phonon"], rel=2e-3)
-    # and a 0.25-beta uniform tail above the phonon range does not change it
-    fine = generate_beta_grid_for_iint(0.2007, t_ref, iint=1, awr=11.898,
-                                       n_lower=D["n_lower"], n_phonon=D["n_phonon"],
-                                       n_upper=D["n_upper"], beta_max_eV=5.0)
-    from irma.core.grids import generate_beta_grid
-    fine = generate_beta_grid(0.2007, t_ref, n_lower=D["n_lower"], n_phonon=D["n_phonon"],
-                              n_upper=D["n_upper"], beta_max_eV=5.0, delta_beta_max=0.25,
-                              recoil_awr=11.898)
+    # and a 0.25-beta tail above the phonon range (the cap at half the grid
+    # temperature) does not change it
+    fine = generate_beta_grid(0.2007, t_ref, iint=1, awr=11.898,
+                              n_lower=D["n_lower"], n_phonon=D["n_phonon"],
+                              n_upper=D["n_upper"], beta_max_eV=5.0,
+                              evaluation_temperatures_K=[t_ref / 2.0, t_ref])
     written_fine = np.array([float(f"{x:.6e}") for x in fine]) * kT_mev
     assert phonon_region_spacing(written_fine, 200.692) == pytest.approx(step, rel=1e-6)

@@ -146,7 +146,7 @@ def test_config_rejects_empty_inner_group():
 
 def test_auto_grid_is_the_endf_converged_grid_not_uniform():
     """The NCrystal export's automatic grid IS the ENDF evaluator's converged
-    grid with the lin-lin treatment (generate_beta_grid_for_iint(iint=1) +
+    grid with the lin-lin treatment (generate_beta_grid(iint=1) +
     generate_alpha_grid), NOT a uniform Q/E grid and NOT the bare uncapped
     builder: NCrystal interpolates S(alpha,beta) linearly in beta, so the
     baked tail must carry the DELTA_BETA_MAX_LINLIN recoil-ridge cap like
@@ -154,8 +154,7 @@ def test_auto_grid_is_the_endf_converged_grid_not_uniform():
     check needs no phonopy."""
     import numpy as np
     from irma.ncrystal.build import _auto_beta_grid, _group_grids
-    from irma.core.grids import (generate_beta_grid, generate_beta_grid_for_iint,
-                                 generate_alpha_grid,
+    from irma.core.grids import (generate_beta_grid, generate_alpha_grid,
                                  grid_reference_temperature_K)
 
     awr = 11.898
@@ -168,7 +167,7 @@ def test_auto_grid_is_the_endf_converged_grid_not_uniform():
     alpha, beta_out = _group_grids(cfg, awr, beta, t_ref)
 
     from irma.core.grids import AUTO_GRID_DEFAULTS as _D
-    beta_ref = generate_beta_grid_for_iint(
+    beta_ref = generate_beta_grid(
         0.2, t_ref, iint=1, awr=awr, n_lower=_D["n_lower"], n_phonon=300,
         n_upper=80, beta_max_eV=5.0,
         evaluation_temperatures_K=[cfg.material.temperature_K])
@@ -189,7 +188,7 @@ def test_auto_grid_honors_config_overrides():
     """The optional knobs (freq_max_eV, n_phonon, alpha_dq) flow into the grid."""
     import numpy as np
     from irma.ncrystal.build import _auto_beta_grid, _group_grids
-    from irma.core.grids import (generate_beta_grid_for_iint, generate_alpha_grid,
+    from irma.core.grids import (generate_beta_grid, generate_alpha_grid,
                                  grid_reference_temperature_K)
 
     awr = 8.93478
@@ -199,7 +198,7 @@ def test_auto_grid_honors_config_overrides():
     beta, _preloaded = _auto_beta_grid(cfg, t_ref, awr)
     alpha, _ = _group_grids(cfg, awr, beta, t_ref)
     from irma.core.grids import AUTO_GRID_DEFAULTS as _D
-    beta_ref = generate_beta_grid_for_iint(
+    beta_ref = generate_beta_grid(
         0.15, t_ref, iint=1, awr=awr, n_lower=_D["n_lower"], n_phonon=120,
         n_upper=80, beta_max_eV=5.0,
         evaluation_temperatures_K=[cfg.material.temperature_K])
