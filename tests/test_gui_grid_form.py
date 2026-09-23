@@ -34,21 +34,12 @@ def form(root):
 
 
 # ---- construction + automatic defaults -------------------------------------
-def test_form_constructs_headless_default_auto(form):
-    """The form builds against a withdrawn root and defaults to automatic."""
-    assert form.mode() == "auto"
-
-
 def test_auto_mode_returns_converged_grid_knobs_with_defaults(form):
     """Automatic mode yields the converged ENDF-style grid knobs with the config
     defaults, NO alpha/beta keys, and NO freq_max_eV when blank (auto-estimate)."""
-    fields = form.export_fields()
-    assert set(fields) == {"n_lower", "n_phonon", "n_upper", "beta_max_eV",
-                           "alpha_dq_invA", "alpha_qcut_invA", "alpha_nlog"}
-    assert fields == {"n_lower": 15, "n_phonon": 300, "n_upper": 80,
-                      "beta_max_eV": 5.0, "alpha_dq_invA": 0.05,
-                      "alpha_qcut_invA": 12.0, "alpha_nlog": 160}
-    assert "freq_max_eV" not in fields   # blank -> auto-estimate from phonopy
+    assert form.export_fields() == {
+        "n_lower": 15, "n_phonon": 300, "n_upper": 80, "beta_max_eV": 5.0,
+        "alpha_dq_invA": 0.05, "alpha_qcut_invA": 12.0, "alpha_nlog": 160}
 
 
 def test_auto_mode_picks_up_edited_values(form):
@@ -86,20 +77,18 @@ def test_explicit_mode_only_one_list_raises(form):
         form.export_fields()
 
 
-def test_explicit_mode_bad_number_names_the_field(form):
-    """A typo'd alpha/beta token fails with the field's name, not a bare
-    'could not convert string to float'."""
-    form.grid_mode.set("explicit (alpha/beta)")
-    form.alpha_grid.set("0.1 xx 1.0")
-    form.beta_grid.set("0.0 0.5")
-    with pytest.raises(ValueError, match="alpha_grid"):
-        form.export_fields()
-
-
-def test_auto_mode_bad_number_names_the_field(form):
-    """A typo'd automatic entry fails with the field's name."""
-    form.alpha_dq.set("not-a-number")
-    with pytest.raises(ValueError, match="alpha dQ"):
+@pytest.mark.parametrize("explicit, match", [(True, "alpha_grid"),
+                                              (False, "alpha dQ")])
+def test_bad_number_names_the_field(form, explicit, match):
+    """A typo'd entry fails with the field's name, not a bare 'could not
+    convert string to float'."""
+    if explicit:
+        form.grid_mode.set("explicit (alpha/beta)")
+        form.alpha_grid.set("0.1 xx 1.0")
+        form.beta_grid.set("0.0 0.5")
+    else:
+        form.alpha_dq.set("not-a-number")
+    with pytest.raises(ValueError, match=match):
         form.export_fields()
 
 
