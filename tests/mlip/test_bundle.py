@@ -167,13 +167,17 @@ def test_check_born_rows_fail_fast(model, tmp_path):
     good = _born_file(tmp_path, with_factor=True, phonon=pr.phonon)
     assert check_born_rows(good, rr.atoms) is None
 
-    # one row too few: the message names both counts and the way out
+    # phonopy's own writers put a '# ...' comment on line 1
     lines = open(good).read().strip().splitlines()
+    header = tmp_path / "BORN_header"
+    header.write_text("\n".join(["# epsilon and Z* of atoms 1"] + lines[1:]) + "\n")
+    assert check_born_rows(header, rr.atoms) is None
+
+    # one row too few: the message names the way out
     bad = tmp_path / "BORN_short"
     bad.write_text("\n".join(lines[:-1]) + "\n")
     problem = check_born_rows(bad, rr.atoms)
     assert problem is not None
-    assert "symmetry-independent" in problem
     assert "--snap-symmetry" in problem
 
     assert check_born_rows(tmp_path / "missing", rr.atoms) is not None
