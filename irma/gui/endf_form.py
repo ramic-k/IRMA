@@ -2104,24 +2104,10 @@ class EndfFormMixin:
         try:
             import numpy as np
             from irma.core.constants import THZ_TO_EV
-            freq, dos = [], []
-            with open(dos_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    parts = line.split()
-                    freq.append(float(parts[0]))
-                    dos.append(float(parts[1]))
-            freq_ev = np.array(freq) * THZ_TO_EV
-            dos_arr = np.array(dos)
-            # Find where DOS drops below 1% of max
-            threshold = 0.01 * np.max(dos_arr)
-            above = np.where(dos_arr > threshold)[0]
-            if len(above) > 0:
-                fmax = freq_ev[above[-1]]
-            else:
-                fmax = freq_ev[-1]
+            freq, dos = np.loadtxt(dos_path, usecols=(0, 1), unpack=True)
+            # the last point where the DOS is above 1% of its peak
+            above = np.nonzero(dos > 0.01 * dos.max())[0]
+            fmax = (freq[above[-1]] if above.size else freq[-1]) * THZ_TO_EV
             self.freq_max.set(f"{fmax:.4f}")
             self.grid_info_var.set(f"Detected freq_max = {fmax*1000:.1f} meV")
         except Exception as e:
@@ -2225,35 +2211,13 @@ class EndfFormMixin:
         """Compute and display the alpha/beta grids for the current settings."""
         try:
             if self.grid_mode.get() == "auto":
-                from irma.core.grids import (describe_beta_grid,
-                                             generate_beta_grid,
-                                             generate_alpha_grid,
-                                             grid_reference_temperature_K)
-                temps = self._parse_temperatures()
-                freq_max = parse_float("Max phonon freq [eV]", self.freq_max.get())
-                # Anchor exactly as the deck writer does: lat=1 grids are in
-                # fixed 0.0253 eV units, independent of temps[0].
-                t_ref = grid_reference_temperature_K(self._code(self.lat), temps[0])
-                awr = parse_float("AWR", self.awr.get())
-                iint = self._code(self.iint)
-                beta = generate_beta_grid(
-                    freq_max, t_ref, iint=iint, awr=awr,
-                    n_lower=parse_int("N lower (log)", self.n_lower.get()),
-                    n_phonon=parse_int("N phonon (linear)", self.n_phonon.get()),
-                    n_upper=parse_int("N upper (log)", self.n_upper.get()),
-                    beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()),
-                    evaluation_temperatures_K=temps)
-                alpha = generate_alpha_grid(
-                    beta, awr, t_ref,
-                    dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),
-                    q_cut_ang_inv=parse_float("Alpha Q cut [1/A]",
-                                              self.alpha_qcut.get()),
-                    n_log=parse_int("Alpha N log", self.alpha_nlog.get()))
+                from irma.core.grids import describe_beta_grid
+                alpha, beta, t_ref = self._auto_grids(self._parse_temperatures())
                 self.grid_info_var.set(
                     f"nalpha={len(alpha)}, nbeta={len(beta)}, "
                     f"alpha=[{alpha[0]:.4e}..{alpha[-1]:.4e}], "
                     f"beta=[{beta[0]:.1f}..{beta[-1]:.4e}]\n"
-                    + describe_beta_grid(beta, t_ref, iint))
+                    + describe_beta_grid(beta, t_ref, self._code(self.iint)))
             else:
                 alpha = self._parse_manual_array(self.alpha_text, "alpha grid")
                 beta = self._parse_manual_array(self.beta_text, "beta grid")
@@ -2264,6 +2228,33 @@ class EndfFormMixin:
 
     # ------------------------------------------------------------------
     # Tab 4: Phonon Parameters
+    def _auto_grids(self, temps):
+        """The automatic (alpha, beta) grids and their reference temperature.
+
+        Under lat=1 the deck stores alpha/beta in fixed 0.0253 eV units, so
+        the grids are anchored at that temperature, not at temps[0]; iint=1
+        gets the step-capped lin-lin beta tail, iint=0 the log tail.
+        """
+        from irma.core.grids import (generate_beta_grid, generate_alpha_grid,
+                                     grid_reference_temperature_K)
+        freq_max = parse_float("Max phonon freq [eV]", self.freq_max.get())
+        t_ref = grid_reference_temperature_K(self._code(self.lat), temps[0])
+        awr = parse_float("AWR", self.awr.get())
+        beta = generate_beta_grid(
+            freq_max, t_ref, iint=self._code(self.iint), awr=awr,
+            n_lower=parse_int("N lower (log)", self.n_lower.get()),
+            n_phonon=parse_int("N phonon (linear)", self.n_phonon.get()),
+            n_upper=parse_int("N upper (log)", self.n_upper.get()),
+            beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()),
+            evaluation_temperatures_K=temps)
+        alpha = generate_alpha_grid(
+            beta, awr, t_ref,
+            dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),
+            q_cut_ang_inv=parse_float("Alpha Q cut [1/A]",
+                                      self.alpha_qcut.get()),
+            n_log=parse_int("Alpha N log", self.alpha_nlog.get()))
+        return alpha, beta, t_ref
+
     def _toggle_dos_source(self):
         """Show only the selected DOS source's fields, under its radio."""
         if self.dos_source.get() == "phonopy":
@@ -2548,32 +2539,18 @@ class EndfFormMixin:
                         str(code)))
 
     def _read_phonopy_dos(self, filename):
-        """Read phonopy total_dos.dat and convert to IRMA input format."""
+        """Read a phonopy total_dos.dat as (delta_e [eV], rho with unit area)."""
         import numpy as np
         from irma.core.constants import THZ_TO_EV
-        freq, dos = [], []
-        with open(filename) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                parts = line.split()
-                freq.append(float(parts[0]))
-                dos.append(float(parts[1]))
-        freq = np.array(freq)
-        dos = np.array(dos)
-
-        freq_ev = freq * THZ_TO_EV
-        dos_ev = dos / THZ_TO_EV
-        mask = freq_ev >= 0
-        freq_ev = freq_ev[mask]
-        dos_ev = dos_ev[mask]
+        freq, dos = np.loadtxt(filename, usecols=(0, 1), unpack=True)
+        keep = freq >= 0
+        freq_ev = freq[keep] * THZ_TO_EV
+        dos_ev = dos[keep] / THZ_TO_EV
         dos_ev[dos_ev < 0] = 0
-        delta_e = freq_ev[1] - freq_ev[0] if len(freq_ev) > 1 else 1e-4
         integral = np.trapezoid(dos_ev, freq_ev)
         if integral > 0:
             dos_ev /= integral
-        return delta_e, dos_ev
+        return freq_ev[1] - freq_ev[0], dos_ev
 
     def _on_ext_model_change(self, event=None):
         """When the extinction model changes, restrict the distribution dropdown to
@@ -2823,31 +2800,7 @@ class EndfFormMixin:
 
         # Card 7: alpha, beta
         if self.grid_mode.get() == "auto":
-            from irma.core.grids import (generate_beta_grid,
-                                         generate_alpha_grid,
-                                         grid_reference_temperature_K)
-            freq_max = parse_float("Max phonon freq [eV]", self.freq_max.get())
-            # The deck is written with the LAT flag below: under lat=1 the
-            # stored values are in fixed 0.0253 eV units, so the grid must be
-            # anchored at THERM/BK, not temps[0] (else the whole layout is
-            # rescaled by kT(T0)/0.0253 -- 3.8x too coarse at T0=77 K).
-            t_ref = grid_reference_temperature_K(lat, temps[0])
-            awr = parse_float("AWR", self.awr.get())
-            # iint=1 gets the step-capped lin-lin tail, iint=0 the pure log tail.
-            iint = self._code(self.iint)
-            beta = generate_beta_grid(
-                freq_max, t_ref, iint=iint, awr=awr,
-                n_lower=parse_int("N lower (log)", self.n_lower.get()),
-                n_phonon=parse_int("N phonon (linear)", self.n_phonon.get()),
-                n_upper=parse_int("N upper (log)", self.n_upper.get()),
-                beta_max_eV=parse_float("Beta max [eV]", self.beta_max.get()),
-                evaluation_temperatures_K=temps)
-            alpha = generate_alpha_grid(
-                beta, awr, t_ref,
-                dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),
-                q_cut_ang_inv=parse_float("Alpha Q cut [1/A]",
-                                          self.alpha_qcut.get()),
-                n_log=parse_int("Alpha N log", self.alpha_nlog.get()))
+            alpha, beta, _ = self._auto_grids(temps)
         else:
             alpha = self._parse_manual_array(self.alpha_text, "alpha grid")
             beta = self._parse_manual_array(self.beta_text, "beta grid")
