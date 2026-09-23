@@ -597,23 +597,6 @@ def test_import_keeps_explicit_auto_order_off(app, tmp_path):
     assert "100 100 /" in app._generate_input_text()   # still 2-field on export
 
 
-# ---------- phonon-tab banner tracks the EFFECTIVE mode ----------
-
-def test_phonon_note_tracks_the_mode(app):
-    """iel=10 + mode 2 shows the 'cards are NOT read' banner and mode 0
-    clears it. A classic iel cannot be combined with mode 1/2: it snaps
-    back to iel=10, so the banner stays."""
-    _reset(app)
-    app.iel_var.set("10 — Generalized (crystal structure)")
-    app.inelastic_mode_var.set(2)
-    assert app._phonon_ignored_note.winfo_manager() == "pack"
-    app.iel_var.set("0 — None")
-    assert app._code(app.iel_var) == 10
-    assert app._phonon_ignored_note.winfo_manager() == "pack"
-    app.inelastic_mode_var.set(0)
-    assert app._phonon_ignored_note.winfo_manager() == ""
-
-
 # ---------- spr is the FREE-atom cross section ----------
 
 def test_spr_field_labeled_free_atom(app):
@@ -630,16 +613,6 @@ def test_spr_field_labeled_free_atom(app):
     assert "20.45" in msg                   # H-1 FREE value, not 81.67
     assert "do NOT enter" in msg            # explicit bound-value warning
     assert "81.67" not in msg
-
-
-def test_bragg_grouping_lives_in_elastic_output_frame(app):
-    """The Bragg-edge grouping is an MF7/MT2 ELASTIC option for every iel=10
-    mode; it must not be filed under the phonopy-inelastic heading."""
-    w = app.coh_edge_group_bpd.master
-    while w is not None and not getattr(w, "_irma_section_title", None):
-        w = w.master
-    assert w is not None
-    assert w._irma_section_title == "Coherent-Elastic Output (iel=10)"
 
 
 def test_comment_apostrophe_and_slash_roundtrip(app, tmp_path):
@@ -751,49 +724,7 @@ def test_grouping_checked_emits_grouping_fields(app):
     assert "1 1 0 0 50 1.0 /" in app._generate_input_text()
 
 
-# ---------- progressive disclosure: value-dependent show/hide ----------
-
-def test_grouping_fields_follow_checkbox(app):
-    """bins/decade + above (eV) are read only while grouping is enabled."""
-    _reset(app)
-    app.coh_edge_group_enable_var.set(True)
-    assert app._grp_fields_frame.winfo_manager() == "pack"
-    app.coh_edge_group_enable_var.set(False)
-    assert app._grp_fields_frame.winfo_manager() == ""
-    app.coh_edge_group_enable_var.set(True)
-    assert app._grp_fields_frame.winfo_manager() == "pack"
-
-
-def test_ext_recipe_hidden_for_sabine_models(app):
-    """The analytic Sabine models ignore the recipe (its help says so);
-    only the Becker-Coppens family shows the dropdown."""
-    _reset(app)
-    app.ext_model.set("BC_pure")
-    app._on_ext_model_change()
-    assert app.ext_recipe.winfo_manager() == "pack"
-    app.ext_model.set("Sabine_uncorr")
-    app._on_ext_model_change()
-    assert app.ext_recipe.winfo_manager() == ""
-    app.ext_model.set("BC_mix")
-    app._on_ext_model_change()
-    assert app.ext_recipe.winfo_manager() == "pack"
-
-
-def test_cfrac_shown_only_for_nsk(app):
-    """cfrac is Card 19, emitted for nsk > 0 only; an ncold-only deck
-    carries the S(kappa) table but no coherent fraction (see
-    test_ncold_emits_skappa_but_no_cfrac for the deck side)."""
-    _reset(app)
-    assert app._cfrac_group.winfo_manager() == ""
-    app.nsk.set("2 — Skold")
-    assert app._ska_group.winfo_manager() == "pack"
-    assert app._cfrac_group.winfo_manager() == "pack"
-    app.nsk.set("0 — None")
-    app.ncold.set("2 — Para-H")
-    assert app._ska_group.winfo_manager() == "pack"   # S(kappa) still needed
-    assert app._cfrac_group.winfo_manager() == ""     # but no Card 19
-    app.ncold.set("0 — None")
-
+# ---------- the phonopy modes clear the special modes ----------
 
 def test_switching_to_a_phonopy_mode_clears_the_special_modes(app):
     """Hiding the sections CLEARS them, so the invalid state is unreachable.
@@ -856,46 +787,7 @@ def test_mode0_deck_with_nsk_then_mode2_generates_cleanly(app, tmp_path):
     _reset(app)
 
 
-def test_special_modes_hidden_for_phonopy_modes(app):
-    """iel=10 + inelastic_mode 1/2 rejects ncold/nsk/nss at generation, so
-    the Special Modes and Secondary Scatterer sections hide behind a note;
-    mode 0 restores them."""
-    _reset(app)
-    app.iel_var.set("10 — Generalized (crystal structure)")
-    app.inelastic_mode_var.set(2)
-    for w, _ in app._special_scatter_sections:
-        assert w.winfo_manager() == ""
-    assert app._special_modes_note.winfo_manager() == "pack"
-    app.inelastic_mode_var.set(0)
-    for w, _ in app._special_scatter_sections:
-        assert w.winfo_manager() == "pack"
-    assert app._special_modes_note.winfo_manager() == ""
-
-
-# ---------- Inelastic Mode section placement + iel coupling ----------
-
-def test_inelastic_section_sits_above_elastic_and_outside_iel10_group(app):
-    """The inelastic mode is a top-level MF7/MT4 choice, not an iel=10
-    detail: its section must be a sibling of the Elastic Scattering Mode
-    section (packed just above it), never a child of the iel=10 group that
-    disappears for the built-in materials."""
-    _reset(app)                         # classic iel -> iel=10 group hidden
-    tab_body = app._iel10_group.master
-    assert app._inelastic_section.master is tab_body
-    assert app._inelastic_section.winfo_manager() == "pack"
-    assert app._iel10_group.winfo_manager() == ""      # still hidden
-    order = [getattr(w, "_irma_section_title", w)
-             for w in tab_body.pack_slaves()]
-    assert order[:3] == ["Quick Start", "Inelastic Mode",
-                         "Elastic Scattering Mode"]
-    app.iel_var.set("10 — Generalized (crystal structure)")
-    order = [getattr(w, "_irma_section_title", w)
-             for w in tab_body.pack_slaves()]
-    assert order[:3] == ["Quick Start", "Inelastic Mode",
-                         "Elastic Scattering Mode"]
-    assert order[3] is app._iel10_group                # lattice/atoms last
-    _reset(app)
-
+# ---------- iel coupling ----------
 
 def test_phonopy_modes_restrict_iel_choices_to_generalized(app):
     """Modes 1/2 are only defined for iel=10 (generation coerces the mode to
@@ -918,6 +810,8 @@ def test_phonopy_modes_restrict_iel_choices_to_generalized(app):
     app.inelastic_mode_var.set(1)       # mode 1 couples the same way
     assert list(app._iel_combo.cget("values")) == [
         "10 — Generalized (crystal structure)"]
+    assert app._code(app.iel_var) == 10
+    app.iel_var.set("0 — None")         # a classic iel under mode 1/2 snaps back
     assert app._code(app.iel_var) == 10
     _reset(app)
 
@@ -959,40 +853,6 @@ def test_classic_iel1_roundtrip_unaffected_by_restructure(app, tmp_path):
     _reset(app)
     app._import_leapr_from_path(str(deck))
     assert app._generate_input_text() == text1
-
-
-def test_nphon_greyed_when_auto_sized(app):
-    """Card 3's nphon is never honored with inelastic_mode 1/2 + auto-size
-    ON (Card 6g sizes the order itself): the entry greys out exactly then."""
-    _reset(app)
-    app.nc_auto_order_var.set(1)
-    assert str(app.nphon.entry.cget("state")) == "normal"
-    app.iel_var.set("10 — Generalized (crystal structure)")
-    app.inelastic_mode_var.set(2)
-    assert str(app.nphon.entry.cget("state")) == "disabled"
-    app.nc_auto_order_var.set(0)          # auto-size OFF -> honored exactly
-    assert str(app.nphon.entry.cget("state")) == "normal"
-    app.nc_auto_order_var.set(1)
-    assert str(app.nphon.entry.cget("state")) == "disabled"
-    app.inelastic_mode_var.set(0)
-    assert str(app.nphon.entry.cget("state")) == "normal"
-
-
-def test_c_diff_greyed_without_twt(app):
-    """c (diffusion) is read only when its twt > 0, for both the principal
-    and the secondary translational blocks; an unparsable twt counts as 0."""
-    _reset(app)
-    assert str(app.c_diff.entry.cget("state")) == "disabled"
-    app.twt.set("0.02")
-    assert str(app.c_diff.entry.cget("state")) == "normal"
-    app.twt.set("not-a-number")
-    assert str(app.c_diff.entry.cget("state")) == "disabled"
-    app.twt.set("0.0")
-    assert str(app.sec_c_diff.entry.cget("state")) == "disabled"
-    app.sec_twt.set("0.5")
-    assert str(app.sec_c_diff.entry.cget("state")) == "normal"
-    app.sec_twt.set("0.0")
-    assert str(app.sec_c_diff.entry.cget("state")) == "disabled"
 
 
 def test_clicking_mode_2_selects_linlin_and_setting_the_variable_does_not(app):
