@@ -101,7 +101,7 @@ def test_cutoff_summary_reports_removed_weight_and_displacement_change():
     assert quiet["trace_u_before_A2"] == pytest.approx(quiet["trace_u_after_A2"])
 
 
-def test_spectra_and_ncrystal_configs_carry_and_validate_the_cutoff():
+def test_spectra_and_ncrystal_configs_carry_and_validate_the_cutoff(tmp_path):
     from irma.spectra.config import SpectraConfigError
     from irma.ncrystal.config import NCrystalExportConfig
     from irma.ncrystal.provenance import collect_provenance
@@ -120,7 +120,9 @@ def test_spectra_and_ncrystal_configs_carry_and_validate_the_cutoff():
         with pytest.raises(SpectraConfigError, match="min_phonon_energy_meV"):
             NCrystalExportConfig.from_dict({**base, "export": {"material_id": "g",
                                                                "min_phonon_energy_meV": bad}})
-    meta = collect_provenance(phonopy_yaml=None, mesh=(4, 4, 4), temperature_K=296.0,
+    yaml_path = tmp_path / "phonopy.yaml"
+    yaml_path.write_text("phonopy: data\n")
+    meta = collect_provenance(phonopy_yaml=yaml_path, mesh=(4, 4, 4), temperature_K=296.0,
                               num_directions=10, multiphonon_num_directions=5,
                               multiphonon_max_order="auto", min_phonon_energy_meV=0.5)
     assert meta["min_phonon_energy_meV"] == "0.5"
