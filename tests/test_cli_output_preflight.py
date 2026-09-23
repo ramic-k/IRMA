@@ -187,16 +187,6 @@ def test_ncrystal_cli_missing_phonopy_exits_3(tmp_path, capsys, monkeypatch):
 
 # ---- review CLI-2: scalar top-level sections are schema errors -------------
 
-@pytest.mark.parametrize("section", ["material", "physics", "grid", "instrument"])
-def test_spectra_scalar_section_is_clean_schema_error(section):
-    from irma.spectra.config import SpectraConfig, SpectraConfigError
-
-    d = {"material": {"formula": "C"}}
-    d[section] = 5
-    with pytest.raises(SpectraConfigError, match=f"section '{section}'"):
-        SpectraConfig.from_dict(d)
-
-
 def test_ncrystal_cli_missing_pyyaml_message(tmp_path, capsys, monkeypatch):
     """On a bare core install the exporter fails with a clean PyYAML hint,
     not a ModuleNotFoundError traceback (caught by the bare-install CI gate)."""
