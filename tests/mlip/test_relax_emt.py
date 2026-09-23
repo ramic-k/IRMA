@@ -200,15 +200,21 @@ def test_jitter_never_fires_when_converged():
     assert res.jitter_cycles_used == 0
 
 
-def test_jitter_cycles_run_on_a_noise_floor_stall_and_keep_best():
+def test_jitter_cycles_run_on_a_noise_floor_stall_and_keep_best(monkeypatch):
+    # record every residual relax() sees; with 5 steps per cycle the last
+    # kick ends worse than the best frame, so only the restore returns it
+    from irma.mlip import relax as relax_mod
+    seen, real = [], relax_mod._max_force
+    monkeypatch.setattr(relax_mod, "_max_force",
+                        lambda a: seen.append(real(a)) or seen[-1])
     atoms, calc = _floor_system()
-    res = relax(atoms, calc, fmax=0.01, nmax=150, jitter_cycles=2)
+    res = relax(atoms, calc, fmax=0.01, nmax=5, jitter_cycles=2)
     # the spurious 0.05 eV/A force on atom 0 is unbeatable: never converged,
     # both cycles spent, and the returned frame is the best one visited
     assert not res.converged
     assert res.jitter_cycles_used == 2
-    assert res.fmax_achieved == pytest.approx(0.05, abs=0.02)
-    assert res.steps_taken > 150            # accumulated across cycles
+    assert res.steps_taken > 5              # accumulated across cycles
+    assert res.fmax_achieved == pytest.approx(min(seen), abs=1e-12)
     import numpy as np
     final = float(np.linalg.norm(calc.get_forces(res.atoms), axis=1).max())
     assert final == pytest.approx(res.fmax_achieved, abs=1e-6)
