@@ -102,7 +102,7 @@ def test_lat0_run_is_deterministic(lat0_tapes):
     assert open(rerun).read() == open(lat0_tapes[1]).read()
 
 
-def test_lat0_model_layer_reuse_is_bit_identical(tmp_path, capsys):
+def test_lat0_model_layer_reuse_is_bit_identical(capsys):
     """Two-layer context cache: a lat=0 deck's
     physical Q/E grids scale with kT, so a second temperature MISSES the
     full-context key — but it must HIT the model layer (phonopy load + mesh
@@ -120,7 +120,7 @@ def test_lat0_model_layer_reuse_is_bit_identical(tmp_path, capsys):
     kw = dict(
         alpha=np.array(_ALPHA_LAT1), beta=np.array(_BETA_LAT1), lat=0,
         awr=11.898, phonopy_yaml_path=_YAML, mesh_dim=[4, 4, 4], num_jobs=1,
-        workdir=str(tmp_path), inelastic_mode=1, controls=controls)
+        inelastic_mode=1, controls=controls)
 
     shared = {}
     run_noncubic_standalone_sab(

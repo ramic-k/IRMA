@@ -14,7 +14,6 @@ there are unaffected. Kept byte-for-byte identical so the ENDF tape is unchanged
 """
 import dataclasses
 import json
-import os
 from math import sqrt
 from pathlib import Path
 
@@ -41,7 +40,7 @@ from irma.core.endf_writer import write_endf_output, _LN_FLOAT_MAX
 
 def _noncubic_mt4_step(crystal_info, ssm, itemp, alpha, beta, nalpha,
                        nbeta, lat, arat, tev, tempr_arr, ntempr, awr,
-                       nphon, tbeta, output_file):
+                       nphon, tbeta):
     """One temperature of the mode-1/2 path: compute the in-process
     noncubic SAB, inject it into ssm[:, :, itemp], and refresh the
     per-species Debye-Waller traces. Returns (f0, tbar, deltab,
@@ -165,7 +164,6 @@ def _noncubic_mt4_step(crystal_info, ssm, itemp, alpha, beta, nalpha,
         mesh_dim=crystal_info['nc_mesh_dim'],
         born_path=crystal_info.get('nc_born_path'),
         num_jobs=nc_ncpu_run,
-        workdir=os.path.dirname(os.path.abspath(output_file)) or ".",
         inelastic_mode=inelastic_mode_value,
         site_scattering_lengths_angstrom=[
             float(at['b_coh']) * 1.0e-5 for at in atom_types_expanded
@@ -613,7 +611,7 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
                 f0, tbar, deltab, F_matrix_all = _noncubic_mt4_step(
                     crystal_info, ssm, itemp, alpha, beta, nalpha,
                     nbeta, lat, arat, tev, tempr_arr, ntempr, awr,
-                    nphon, tbeta, output_file)
+                    nphon, tbeta)
             else:
                 f0, tbar, deltab = contin(ssm[:, :, itemp], alpha, beta,
                                           nalpha, nbeta, lat, arat, tev,

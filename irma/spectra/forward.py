@@ -52,7 +52,6 @@ _ENGINE_CONTEXT_CACHE: dict = {}
 def _get_engine_context(*, phonopy_yaml, force_constants, force_sets,
                         born_path, mesh, Q_support, E_support, num_directions,
                         multiphonon_num_directions, n_jobs,
-                        multiphonon_max_order,
                         site_scattering_lengths_angstrom,
                         site_incoherent_cross_sections_barn,
                         scattering_lengths_json,
@@ -67,7 +66,7 @@ def _get_engine_context(*, phonopy_yaml, force_constants, force_sets,
     from irma.core.standalone_sab import get_or_build_context, _grid_digest
     grid_key = ("physical-qe", _grid_digest(np.asarray(Q_support, float)),
                 _grid_digest(np.asarray(E_support, float)))
-    context, key = get_or_build_context(
+    return get_or_build_context(
         phonopy_yaml=str(phonopy_yaml),
         force_constants=force_constants, force_sets=force_sets,
         born=born_path, mesh_dim=[int(m) for m in mesh], grid_key=grid_key,
@@ -76,18 +75,11 @@ def _get_engine_context(*, phonopy_yaml, force_constants, force_sets,
         num_directions=int(num_directions),
         multiphonon_num_directions=int(multiphonon_num_directions),
         num_jobs=int(n_jobs),
-        multiphonon_max_order=int(multiphonon_max_order),
         scattering_lengths_json=scattering_lengths_json,
         incoherent_cross_sections_json=incoherent_cross_sections_json,
         site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
         site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
         context_cache=_ENGINE_CONTEXT_CACHE)
-    # Eviction lives INSIDE get_or_build_context (keep current context + its
-    # model layer). Re-evicting here to the context key alone would delete
-    # the model-layer entry and silently defeat the two-layer cache split
-    # for spectra (every grid change would redo the phonopy load + mesh
-    # eigensolves + star-average).
-    return context
 
 
 def _pick_sqe_key(output_arrays, multiphonon_max_order, inelastic_mode):
@@ -623,7 +615,6 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
                 num_directions=num_directions,
                 multiphonon_num_directions=multiphonon_num_directions,
                 n_jobs=n_jobs,
-                multiphonon_max_order=multiphonon_max_order,
                 site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
                 site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
                 scattering_lengths_json=scattering_lengths_json,
@@ -944,7 +935,6 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
                 num_directions=num_directions,
                 multiphonon_num_directions=multiphonon_num_directions,
                 n_jobs=n_jobs,
-                multiphonon_max_order=multiphonon_max_order,
                 site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
                 site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
                 scattering_lengths_json=scattering_lengths_json,

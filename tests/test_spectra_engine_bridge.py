@@ -16,7 +16,7 @@ from irma.core.standalone_sab import _pick_sab_key
 @pytest.mark.parametrize("order", [1, 2, 100])
 def test_pick_sqe_key_tracks_pick_sab_key(mode, order):
     """The sqe-key selector is the sab-key selector with prefix/suffix swap."""
-    sab = _pick_sab_key(None, order, mode)
+    sab = _pick_sab_key(order, mode)
     sqe = _pick_sqe_key(None, order, mode)
     expected = sab.replace("sab_asym_downscatter_", "sqe_") + "_barn_per_meV"
     assert sqe == expected

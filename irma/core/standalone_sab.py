@@ -1,18 +1,11 @@
-"""Helpers for the in-process noncubic SAB workflow used by inelastic_mode=1/2.
-
-Progress prints here go to STDOUT (flushed), deliberately sharing the channel
-the rest of the noncubic engine uses (noncubic_engine / noncubic_inelastic_
-context), so a TSL deck run logs on a single stream. Note the spectra CLI
-routes ITS provenance lines to stderr, so a modes-1/2 spectra run splits
-progress across both streams; routing the whole engine through one channel
-would be an engine-wide change, not something this module can do alone.
-"""
+"""Helpers for the in-process noncubic SAB workflow used by inelastic_mode=1/2."""
 
 from __future__ import annotations
 
 import hashlib
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -27,40 +20,12 @@ from irma.core.sab_grids import irma_grid_to_physical_qe as _irma_grid_to_physic
 _CONTEXT_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
 
 
-def _pick_sab_key(
-    output_arrays,
-    multiphonon_max_order: int,
-    inelastic_mode: int,
-) -> str:
-    """Select the SAB array key for the given mode and (effective) order.
-
-    The key is a pure function of ``(inelastic_mode, multiphonon_max_order)``.
-    ``output_arrays`` is used only to validate that the selected key is
-    actually present, turning a desync between this mapping and the engine's
-    population guards into a clear error instead of a bare KeyError at the
-    later dereference.
-    """
-    if inelastic_mode == 2:
-        if multiphonon_max_order >= 2:
-            key = "sab_asym_downscatter_one_phonon_total_plus_incoherent_approx_multiphonon"
-        else:
-            key = "sab_asym_downscatter_one_phonon_total"
-    elif inelastic_mode == 1:
-        if multiphonon_max_order >= 2:
-            key = "sab_asym_downscatter_incoherent_approx_n1_term_plus_incoherent_approx_multiphonon"
-        else:
-            key = "sab_asym_downscatter_incoherent_approx_n1_term"
-    else:
-        raise ValueError(
-            f"_pick_sab_key: inelastic_mode must be 1 or 2, got {inelastic_mode}")
-    if output_arrays is not None and key not in output_arrays:
-        raise KeyError(
-            f"_pick_sab_key selected '{key}' for inelastic_mode={inelastic_mode}, "
-            f"multiphonon_max_order={multiphonon_max_order}, but it is not present "
-            "in the engine output arrays — the SAB-key mapping and the engine's "
-            "array-population guards have desynchronized."
-        )
-    return key
+def _pick_sab_key(multiphonon_max_order: int, inelastic_mode: int) -> str:
+    """Engine output key of the S(alpha, beta) law for the mode and effective order."""
+    base = {1: "incoherent_approx_n1_term", 2: "one_phonon_total"}[inelastic_mode]
+    if multiphonon_max_order >= 2:
+        base += "_plus_incoherent_approx_multiphonon"
+    return "sab_asym_downscatter_" + base
 
 
 def _file_identity(path):
@@ -113,128 +78,83 @@ def _grid_digest(values: np.ndarray) -> str:
 def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
                          mesh_dim, grid_key, q_grid_ang_inv, e_grid_mev,
                          num_directions, multiphonon_num_directions, num_jobs,
-                         multiphonon_max_order,
                          min_phonon_energy_mev=0.0,
                          scattering_lengths_json=None,
                          incoherent_cross_sections_json=None,
                          site_scattering_lengths_angstrom=None,
                          site_incoherent_cross_sections_barn=None,
                          context_cache=None, preloaded_full_mesh=None):
-    """Digest-keyed lookup/build of the temperature-independent compute context.
+    """Return the cached compute context for these inputs, or build it.
 
-    One key discipline for every consumer (the ENDF standalone path and the
-    spectra bridge): identical model + mesh + grids + sampling -> the cached
-    context; anything else -> a fresh build. ``build_compute_context`` does not
-    consume multiphonon_max_order; it stays in the key as a conservative
-    over-key (a hit can never return wrong arrays). ``preloaded_full_mesh`` skips the duplicate full-mesh
-    eigensolve on a build.
-
-    Two cache layers: besides the full-context entry,
-    the MODEL layer (phonopy load + mesh eigensolves + star-averaged
-    projections — see ``build_model_context``) is cached separately under a
-    key of the model inputs only. A lat=0 multi-temperature deck misses the
-    full-context key at every temperature (its physical Q/E grids scale with
-    kT) but hits the model key, so only the cheap grid layer is rebuilt. The
-    model arrays are reused by reference — bit-identical inputs reach the
-    compute phase.
+    The cache keeps the current context and, under a key of the model inputs
+    alone, its model layer (phonopy load, mesh eigensolves, star-averaged
+    projections; see ``build_model_context``). A lat=0 multi-temperature deck
+    has new Q/E grids at every temperature, so it misses the context but
+    reuses the model layer. ``preloaded_full_mesh`` skips the duplicate
+    full-mesh eigensolve on a build.
     """
-    from irma.core.noncubic_inelastic import build_compute_context
+    from irma.core.noncubic_inelastic_context import build_compute_context
 
     input_ids = _model_input_identities(phonopy_yaml, force_constants,
                                         force_sets, born)
-    model_key = (
-        "__noncubic_model__",
-        input_ids,
-        tuple(int(x) for x in mesh_dim),
-        float(min_phonon_energy_mev),
-    )
+    mesh_key = tuple(int(x) for x in mesh_dim)
+    model_key = ("__noncubic_model__", input_ids, mesh_key,
+                 float(min_phonon_energy_mev))
     context_key = (
         input_ids,
-        tuple(int(x) for x in mesh_dim),
+        mesh_key,
         grid_key,
         int(num_directions),
         int(multiphonon_num_directions),
-        int(max(1, int(num_jobs))),
-        int(multiphonon_max_order),
+        max(1, int(num_jobs)),
         float(min_phonon_energy_mev),
         scattering_lengths_json,
         incoherent_cross_sections_json,
         None if site_scattering_lengths_angstrom is None else _grid_digest(
-            np.asarray(site_scattering_lengths_angstrom, dtype=float)),
+            site_scattering_lengths_angstrom),
         None if site_incoherent_cross_sections_barn is None else _grid_digest(
-            np.asarray(site_incoherent_cross_sections_barn, dtype=float)),
+            site_incoherent_cross_sections_barn),
     )
     cache = _CONTEXT_CACHE if context_cache is None else context_cache
     context = cache.get(context_key)
     if context is None:
-        model_context = cache.get(model_key)
-        print("Building noncubic compute context...", flush=True)
-        args_context = type("Args", (), {
-            "phonopy_yaml": str(phonopy_yaml),
-            "force_constants": None if force_constants is None else str(force_constants),
-            "force_sets": None if force_sets is None else str(force_sets),
-            "born": None if born is None else str(born),
-            "mesh": [int(mesh_dim[0]), int(mesh_dim[1]), int(mesh_dim[2])],
-            "num_directions": int(num_directions),
-            "scattering_lengths_json": scattering_lengths_json,
-            "scattering_lengths_file": None,
-            "incoherent_cross_sections_json": incoherent_cross_sections_json,
-            "incoherent_cross_sections_file": None,
-            "site_scattering_lengths_angstrom": site_scattering_lengths_angstrom,
-            "site_incoherent_cross_sections_barn": site_incoherent_cross_sections_barn,
-            "jobs": int(max(1, int(num_jobs))),
-            "q_chunk_size": 20000,
-            "multiphonon_num_directions": int(multiphonon_num_directions),
-            "multiphonon_max_order": int(multiphonon_max_order),
-            "min_phonon_energy_mev": float(min_phonon_energy_mev),
-        })()
-        if model_context is None:
-            # Positional/keyword form kept stub-compatible: tests monkeypatch
-            # build_compute_context with (args, q, e, preloaded_full_mesh=None)
-            # fakes, so the model_context kwarg is only passed on a model hit.
-            context = build_compute_context(args_context, q_grid_ang_inv, e_grid_mev,
-                                            preloaded_full_mesh=preloaded_full_mesh)
-        else:
-            context = build_compute_context(args_context, q_grid_ang_inv, e_grid_mev,
-                                            preloaded_full_mesh=preloaded_full_mesh,
-                                            model_context=model_context)
+        args_context = SimpleNamespace(
+            phonopy_yaml=str(phonopy_yaml),
+            force_constants=None if force_constants is None else str(force_constants),
+            force_sets=None if force_sets is None else str(force_sets),
+            born=None if born is None else str(born),
+            mesh=list(mesh_key),
+            num_directions=int(num_directions),
+            scattering_lengths_json=scattering_lengths_json,
+            scattering_lengths_file=None,
+            incoherent_cross_sections_json=incoherent_cross_sections_json,
+            incoherent_cross_sections_file=None,
+            site_scattering_lengths_angstrom=site_scattering_lengths_angstrom,
+            site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
+            jobs=max(1, int(num_jobs)),
+            q_chunk_size=20000,
+            multiphonon_num_directions=int(multiphonon_num_directions),
+            min_phonon_energy_mev=float(min_phonon_energy_mev),
+        )
+        context = build_compute_context(args_context, q_grid_ang_inv, e_grid_mev,
+                                        preloaded_full_mesh=preloaded_full_mesh,
+                                        model_context=cache.get(model_key))
         cache[context_key] = context
-        # Cache the model layer (phonopy/mesh/star-average state) under its
-        # model-inputs-only key so the next grid-key miss for the same model
-        # (lat=0: every further temperature card) rebuilds only the grid
-        # layer. Shared by reference with the full context — no extra memory.
-        built_model = context.get("_model_context") if isinstance(context, dict) else None
-        if built_model is not None:
-            cache[model_key] = built_model
-        print("Noncubic compute context cached.", flush=True)
+        if context.get("_model_context") is not None:
+            cache[model_key] = context["_model_context"]
     else:
         print("Reusing cached noncubic inelastic context.", flush=True)
-    # Keep-only-current-key eviction (same size-one policy as the spectra
-    # bridge, forward.py): within a run, context reuse is strictly sequential —
-    # lat=1 multi-temperature decks re-hit ONE temperature-independent key,
-    # while lat=0 decks produce a NEW key per temperature and never revisit an
-    # old one. Without this, a lat=0 multi-temperature deck accumulates one
-    # full context (O(100 MB) at production sampling) per temperature in
-    # crystal_info's cache for the whole run_leapr call. The current model
-    # layer is kept alongside (same arrays by reference, no extra memory).
+    # Keep only the current context and its model layer: reuse within a run
+    # is sequential, and one context can hold O(100 MB).
     for stale in [k for k in cache if k not in (context_key, model_key)]:
         del cache[stale]
-    return context, context_key
+    return context
 
 
 def _last_nonzero_beta(beta_downscatter_abs: np.ndarray, sab_qe: np.ndarray) -> float | None:
-    """Return the last nonzero beta support in an ``(alpha, beta)`` SAB array."""
-    beta_arr = np.asarray(beta_downscatter_abs, dtype=float)
-    sab_arr = np.asarray(sab_qe, dtype=float)
-    if sab_arr.ndim != 2:
-        raise ValueError("Expected a 2D SAB array.")
-    if sab_arr.shape[1] != len(beta_arr):
-        raise ValueError("Beta grid length does not match SAB shape.")
-    row_max = np.max(sab_arr, axis=0)
-    nz = np.flatnonzero(row_max > 0.0)
-    if nz.size == 0:
-        return None
-    return float(beta_arr[nz[-1]])
+    """Largest beta at which some alpha row of an ``(alpha, beta)`` array is positive."""
+    nz = np.flatnonzero(np.max(sab_qe, axis=0) > 0.0)
+    return float(beta_downscatter_abs[nz[-1]]) if nz.size else None
 
 
 def _truncation_warning(sab_key, beta_downscatter_abs, sab_qe, needed_beta):
@@ -276,7 +196,6 @@ def run_noncubic_standalone_sab(
     mesh_dim: list[int] | tuple[int, int, int],
     born_path: str | None = None,
     num_jobs: int,
-    workdir: str | None = None,
     inelastic_mode: int = 1,
     represented_principal_site_count: int | None = None,
     principal_group_index: int = 0,
@@ -305,12 +224,6 @@ def run_noncubic_standalone_sab(
     forwarded to ``build_compute_context`` so a context-cache MISS skips the
     duplicate full-mesh eigensolve.
     """
-    if controls is None:
-        raise ValueError("run_noncubic_standalone_sab requires explicit NoncubicInelasticControls.")
-
-    workdir_path = Path(workdir or Path.cwd())
-    workdir_path.mkdir(parents=True, exist_ok=True)
-
     phonopy_yaml = Path(phonopy_yaml_path).resolve()
     # hdf5 > text FORCE_CONSTANTS > FORCE_SETS next to the yaml, or embedded
     # in the yaml itself ({} -> phonopy reads them from the yaml); raises if
@@ -330,23 +243,18 @@ def run_noncubic_standalone_sab(
             )
 
     multiphonon_max_order = int(controls.multiphonon_max_order)
-    auto_multiphonon_order = bool(getattr(controls, "auto_multiphonon_order", False))
-    min_phonon_energy_mev = float(
-        getattr(controls, "min_phonon_energy_mev", 0.0))
+    auto_multiphonon_order = bool(controls.auto_multiphonon_order)
+    min_phonon_energy_mev = float(controls.min_phonon_energy_mev)
     num_directions = int(controls.num_directions)
     multiphonon_num_directions = int(controls.multiphonon_num_directions)
 
-    q_grid_ang_inv, e_grid_mev, alpha_abs_expected, beta_downscatter_abs_expected = _irma_grid_to_physical_qe(
-        alpha, beta, lat, temperature_k, awr
-    )
-
-    coherent_summary = "cohavg=directions"
+    q_grid_ang_inv, e_grid_mev, _, _ = _irma_grid_to_physical_qe(
+        alpha, beta, lat, temperature_k, awr)
 
     print(
         "Starting in-process noncubic SAB driver: "
         f"mode={inelastic_mode}, mesh={tuple(int(x) for x in mesh_dim)}, "
         f"nac={'on (' + born.name + ')' if born is not None else 'off'}, "
-        f"{coherent_summary}, "
         f"multiphonon_max_order={multiphonon_max_order}"
         f"{' [auto-size]' if auto_multiphonon_order else ''}, jobs={max(1, int(num_jobs))}"
     , flush=True)
@@ -368,14 +276,13 @@ def run_noncubic_standalone_sab(
             _grid_digest(e_grid_mev),
         )
 
-    context, _context_key = get_or_build_context(
+    context = get_or_build_context(
         phonopy_yaml=phonopy_yaml, force_constants=force_constants,
         force_sets=force_sets, born=born, mesh_dim=mesh_dim,
         grid_key=grid_key, q_grid_ang_inv=q_grid_ang_inv,
         e_grid_mev=e_grid_mev, num_directions=num_directions,
         multiphonon_num_directions=multiphonon_num_directions,
         num_jobs=num_jobs,
-        multiphonon_max_order=multiphonon_max_order,
         min_phonon_energy_mev=min_phonon_energy_mev,
         scattering_lengths_json=scattering_lengths_json,
         incoherent_cross_sections_json=incoherent_cross_sections_json,
@@ -383,7 +290,6 @@ def run_noncubic_standalone_sab(
         site_incoherent_cross_sections_barn=site_incoherent_cross_sections_barn,
         context_cache=context_cache, preloaded_full_mesh=preloaded_full_mesh)
 
-    print("Launching noncubic SAB compute phase...", flush=True)
     result = run_noncubic_sab_inprocess(
         inelastic_mode=inelastic_mode,
         phonopy_yaml=phonopy_yaml,
@@ -394,7 +300,6 @@ def run_noncubic_standalone_sab(
         mesh=mesh_dim,
         q_grid_ang_inv=q_grid_ang_inv,
         e_grid_mev=e_grid_mev,
-        output_prefix=workdir_path / "noncubic_sab_unused",
         sab_mass_ratio=awr,
         num_directions=num_directions,
         multiphonon_num_directions=multiphonon_num_directions,
@@ -415,7 +320,6 @@ def run_noncubic_standalone_sab(
         write_output_files=False,
         precomputed_thermal_mats=precomputed_thermal_mats,
     )
-    print("Noncubic SAB compute phase complete.", flush=True)
 
     output_arrays = result["output_arrays"]
     # Auto-sizing resolves the multiphonon order INSIDE compute_from_args, so the SAB-key
@@ -425,52 +329,22 @@ def run_noncubic_standalone_sab(
     effective_multiphonon_max_order = int(
         result.get("metadata", {}).get("multiphonon_max_order", multiphonon_max_order)
     )
-    sab_key = _pick_sab_key(
-        output_arrays,
-        effective_multiphonon_max_order,
-        inelastic_mode,
-    )
-    alpha_abs = np.asarray(output_arrays["alpha"], dtype=float)
+    sab_key = _pick_sab_key(effective_multiphonon_max_order, inelastic_mode)
     beta_downscatter_abs = np.asarray(output_arrays["beta_downscatter_abs"], dtype=float)
-    sab_downscatter = np.asarray(output_arrays[sab_key], dtype=float)
+    sab_qe = np.asarray(output_arrays[sab_key], dtype=float)
 
-    if not np.allclose(alpha_abs, alpha_abs_expected, rtol=1.0e-8, atol=1.0e-10):
-        raise ValueError("Standalone alpha grid does not match the IRMA-requested physical alpha grid")
-    if not np.allclose(beta_downscatter_abs, beta_downscatter_abs_expected, rtol=1.0e-8, atol=1.0e-10):
-        raise ValueError("Standalone beta grid does not match the IRMA-requested physical beta grid")
-
-    # The engine output orientation is contractually (alpha, beta): every
-    # sab_* array is allocated (num_q, num_e) and convert_sqe_to_asym_downscatter_sab
-    # is a shape-preserving scalar multiply. We assert that contract rather than
-    # inferring orientation from the shape — shape inference is ambiguous on a
-    # square (nalpha == nbeta) grid, where a transposed array would be silently
-    # accepted as (alpha, beta) and re-transposed.
-    expected_qe_shape = (len(alpha_abs), len(beta_downscatter_abs))
-    if sab_downscatter.shape != expected_qe_shape:
-        raise ValueError(
-            f"Unexpected standalone SAB shape {sab_downscatter.shape}; the engine "
-            f"contract is (alpha, beta) = {expected_qe_shape}"
-        )
-    sab_qe = sab_downscatter
-
-    last_nonzero_beta = _last_nonzero_beta(beta_downscatter_abs, sab_qe)
     truncation_warning = _truncation_warning(
         sab_key, beta_downscatter_abs, sab_qe,
         result.get("metadata", {}).get("needed_multiphonon_beta_support"))
     if truncation_warning:
         print(f"WARNING: {truncation_warning}", flush=True)
 
-    ssm_internal = sab_qe.T
-
     return {
-        "ssm_internal": ssm_internal,
+        "ssm_internal": sab_qe.T,
         "sab_downscatter_qe": sab_qe,
-        "alpha_abs": alpha_abs,
+        "alpha_abs": np.asarray(output_arrays["alpha"], dtype=float),
         "beta_downscatter_abs": beta_downscatter_abs,
-        "stdout": "",
-        "stderr": "",
         "selected_sab_key": sab_key,
-        "last_nonzero_beta": last_nonzero_beta,
         # Surface the engine's anisotropic Debye-Waller state (thermal-displacement
         # matrices + primitive geometry) so consumers (e.g. the NCrystal exporter)
         # can build the anisotropic-DW elastic line from the SAME phonon

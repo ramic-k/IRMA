@@ -1,10 +1,8 @@
-"""Lazy in-process access to the validated noncubic inelastic driver."""
+"""Controls and help text for the noncubic inelastic path (inelastic_mode=1/2)."""
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -47,49 +45,18 @@ MIN_PHONON_ENERGY_HELP = (
     "warning above 1%.")
 
 
-def _impl() -> Any:
-    """Import the engine lazily so this facade stays cheap to import."""
-    return importlib.import_module("irma.core.noncubic_engine")
-
-
-def parse_args(argv=None):
-    """See :func:`irma.core.noncubic_engine.parse_args`."""
-    return _impl().parse_args(argv)
-
-
-def compute_from_args(*args, **kwargs):
-    """See :func:`irma.core.noncubic_engine.compute_from_args`."""
-    return _impl().compute_from_args(*args, **kwargs)
-
-
-def build_compute_context(*args, **kwargs):
-    """See :func:`irma.core.noncubic_inelastic_context.build_compute_context`."""
-    from irma.core.noncubic_inelastic_context import build_compute_context as _build
-
-    return _build(*args, **kwargs)
-
-
-def write_results(*args, **kwargs):
-    """See :func:`irma.core.noncubic_engine.write_results`."""
-    return _impl().write_results(*args, **kwargs)
-
-
 def run_noncubic_sab_inprocess(*args, **kwargs):
-    """See :func:`irma.core.noncubic_engine.run_noncubic_sab_inprocess`."""
-    return _impl().run_noncubic_sab_inprocess(*args, **kwargs)
+    """See :func:`irma.core.noncubic_engine.run_noncubic_sab_inprocess`.
 
+    Imported on call so that importing the controls stays cheap.
+    """
+    from irma.core.noncubic_engine import run_noncubic_sab_inprocess as run
 
-def main(argv=None):
-    """See :func:`irma.core.noncubic_engine.main`."""
-    return _impl().main(argv)
+    return run(*args, **kwargs)
 
 
 __all__ = [
-    "build_compute_context",
-    "compute_from_args",
-    "main",
+    "MIN_PHONON_ENERGY_HELP",
     "NoncubicInelasticControls",
-    "parse_args",
     "run_noncubic_sab_inprocess",
-    "write_results",
 ]

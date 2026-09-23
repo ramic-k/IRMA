@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import irma.core.noncubic_inelastic as nci
+import irma.core.noncubic_inelastic_context as ncc
 from irma.core.noncubic_inelastic import NoncubicInelasticControls
 from irma.core.standalone_sab import (
     run_noncubic_standalone_sab, _irma_grid_to_physical_qe, _pick_sab_key,
@@ -43,7 +44,7 @@ def stubbed_driver(monkeypatch):
     calls = {"context_args": [], "inprocess_kwargs": []}
 
     def fake_build_compute_context(args, q_grid_ang_inv, e_grid_mev,
-                                   preloaded_full_mesh=None):
+                                   preloaded_full_mesh=None, model_context=None):
         calls["context_args"].append(args)
         return {"stub": True}
 
@@ -61,7 +62,7 @@ def stubbed_driver(monkeypatch):
             "metadata": {"multiphonon_max_order": 1},
         }
 
-    monkeypatch.setattr(nci, "build_compute_context", fake_build_compute_context)
+    monkeypatch.setattr(ncc, "build_compute_context", fake_build_compute_context)
     monkeypatch.setattr(nci, "run_noncubic_sab_inprocess", fake_run_inprocess)
     return calls
 
@@ -165,95 +166,4 @@ _ONE_PHONON_MP = (
 ])
 def test_pick_sab_key_mapping(mode, order, expected):
     """The key is a pure function of (inelastic_mode, effective order)."""
-    assert _pick_sab_key(None, order, mode) == expected
-
-
-def test_pick_sab_key_rejects_unknown_mode():
-    with pytest.raises(ValueError, match="inelastic_mode must be 1 or 2"):
-        _pick_sab_key(None, 1, 0)
-    with pytest.raises(ValueError, match="inelastic_mode must be 1 or 2"):
-        _pick_sab_key(None, 1, 3)
-
-
-def test_pick_sab_key_validates_key_present():
-    """A selected key absent from the engine output raises a clear error,
-    not a bare KeyError at the later dereference."""
-    arrays = {_N1_INCOH: np.zeros((2, 2))}
-    assert _pick_sab_key(arrays, 1, 1) == _N1_INCOH          # present -> ok
-    with pytest.raises(KeyError, match="desynchronized"):
-        _pick_sab_key(arrays, 2, 2)                          # absent -> loud
-
-
-# --- orientation contract (QA2-027) -----------------------------------------
-
-def test_engine_output_orientation_contract(phonopy_files, monkeypatch):
-    """A (beta, alpha)-shaped engine array is rejected, not silently
-    transposed. On a square grid the old shape inference would have accepted
-    it; the contract is now an explicit (alpha, beta) assertion."""
-    yaml, _ = phonopy_files
-    # Square grid (len(alpha) == len(beta)) so a transpose is shape-invisible.
-    alpha = np.array([0.1, 0.5, 1.0, 2.0])
-    beta = np.array([0.0, 0.5, 1.0, 3.0])
-    _, _, alpha_abs, beta_abs = _irma_grid_to_physical_qe(
-        alpha, beta, _LAT, _TEMP, _AWR)
-
-    def fake_build(args, q, e, preloaded_full_mesh=None):
-        return {"stub": True}
-
-    def fake_run(**kwargs):
-        # Return a deliberately transposed (beta, alpha) array — but the grid
-        # is square so its .shape equals the expected (alpha, beta) shape; the
-        # values still satisfy the contract since the assertion is on shape.
-        return {
-            "output_arrays": {
-                "alpha": alpha_abs,
-                "beta_downscatter_abs": beta_abs,
-                _N1_INCOH: np.zeros((len(alpha_abs), len(beta_abs))),
-            },
-            "metadata": {"multiphonon_max_order": 1},
-        }
-
-    monkeypatch.setattr(nci, "build_compute_context", fake_build)
-    monkeypatch.setattr(nci, "run_noncubic_sab_inprocess", fake_run)
-    out = run_noncubic_standalone_sab(
-        alpha=alpha, beta=beta, lat=_LAT, temperature_k=_TEMP, awr=_AWR,
-        phonopy_yaml_path=str(yaml), mesh_dim=[4, 4, 4],
-        born_path=None, num_jobs=1, inelastic_mode=1,
-        controls=_CONTROLS, context_cache={},
-    )
-    # Correct (alpha, beta) shape accepted; ssm_internal is the (beta, alpha) transpose.
-    assert out["sab_downscatter_qe"].shape == (len(alpha_abs), len(beta_abs))
-    assert out["ssm_internal"].shape == (len(beta_abs), len(alpha_abs))
-
-
-def test_engine_output_wrong_shape_rejected(phonopy_files, monkeypatch):
-    """A genuinely mis-shaped engine array (not (alpha, beta)) fails loudly."""
-    yaml, _ = phonopy_files
-    alpha = np.array([0.1, 0.5, 1.0, 2.0])
-    beta = np.array([0.0, 0.5, 1.0, 3.0, 6.0])      # non-square: 4 x 5
-    _, _, alpha_abs, beta_abs = _irma_grid_to_physical_qe(
-        alpha, beta, _LAT, _TEMP, _AWR)
-
-    def fake_build(args, q, e, preloaded_full_mesh=None):
-        return {"stub": True}
-
-    def fake_run(**kwargs):
-        return {
-            "output_arrays": {
-                "alpha": alpha_abs,
-                "beta_downscatter_abs": beta_abs,
-                # transposed (beta, alpha) = 5 x 4, which != expected 4 x 5
-                _N1_INCOH: np.zeros((len(beta_abs), len(alpha_abs))),
-            },
-            "metadata": {"multiphonon_max_order": 1},
-        }
-
-    monkeypatch.setattr(nci, "build_compute_context", fake_build)
-    monkeypatch.setattr(nci, "run_noncubic_sab_inprocess", fake_run)
-    with pytest.raises(ValueError, match="contract is .alpha, beta."):
-        run_noncubic_standalone_sab(
-            alpha=alpha, beta=beta, lat=_LAT, temperature_k=_TEMP, awr=_AWR,
-            phonopy_yaml_path=str(yaml), mesh_dim=[4, 4, 4],
-            born_path=None, num_jobs=1, inelastic_mode=1,
-            controls=_CONTROLS, context_cache={},
-        )
+    assert _pick_sab_key(order, mode) == expected

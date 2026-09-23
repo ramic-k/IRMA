@@ -499,8 +499,7 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         sab_sigma_barn=float(group.sigma_bound_b),
         site_scattering_lengths_angstrom=site_b_coh_ang,
         site_incoherent_cross_sections_barn=site_sigma_inc,
-        preloaded_full_mesh=preloaded_full_mesh,
-        workdir=None)
+        preloaded_full_mesh=preloaded_full_mesh)
 
     # The SAB table keeps the engine's full-sigma normalization
     # (sab_sigma_barn = group.sigma_bound_b); the per-atom weighting for a

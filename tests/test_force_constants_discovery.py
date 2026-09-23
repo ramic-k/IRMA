@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import irma.core.noncubic_inelastic as nci
+import irma.core.noncubic_inelastic_context as ncc
 from irma.core.noncubic_inelastic import NoncubicInelasticControls
 from irma.core.phonopy_io import (
     resolve_force_constants_source, phonopy_yaml_embeds_force_constants,
@@ -81,7 +82,7 @@ def stubbed_driver(monkeypatch):
     calls = {"context_args": [], "inprocess_kwargs": []}
 
     def fake_build_compute_context(args, q_grid_ang_inv, e_grid_mev,
-                                   preloaded_full_mesh=None):
+                                   preloaded_full_mesh=None, model_context=None):
         calls["context_args"].append(args)
         return {"stub": True}
 
@@ -99,7 +100,7 @@ def stubbed_driver(monkeypatch):
             "metadata": {"multiphonon_max_order": 1},
         }
 
-    monkeypatch.setattr(nci, "build_compute_context", fake_build_compute_context)
+    monkeypatch.setattr(ncc, "build_compute_context", fake_build_compute_context)
     monkeypatch.setattr(nci, "run_noncubic_sab_inprocess", fake_run_inprocess)
     return calls
 
