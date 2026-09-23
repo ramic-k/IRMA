@@ -17,7 +17,6 @@ from irma.mlip.calculators import CalculatorSpec              # noqa: E402
 @pytest.fixture(autouse=True)
 def _isolated_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
-    envs._META_CACHE.clear()
     yield
 
 
@@ -179,33 +178,6 @@ def test_make_calculator_dispatch_hook(monkeypatch):
     assert type(calc).__name__ == "EMT"
 
 
-def test_effective_package_version_prefers_server_meta(monkeypatch):
-    from irma.mlip.calculators import _package_version, \
-        effective_package_version
-    monkeypatch.setattr(envs, "is_dispatched", lambda p: p == "mace")
-    monkeypatch.setattr(
-        envs, "registered_interpreter",
-        lambda p: "/foreign/python" if p == "mace" else None)
-    envs._META_CACHE[("mace", "/foreign/python")] = {
-        "package_version": "9.9.9-foreign"}
-    assert effective_package_version(CalculatorSpec("mace")) \
-        == "9.9.9-foreign"
-    # non-dispatched potentials keep the LOCAL lookup (cache compat)
-    assert effective_package_version(CalculatorSpec("sevennet")) \
-        == _package_version("sevennet")
-    assert effective_package_version(CalculatorSpec("emt")) \
-        == _package_version("emt")
-
-
-def test_meta_cache_invalidated_on_register_and_unregister():
-    envs._META_CACHE[("mace", "/old/python")] = {"package_version": "old"}
-    envs.register_interpreter("mace", sys.executable)
-    assert not [k for k in envs._META_CACHE if k[0] == "mace"]
-    envs._META_CACHE[("mace", sys.executable)] = {"package_version": "x"}
-    envs.unregister_interpreter("mace")
-    assert not [k for k in envs._META_CACHE if k[0] == "mace"]
-
-
 def test_is_dispatched_sees_a_symlinked_venv_python(tmp_path):
     # venv launchers are symlinks to the base python; realpath comparison
     # would collapse them onto the running interpreter and silently
@@ -215,20 +187,6 @@ def test_is_dispatched_sees_a_symlinked_venv_python(tmp_path):
     link.symlink_to(sys.executable)
     envs.register_interpreter("mace", str(link))
     assert envs.is_dispatched("mace") is True
-
-
-def test_pin_interpreter_env_survives_registry_edits(tmp_path):
-    other = tmp_path / "python"
-    other.write_text("#!/bin/sh\n")
-    other.chmod(0o755)
-    try:
-        envs.register_interpreter("dpa3", str(other))
-        envs.pin_interpreter_env("dpa3")
-        assert os.environ["IRMA_MLIP_PYTHON_DPA3"] == str(other)
-        envs.unregister_interpreter("dpa3")   # registry edit mid-build
-        assert envs.registered_interpreter("dpa3") == str(other)  # pin wins
-    finally:
-        os.environ.pop("IRMA_MLIP_PYTHON_DPA3", None)
 
 
 def test_registry_tolerates_malformed_json(tmp_path):
@@ -399,13 +357,9 @@ def test_requirement_set_is_not_advertised_as_vetted():
 # provisioning guards (2026-08: colleague-reported field failures)
 
 
-def test_error_hint_covers_the_two_field_signatures():
+def test_error_hint_covers_the_numpy_abi_signature():
     hint = envs._error_hint("RuntimeError: ... _ARRAY_API not found ...")
     assert hint and "numpy<2" in hint
-    hint = envs._error_hint(
-        "RuntimeError: PyTorch is checking whether allow_tf32 ... "
-        "cuDNN conv and cuDNN RNN have different TF32 flags")
-    assert hint and envs._ENV_PYTHON in hint
     assert envs._error_hint("ValueError: unrelated") is None
 
 
@@ -438,7 +392,6 @@ def test_probe_and_bootstrap_sources_compile():
     assert "from_numpy" in envs._RUNTIME_PROBE
     from irma.mlip import calculators
     compile(calculators._NEQUIP_COMPILE_BOOTSTRAP, "<bootstrap>", "exec")
-    assert "allow_tf32" in calculators._NEQUIP_COMPILE_BOOTSTRAP
     assert "main()" in calculators._NEQUIP_COMPILE_BOOTSTRAP
 
 
@@ -497,15 +450,3 @@ def test_probe_failure_without_the_signature_does_not_register(
     with pytest.raises(envs.MlipEnvError, match="runtime *probe|probe"):
         envs.create_env("nequip", progress=lambda *_: None)
     assert envs.registered_interpreter("nequip") is None
-
-
-def test_pinned_digest_crosses_the_force_server_protocol():
-    """The spec payload carries every field: an identity request with a
-    pinned digest gets that digest back from the server, so a foreign
-    loader sees the same pin the parent computed."""
-    spec = CalculatorSpec("emt", checkpoint_sha256="c" * 64)
-    assert envs.spec_payload(spec) == {
-        "potential": "emt", "model": None, "threads": 1,
-        "checkpoint_sha256": "c" * 64}
-    identity, _ = envs.remote_identity(spec, sys.executable)
-    assert identity == "c" * 64

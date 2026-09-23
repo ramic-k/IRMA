@@ -430,8 +430,6 @@ def _cmd_build(args) -> int:
         print(f"  NOTE: {calc_meta['license_note']}")
     covered = calc_meta.get("checkpoint_elements")
     if covered:
-        # the calculator itself refuses uncovered elements on every path;
-        # this is the early, readable version of the same refusal
         from irma.mlip.calculators import missing_elements
         missing = missing_elements(covered, atoms.get_chemical_symbols())
         if missing:
@@ -445,10 +443,7 @@ def _cmd_build(args) -> int:
         print(f"  checkpoint: {calc_meta.get('checkpoint_model_class')}, "
               f"cutoff {calc_meta.get('checkpoint_r_max_A')} A"
               f"{f' x {n_int} interaction layers' if n_int else ''}, "
-              f"elements {' '.join(covered)}, stored dtype "
-              f"{calc_meta.get('checkpoint_stored_dtype')}")
-    if calc_meta.get("dtype_note"):
-        print(f"  NOTE: {calc_meta['dtype_note']}")
+              f"elements {' '.join(covered)}")
 
     from irma.mlip.relax import relax
     print(f"  relaxing with {args.potential} "

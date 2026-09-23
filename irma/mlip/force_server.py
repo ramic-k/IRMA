@@ -14,11 +14,8 @@ redirected onto stderr -- potential packages print freely (MatterSim,
 SevenNet and friends all log to stdout) and none of it can corrupt the
 protocol stream.
 
-  {"cmd": "init", "spec": {"potential": .., "model": .., "threads": ..,
-                           "checkpoint_sha256": ..}}
+  {"cmd": "init", "spec": {"potential": .., "model": .., "threads": ..}}
       -> {"ok": true, "meta": {..}, "properties": ["energy", ..]}
-  (the spec dict carries every CalculatorSpec field; a pinned checkpoint
-  digest is verified by the loader in this process)
   {"cmd": "canonicalize", "spec": {..}}
       -> {"ok": true, "model": <pinned model string>}
   {"cmd": "identity", "spec": {..}}

@@ -146,31 +146,25 @@ irma mlip build structure.cif -o bundle --potential mace \
     --model /path/to/my_model.model
 ```
 
-The build loads the file once, in the parent process, and pins its
-absolute path and SHA-256 digest into the calculator specification that
-every displacement worker and force server rebuilds from. Each of them
-reads the file again, checks the bytes against the pinned digest, and
-refuses to run if the file changed in between, so the forces of one
-build always come from one set of weights. The manifest records the
-digest under `calculator`, together with the model class, cutoff
-radius, number of interaction layers, element table, stored
-floating-point type, and head.
+The build pins the file's absolute path into the calculator
+specification that every displacement worker and force server rebuilds
+from. The manifest records the file's SHA-256 digest under
+`calculator`, together with the model class, cutoff radius, number of
+interaction layers, element table, and head.
 
 Three rules apply:
 
 - **Element coverage.** The checkpoint must cover every element in the
   structure. The build stops before relaxation with a message naming
-  the uncovered elements, and the calculator itself refuses any force
-  call on an uncovered element, on every path (workers and force
-  servers included), so an untrained embedding can never produce
-  forces. The same guard applies to the named MACE and MACE-OFF models.
+  the uncovered elements. The same check applies to the named MACE and
+  MACE-OFF models.
 - **Single head.** A checkpoint with several heads (one fitting net per
   training set) is refused; IRMA has no head selection. Export a
   single-head model for the head you want.
 - **Evaluation in float64.** Weights stored in float32 are converted on
-  load; the log and the manifest (`dtype_note`) say so. The conversion
-  reduces the numerical error of the finite-displacement forces; it
-  does not restore precision lost when the weights were stored.
+  load. The conversion reduces the numerical error of the
+  finite-displacement forces; it does not restore precision lost when
+  the weights were stored.
 
 The cutoff radius and the number of interaction layers are recorded as
 information about the model, not as a convergence criterion for the

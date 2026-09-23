@@ -97,8 +97,7 @@ def _fingerprint(atoms, phonon, delta, supercell, spec: CalculatorSpec) -> str:
     """
     import numpy as np
     import phonopy as _phonopy
-    from irma.mlip.calculators import (
-        effective_package_version, resolved_checkpoint_identity)
+    from irma.mlip.calculators import fingerprint_identity
 
     h = hashlib.sha256()
     h.update(f"fp-v{FINGERPRINT_VERSION}".encode())
@@ -113,8 +112,8 @@ def _fingerprint(atoms, phonon, delta, supercell, spec: CalculatorSpec) -> str:
         [[float(d[0]), float(d[1]), float(d[2]), float(d[3])]
          for d in phonon.displacements], dtype="<f8")
     h.update(disp.tobytes())
-    ckpt = resolved_checkpoint_identity(spec)
-    h.update(f"{spec.potential}|{ckpt}|{effective_package_version(spec)}"
+    ckpt, version = fingerprint_identity(spec)
+    h.update(f"{spec.potential}|{ckpt}|{version}"
              f"|phonopy={_phonopy.__version__}".encode())
     return h.hexdigest()
 
@@ -239,11 +238,6 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
     # not fingerprint one upstream release while workers load another
     # (idempotent for already-canonical and non-floating specs)
     spec = canonicalize_spec(spec)
-    # likewise freeze the dispatch interpreter: a registry edit during the
-    # run must not split the fingerprint and the workers across envs (the
-    # pin is an env var, inherited by spawn workers)
-    from irma.mlip import envs
-    envs.pin_interpreter_env(spec.potential)
 
     delta = float(delta)
     if not math.isfinite(delta) or delta <= 0:

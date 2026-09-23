@@ -15,6 +15,4 @@ def _private_mlip_cache(tmp_path_factory, monkeypatch):
     for var in list(__import__("os").environ):
         if var.startswith("IRMA_MLIP_PYTHON_"):
             monkeypatch.delenv(var)
-    from irma.mlip import envs
-    envs._META_CACHE.clear()
     yield

@@ -224,17 +224,13 @@ def test_mace_named_models_are_guarded_and_described(monkeypatch,
     assert meta["dtype"] == "float64"
     assert meta["checkpoint"] == default
     assert meta["checkpoint_sha256"] is None   # named model, not a file
-    # the calculator is wrapped by the element guard around the real one
-    assert isinstance(calc.inner, _FakeMaceCalculator)
+    assert isinstance(calc, _FakeMaceCalculator)
     assert meta["checkpoint_elements"][:3] == ["H", "He", "Li"]
     assert len(meta["checkpoint_elements"]) == 89
     assert meta["checkpoint_r_max_A"] == 6.0
     assert meta["checkpoint_num_interactions"] == 2
     assert meta["checkpoint_heads"] == ["default"]
     assert meta["checkpoint_head"] == "default"
-    # a converted named model: the stored dtype is not recoverable
-    assert meta["checkpoint_stored_dtype"] == "unknown"
-    assert "dtype_note" not in meta
     if potential == "mace-off":
         assert "Academic Software License" in meta["license_note"]
     else:
@@ -257,7 +253,7 @@ def test_mace_foundation_checkpoints_carry_the_asl_note(monkeypatch,
 
 
 @pytest.mark.parametrize("potential", ["mace", "mace-off"])
-def test_mace_checkpoint_file_is_loaded_once_from_verified_bytes(
+def test_mace_checkpoint_file_is_loaded_once_from_its_bytes(
         monkeypatch, tmp_path, potential):
     pytest.importorskip("ase")
     from irma.mlip.calculators import _checkpoint_sha256, canonicalize_spec
@@ -271,59 +267,32 @@ def test_mace_checkpoint_file_is_loaded_once_from_verified_bytes(
     digest = _checkpoint_sha256(str(model_file))
 
     spec = canonicalize_spec(CalculatorSpec(potential, model=str(model_file)))
-    assert spec.checkpoint_sha256 == digest
     calc, meta = make_calculator(spec)
 
-    # exactly one deserialization, of the bytes that were verified, and
+    # exactly one deserialization, of the bytes that were hashed, and
     # the calculator is built from that same object (no second load, no
     # model_paths round trip through the file name)
     assert made["loads"] == [(b"weights", "cpu", False)]
     assert "named" not in made
-    assert calc.inner.models[0] is loaded
-    assert calc.inner.default_dtype == "float64"
+    assert calc.models[0] is loaded
+    assert calc.default_dtype == "float64"
     assert meta["checkpoint"] == str(model_file)
     assert meta["checkpoint_sha256"] == digest
     assert meta["checkpoint_model_class"] == "_FakeMaceModel"
-    assert meta["checkpoint_stored_dtype"] == "float32"
     assert meta["checkpoint_r_max_A"] == 6.5
     assert meta["checkpoint_num_interactions"] == 2
     assert meta["checkpoint_elements"] == ["H", "C"]
     assert meta["checkpoint_heads"] == ["Default"]
     assert meta["checkpoint_head"] == "Default"
-    assert meta["dtype_note"].startswith("stored weights: float32")
     # a user checkpoint FILE carries its own license: no ASL note (the
     # named MACE-OFF checkpoints are ASL, see the named-model test)
     assert "license_note" not in meta
 
 
-def test_mace_checkpoint_digest_mismatch_refuses_to_load(monkeypatch,
-                                                         tmp_path):
-    pytest.importorskip("ase")
-    made = {}
-    _stub_mace(monkeypatch, _FakeMaceModel(), made)
-    model_file = tmp_path / "weights.model"
-    model_file.write_bytes(b"weights")
-    # a spec pinned to other bytes: the file was replaced after pinning
-    spec = CalculatorSpec("mace", model=str(model_file),
-                          checkpoint_sha256="0" * 64)
-    with pytest.raises(RuntimeError, match="changed after the build pinned"):
-        make_calculator(spec)
-    assert "loads" not in made              # refused BEFORE unpickling
-
-
-def test_mace_checkpoint_stored_dtype_variants(monkeypatch, tmp_path):
+def test_mace_checkpoint_without_heads_is_single_head(monkeypatch, tmp_path):
     pytest.importorskip("ase")
     model_file = tmp_path / "w.model"
     model_file.write_bytes(b"w")
-    for dtypes, stored, note in (
-            (("float64",), "float64", False),
-            (("float32", "float64"), "mixed (float32, float64)", True),
-            ((), "unknown", False)):
-        _stub_mace(monkeypatch, _FakeMaceModel(dtypes=dtypes), {})
-        _, meta = make_calculator(CalculatorSpec("mace",
-                                                 model=str(model_file)))
-        assert meta["checkpoint_stored_dtype"] == stored
-        assert ("dtype_note" in meta) is note
     # legacy checkpoints without a heads attribute are single-head
     _stub_mace(monkeypatch, _FakeMaceModel(heads=None), {})
     _, meta = make_calculator(CalculatorSpec("mace", model=str(model_file)))
@@ -344,30 +313,6 @@ def test_mace_multihead_and_non_mace_files_are_refused(monkeypatch,
         make_calculator(CalculatorSpec("mace-off", model=str(model_file)))
 
 
-def test_element_guard_refuses_uncovered_atoms_before_the_backend():
-    pytest.importorskip("ase")
-    from ase import Atoms
-    from irma.mlip.calculators import _guard_elements
-    inner = _FakeMaceCalculator(models=_FakeMaceModel(atomic_numbers=(1, 6)))
-    calc = _guard_elements(inner, (1, 6), "test model")
-
-    water = Atoms("H2O", positions=[[0, 0, 0], [0.9, 0, 0], [0, 0.9, 0]])
-    water.calc = calc
-    with pytest.raises(ValueError, match="covers H C; the structure "
-                                         "contains O"):
-        water.get_forces()
-    assert inner.calls == 0                 # refused before any backend call
-
-    methane = Atoms("CH4", positions=[[0, 0, 0], [1, 0, 0], [0, 1, 0],
-                                      [0, 0, 1], [-1, 0, 0]])
-    methane.calc = calc
-    assert methane.get_forces().shape == (5, 3)
-    assert inner.calls == 1
-    assert calc.implemented_properties == inner.implemented_properties
-    calc.close()
-    assert inner.closed
-
-
 def test_missing_elements():
     from irma.mlip.calculators import missing_elements
     assert missing_elements(["H", "C"], ["C", "H", "H"]) == []
@@ -385,30 +330,13 @@ def test_canonicalize_pins_mace_checkpoint_files(monkeypatch, tmp_path):
     for potential in ("mace", "mace-off"):
         pinned = canonicalize_spec(CalculatorSpec(potential, model="w.model"))
         assert pinned.model == str(model_file)          # absolute path
-        assert pinned.checkpoint_sha256 == digest
         assert canonicalize_spec(pinned) is pinned      # idempotent
-        # a pinned digest wins over a re-hash: the pin is what the
-        # loaders verify against
-        kept = canonicalize_spec(CalculatorSpec(
-            potential, model="w.model", checkpoint_sha256="a" * 64))
-        assert kept.model == str(model_file)
-        assert kept.checkpoint_sha256 == "a" * 64
-        # the fingerprint identity is the pinned digest
+        # the fingerprint identity is the file's content hash
         assert resolved_checkpoint_identity(pinned) == digest
-        assert resolved_checkpoint_identity(kept) == "a" * 64
         # named models and missing files pass through unchanged
         for model in (None, "medium", str(tmp_path / "missing.model")):
             spec = CalculatorSpec(potential, model=model)
             assert canonicalize_spec(spec) is spec
-
-
-def test_spec_rejects_a_malformed_digest():
-    with pytest.raises(ValueError, match="checkpoint_sha256"):
-        CalculatorSpec("mace", checkpoint_sha256="abc")
-    with pytest.raises(ValueError, match="checkpoint_sha256"):
-        CalculatorSpec("mace", checkpoint_sha256="A" * 64)
-    spec = CalculatorSpec("mace", checkpoint_sha256="a" * 64)
-    assert pickle.loads(pickle.dumps(spec)) == spec
 
 
 def test_native_thread_env_is_clamped(monkeypatch):
@@ -443,37 +371,13 @@ def test_sevennet_branch_with_stubs(monkeypatch):
            made == {"model": "7net-0", "device": "cpu"}
 
 
-def _stub_orb(monkeypatch, builder_result, calculator_cls,
-              new_layout=False):
+def _stub_orb(monkeypatch, calculator_cls, **builders):
     _install_stub(monkeypatch, "orb_models")
     _install_stub(monkeypatch, "orb_models.forcefield")
-    _install_stub(monkeypatch, "orb_models.forcefield.pretrained",
-                  orb_v3_conservative_inf_omat=lambda **kw: builder_result)
-    if new_layout:
-        # newer layout: calculator moved under .inference
-        monkeypatch.setitem(sys.modules, "orb_models.forcefield.calculator",
-                            None)
-        _install_stub(monkeypatch, "orb_models.forcefield.inference")
-        _install_stub(monkeypatch, "orb_models.forcefield.inference.calculator",
-                      ORBCalculator=calculator_cls)
-    else:
-        _install_stub(monkeypatch, "orb_models.forcefield.calculator",
-                      ORBCalculator=calculator_cls)
-
-
-def test_orb_legacy_api_bare_model(monkeypatch):
-    fake_torch = _FakeTorch()
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    made = {}
-
-    class StubORB:
-        def __init__(self, model, device=None):
-            made.update(model=model, device=device)
-
-    _stub_orb(monkeypatch, "bare-model", StubORB)
-    calc, meta = make_calculator(CalculatorSpec("orb"))
-    assert made == {"model": "bare-model", "device": "cpu"}
-    assert meta["dtype"] == "float32-high"
+    _install_stub(monkeypatch, "orb_models.forcefield.pretrained", **builders)
+    _install_stub(monkeypatch, "orb_models.forcefield.inference")
+    _install_stub(monkeypatch, "orb_models.forcefield.inference.calculator",
+                  ORBCalculator=calculator_cls)
 
 
 def test_orb_current_api_tuple_and_adapter(monkeypatch):
@@ -485,8 +389,8 @@ def test_orb_current_api_tuple_and_adapter(monkeypatch):
         def __init__(self, model, atoms_adapter=None, device=None):
             made.update(model=model, adapter=atoms_adapter, device=device)
 
-    _stub_orb(monkeypatch, ("the-model", "the-adapter"), StubORB,
-              new_layout=True)
+    _stub_orb(monkeypatch, StubORB, orb_v3_conservative_inf_omat=lambda **kw:
+              ("the-model", "the-adapter"))
     calc, _ = make_calculator(CalculatorSpec("orb"))
     assert made == {"model": "the-model", "adapter": "the-adapter",
                     "device": "cpu"}
@@ -500,18 +404,13 @@ def test_orb_filesystem_checkpoint_uses_weights_path(monkeypatch, tmp_path):
     def builder(weights_path=None, device=None, precision=None):
         made.update(weights_path=weights_path, device=device,
                     precision=precision)
-        return "path-model"
+        return "path-model", "adapter"
 
     class StubORB:
-        def __init__(self, model, device=None):
+        def __init__(self, model, atoms_adapter=None, device=None):
             made.update(model=model)
 
-    _install_stub(monkeypatch, "orb_models")
-    _install_stub(monkeypatch, "orb_models.forcefield")
-    _install_stub(monkeypatch, "orb_models.forcefield.pretrained",
-                  orb_v3_conservative_inf_omat=builder)
-    _install_stub(monkeypatch, "orb_models.forcefield.calculator",
-                  ORBCalculator=StubORB)
+    _stub_orb(monkeypatch, StubORB, orb_v3_conservative_inf_omat=builder)
     ckpt = tmp_path / "orb.ckpt"
     ckpt.write_bytes(b"weights")
     make_calculator(CalculatorSpec("orb", model=str(ckpt)))
@@ -522,7 +421,8 @@ def test_orb_filesystem_checkpoint_uses_weights_path(monkeypatch, tmp_path):
 def test_orb_unknown_builder_name_is_a_clear_error(monkeypatch):
     fake_torch = _FakeTorch()
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    _stub_orb(monkeypatch, "bare", type("S", (), {}))
+    _stub_orb(monkeypatch, type("S", (), {}),
+              orb_v3_conservative_inf_omat=lambda **kw: ("m", "a"))
     # a bad --model name is a USAGE error (CLI exit 2), not a missing
     # dependency (exit 4) -- review reclassification
     with pytest.raises(ValueError, match="pretrained"):
@@ -532,13 +432,9 @@ def test_orb_unknown_builder_name_is_a_clear_error(monkeypatch):
 def test_orb_direct_force_builder_is_refused(monkeypatch):
     fake_torch = _FakeTorch()
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    _install_stub(monkeypatch, "orb_models")
-    _install_stub(monkeypatch, "orb_models.forcefield")
-    _install_stub(monkeypatch, "orb_models.forcefield.pretrained",
-                  orb_v3_conservative_inf_omat=lambda **kw: "cons",
-                  orb_v3_direct_inf_omat=lambda **kw: "direct")
-    _install_stub(monkeypatch, "orb_models.forcefield.calculator",
-                  ORBCalculator=type("S", (), {}))
+    _stub_orb(monkeypatch, type("S", (), {}),
+              orb_v3_conservative_inf_omat=lambda **kw: ("cons", "a"),
+              orb_v3_direct_inf_omat=lambda **kw: ("direct", "a"))
     # the builder EXISTS in orb_models, but it is a direct-force head: the
     # conservative-force rule must refuse it by name (docs/mlip.md promises
     # "no option can select a direct-force model")
@@ -831,7 +727,7 @@ def test_dpa3_abi_mismatch_is_a_dependency_error(monkeypatch, tmp_path):
     _install_stub(monkeypatch, "deepmd.calculator", DP=ExplodingDP)
     ckpt = tmp_path / "m.pt"
     ckpt.write_bytes(b"w")
-    with pytest.raises(MlipDependencyError, match="torch 2.10"):
+    with pytest.raises(MlipDependencyError, match="does not match this torch"):
         make_calculator(CalculatorSpec("dpa3", model=str(ckpt)))
 
 
@@ -964,15 +860,11 @@ def test_nequip_zoo_id_normalization_and_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
     assert _nequip_artifact_path("a-b/c:1", ".nequip.pt2") != \
         _nequip_artifact_path("a/b-c:1", ".nequip.pt2")
-
-    # canonicalize prefers an already-compiled cached artifact (offline)
-    art = _nequip_artifact_path("mir-group/NequIP-OAM-L:0.1",
-                                ".nequip.pt2")
-    os.makedirs(os.path.dirname(art))
-    open(art, "wb").write(b"compiled")
-    pinned = canonicalize_spec(CalculatorSpec("nequip"))
-    assert pinned.model == art
-    assert canonicalize_spec(pinned) is pinned            # idempotent
+    # a compiled artifact path is already canonical
+    art = tmp_path / "m.nequip.pt2"
+    art.write_bytes(b"compiled")
+    pinned = CalculatorSpec("nequip", model=str(art))
+    assert canonicalize_spec(pinned) is pinned
 
 
 def test_nequip_canonicalize_dispatches_before_any_torch_use(monkeypatch,
