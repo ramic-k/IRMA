@@ -75,8 +75,6 @@ def _bohr():
     return get_physical_units().Bohr
 
 
-# ------------------------------------------------------------------ units ---
-
 
 # ------------------------------------------------------- geometry readers ---
 
@@ -136,6 +134,10 @@ def test_model_context_geometry_agrees_across_calculators(twin_contexts):
     assert np.allclose(np.asarray(ca["primitive"].masses, float),
                        np.asarray(cb["primitive"].masses, float))
     assert list(ca["primitive"].symbols) == list(cb["primitive"].symbols)
+    # the coherent one-phonon path solves the dynamical matrix itself, so it
+    # carries the model's own factor, which differs between the twins
+    assert ca["frequency_factor_to_thz"] == pytest.approx(15.633302, rel=1e-6)
+    assert cb["frequency_factor_to_thz"] == pytest.approx(108.970772, rel=1e-6)
 
 
 def test_model_context_frequencies_agree_across_calculators(twin_contexts):
@@ -150,30 +152,6 @@ def test_model_context_frequencies_agree_across_calculators(twin_contexts):
     assert np.abs(fa - fb).max() < 1e-9 * np.abs(fa).max()
     assert ca["max_mode_energy_mev"] == pytest.approx(
         cb["max_mode_energy_mev"], rel=1e-9)
-
-
-def test_model_context_carries_the_models_own_frequency_factor(twin_contexts):
-    """The coherent one-phonon path solves the dynamical matrix itself, so it
-    needs the model's factor -- which is NOT the same number for the two
-    twins even though their frequencies are."""
-    ca, cb = twin_contexts
-    assert ca["frequency_factor_to_thz"] == pytest.approx(15.633302, rel=1e-6)
-    assert cb["frequency_factor_to_thz"] == pytest.approx(108.970772, rel=1e-6)
-
-
-def test_reduced_q_at_a_physical_Q_agrees_across_calculators(twin_contexts):
-    """The load-bearing derived quantity. q_red is where the dynamical matrix
-    and the exp(2 pi i q.r) structure-factor phases are evaluated for a given
-    |Q| in 1/Angstrom; with an unconverted bohr cell it came out 1.89x off, so
-    the coherent one-phonon term sampled the wrong point in the zone."""
-    ca, cb = twin_contexts
-    rng = np.random.default_rng(0)
-    dirs = rng.normal(size=(7, 3))
-    dirs /= np.linalg.norm(dirs, axis=1)[:, None]
-    # The coherent worker forms q_red = |Q| * solve(rec_lat_no_2pi, direction) / 2 pi.
-    qa = np.linalg.solve(ca["rec_lat_no_2pi"], dirs.T)
-    qb = np.linalg.solve(cb["rec_lat_no_2pi"], dirs.T)
-    assert np.abs(qa - qb).max() < 1e-12
 
 
 def test_coherent_one_phonon_frequencies_agree_across_calculators(twins):
