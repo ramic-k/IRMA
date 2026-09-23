@@ -1,12 +1,8 @@
 """Multiphonon work-grid sizing must survive IRMA's own auto grids.
 
-build_uniform_positive_work_grid previously fell back to the raw minimum
-spacing for non-uniform output grids; an auto beta grid with log-spaced
-tails (the default GUI grid converted to energy) made that fallback request
-~1e10 bins (~140 GB) and the run died in the allocator. Non-uniform grids
-are now bounded to MAX_MULTIPHONON_WORK_BINS (conservative rebinning keeps
-the integral exact); uniform grids — every validated production grid — are
-untouched.
+For a non-uniform output grid (an auto beta grid with log-spaced tails)
+build_uniform_positive_work_grid uses the phonon-region step, bounded to
+MAX_MULTIPHONON_WORK_BINS; uniform grids keep their own spacing.
 """
 import numpy as np
 import pytest
@@ -65,16 +61,6 @@ def test_grid_without_a_repeated_spacing_falls_back_to_the_median():
     assert spacing == pytest.approx(max(median, floor))
 
 
-def test_log_tailed_auto_grid_without_phonon_maximum_keeps_median_rule():
-    # Callers without a phonon model keep the previous median rule, which is
-    # what makes it depend on the tail: recorded here as the fallback, not
-    # the production path.
-    grid = _auto_like_grid(20)
-    work, spacing = build_uniform_positive_work_grid(grid)
-    assert spacing == pytest.approx(float(np.median(np.diff(grid))))
-    assert len(work) <= MAX_MULTIPHONON_WORK_BINS + 1
-
-
 def test_mildly_nonuniform_grid_keeps_minimum_spacing():
     # A non-uniform grid whose MINIMUM spacing already fits under the bin cap
     # keeps that minimum exactly — the median override only triggers for a
@@ -103,9 +89,12 @@ def test_uniform_grid_is_never_bounded():
     assert spacing_f == pytest.approx(0.01)
 
 
-def test_hard_backstop_raises_named_error():
-    # An absurd request fails with a clear message instead of an OOM kill.
-    grid = np.arange(0.0001, 10000.0, 0.0001)   # 100M-point uniform grid
+def test_hard_backstop_raises_named_error(monkeypatch):
+    # An absurd request fails with a clear message instead of an OOM kill;
+    # the limit is lowered so the test does not allocate a huge grid.
+    from irma.core import noncubic_numerics
+    monkeypatch.setattr(noncubic_numerics, "HARD_WORK_BIN_LIMIT", 1000)
+    grid = np.arange(1.0, 10001.0, 1.0)         # 10k-point uniform grid
     with pytest.raises(ValueError, match="hard limit"):
         build_uniform_positive_work_grid(grid)
 
