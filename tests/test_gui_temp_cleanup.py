@@ -68,9 +68,11 @@ def test_app_close_calls_every_cleanup_synchronously(tmp_path):
             cleanup_temp_files=lambda: calls.append("ns")),
         ncrystal_panel=types.SimpleNamespace(
             cleanup_temp_files=lambda: calls.append("nc")),
+        mlip_panel=types.SimpleNamespace(
+            cleanup_temp_files=lambda: calls.append("mlip")),
     )
     IrmaApp._on_close(fake)
-    assert calls == ["endf", "ns", "nc", "destroy"]
+    assert calls == ["endf", "ns", "nc", "mlip", "destroy"]
 
 
 def test_gui_map_uses_full_arch_q_min():
