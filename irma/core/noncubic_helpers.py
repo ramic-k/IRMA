@@ -5,8 +5,7 @@ unit/sigma inference, the S(Q,E) -> asymmetric-SAB conversion, and the
 multiphonon-order sizing rule — factored out of ``noncubic_engine`` so that
 module can stay focused on the multiprocessing kernels and the compute-phase
 orchestration. None of these touch the ``WORKER_STATE`` global or the
-fork-worker pool, so they live here and ``noncubic_engine`` re-exports them
-for backward compatibility.
+worker pool; ``noncubic_engine`` re-exports them.
 """
 from __future__ import annotations
 
@@ -34,9 +33,8 @@ KB_MEV_PER_K = _BK_EV_PER_K * 1.0e3
 # thermal widths. One constant keeps the two statements in step.
 MULTIPHONON_MARGIN_SIGMAS = 6.0
 
-# Single-element fallback tables for the STANDALONE CLI driver only. The
-# production engine path (mode 1/2 ENDF generation) always passes
-# site_scattering_lengths_angstrom / incoherent overrides explicitly.
+# Carbon-only fallback tables, used when no per-site values or JSON tables are
+# given (the engine CLI, and spectra configs without b_coh_fm).
 _FALLBACK_C_SCATTERING_LENGTHS_ANGSTROM = {
     "C": 6.646e-5,
 }
@@ -111,28 +109,14 @@ def normalize_site_groups(
     site_groups: object | None,
     num_sites: int,
 ) -> tuple[np.ndarray, ...]:
-    """Normalize exported site groups to validated primitive-site index arrays."""
+    """Site groups as primitive-site index arrays; ``None`` means one group of all sites.
+
+    The groups come from IRMA's own atom-type grouping or from an NCrystal
+    config that ``irma.ncrystal.build`` has already validated.
+    """
     if site_groups is None:
         return (np.arange(num_sites, dtype=np.intp),)
-
-    normalized: list[np.ndarray] = []
-    seen = np.zeros(num_sites, dtype=bool)
-    for group_index, group in enumerate(site_groups):
-        group_arr = np.asarray(group, dtype=np.intp)
-        if group_arr.ndim != 1:
-            raise ValueError(f"site_groups[{group_index}] must be a 1D index list.")
-        if len(group_arr) == 0:
-            raise ValueError(f"site_groups[{group_index}] must not be empty.")
-        if np.any(group_arr < 0) or np.any(group_arr >= num_sites):
-            raise ValueError(f"site_groups[{group_index}] contains out-of-range site indices.")
-        if len(np.unique(group_arr)) != len(group_arr):
-            raise ValueError(f"site_groups[{group_index}] contains duplicate site indices.")
-        if np.any(seen[group_arr]):
-            raise ValueError("site_groups must be disjoint in primitive-site space.")
-        seen[group_arr] = True
-        normalized.append(np.array(group_arr, dtype=np.intp, copy=True))
-
-    return tuple(normalized)
+    return tuple(np.asarray(group, dtype=np.intp) for group in site_groups)
 
 
 def convert_sqe_to_asym_downscatter_sab(
@@ -174,52 +158,33 @@ def convert_sqe_to_asym_downscatter_sab(
     return alpha, beta_downscatter_abs, sab_asym_downscatter
 
 
-def parse_scattering_lengths(
+def parse_element_table(
     symbols: list[str],
-    scattering_lengths_json: str | None,
-    scattering_lengths_file: str | None,
+    table_json: str | None,
+    table_file: str | None,
+    fallback: dict[str, float],
+    label: str,
 ) -> dict[str, float]:
-    """Resolve coherent scattering lengths in Angstrom keyed by element symbol."""
-    scattering_lengths = dict(_FALLBACK_C_SCATTERING_LENGTHS_ANGSTROM)
-    if scattering_lengths_file:
-        with open(scattering_lengths_file, encoding="ascii") as handle:
-            scattering_lengths.update({str(k): float(v) for k, v in json.load(handle).items()})
-    if scattering_lengths_json:
-        scattering_lengths.update({str(k): float(v) for k, v in json.loads(scattering_lengths_json).items()})
-    missing = sorted(set(symbols) - set(scattering_lengths))
+    """Per-element values: ``fallback``, updated by the JSON file, then the JSON string."""
+    table = dict(fallback)
+    if table_file:
+        with open(table_file, encoding="ascii") as handle:
+            table.update({str(k): float(v) for k, v in json.load(handle).items()})
+    if table_json:
+        table.update({str(k): float(v) for k, v in json.loads(table_json).items()})
+    missing = sorted(set(symbols) - set(table))
     if missing:
-        raise ValueError(f"Missing coherent scattering lengths for {missing}.")
-    return scattering_lengths
-
-
-def parse_incoherent_cross_sections(
-    symbols: list[str],
-    incoherent_cross_sections_json: str | None,
-    incoherent_cross_sections_file: str | None,
-) -> dict[str, float]:
-    """Resolve incoherent cross sections in barn keyed by element symbol."""
-    sigma_inc = dict(_FALLBACK_C_INCOHERENT_CROSS_SECTIONS_BARN)
-    if incoherent_cross_sections_file:
-        with open(incoherent_cross_sections_file, encoding="ascii") as handle:
-            sigma_inc.update({str(k): float(v) for k, v in json.load(handle).items()})
-    if incoherent_cross_sections_json:
-        sigma_inc.update({str(k): float(v) for k, v in json.loads(incoherent_cross_sections_json).items()})
-    missing = sorted(set(symbols) - set(sigma_inc))
-    if missing:
-        raise ValueError(f"Missing incoherent cross sections for {missing}.")
-    return sigma_inc
+        raise ValueError(f"Missing {label} for {missing}.")
+    return table
 
 
 def reshape_mesh_eigenvectors(mesh_eigenvectors: np.ndarray, num_atoms: int) -> np.ndarray:
     """Reshape phonopy mesh eigenvectors to ``(n_q, n_branches, n_atoms, 3)``."""
     n_q = mesh_eigenvectors.shape[0]
     n_branches = num_atoms * 3
-    expected_last = n_branches
-    if mesh_eigenvectors.ndim == 3 and mesh_eigenvectors.shape == (n_q, expected_last, n_branches):
-        return mesh_eigenvectors.transpose(0, 2, 1).reshape(n_q, n_branches, num_atoms, 3)
-    if mesh_eigenvectors.ndim == 4 and mesh_eigenvectors.shape == (n_q, n_branches, num_atoms, 3):
-        return mesh_eigenvectors
-    raise ValueError(f"Unexpected mesh eigenvector shape: {mesh_eigenvectors.shape}")
+    if mesh_eigenvectors.shape != (n_q, n_branches, n_branches):
+        raise ValueError(f"Unexpected mesh eigenvector shape: {mesh_eigenvectors.shape}")
+    return mesh_eigenvectors.transpose(0, 2, 1).reshape(n_q, n_branches, num_atoms, 3)
 
 
 def derive_required_multiphonon_order(
@@ -309,13 +274,8 @@ def multiphonon_energy_reach(
     masses = np.asarray(masses_amu, dtype=float).ravel()
     if e_max <= 0.0 or q <= 0.0 or top <= 0.0 or masses.size == 0:
         return MultiphononReach(reach, 0.0, 0.0, 0.0, None, False)
-    if np.any(~np.isfinite(masses)) or np.any(masses <= 0.0):
-        raise ValueError(f"atomic masses must be positive and finite, got {masses}")
-    if temperature > 0.0:
-        kt_eff = (effective_temperature_bound_ratio(e_max * 1.0e-3, temperature)
-                  * KB_MEV_PER_K * temperature)
-    else:
-        kt_eff = 0.5 * e_max           # the zero-point limit of the same bound
+    kt_eff = (effective_temperature_bound_ratio(e_max * 1.0e-3, temperature)
+              * KB_MEV_PER_K * temperature)
     ridge = HBAR2_OVER_2MN_MEV_A2 * q * q * NEUTRON_MASS_AMU / masses
     width = np.sqrt(2.0 * ridge * kt_eff)
     need = ridge + float(margin_sigma) * width

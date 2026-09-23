@@ -23,14 +23,31 @@ from irma.core.noncubic_engine import (
     centers_to_edges,
     fibonacci_sphere,
     infer_uniform_spacing_or_none,
-    parse_incoherent_cross_sections,
-    parse_scattering_lengths,
+    _FALLBACK_C_INCOHERENT_CROSS_SECTIONS_BARN,
+    _FALLBACK_C_SCATTERING_LENGTHS_ANGSTROM,
+    parse_element_table,
     reshape_mesh_eigenvectors,
 )
 
 # Fixed so that the multiphonon block partition, and with it the floating-point
 # summation order, does not depend on the number of jobs.
 _MULTIPHONON_DIR_CHUNK = 25
+
+
+def _site_values(site_values, symbols, table_json, table_file, fallback, label):
+    """Return ``(per-element table or None, per-site array)``.
+
+    Explicit per-site values win; otherwise the per-element table is resolved
+    and looked up for each site.
+    """
+    if site_values is not None:
+        values = np.asarray(site_values, dtype=float)
+        if len(values) != len(symbols):
+            raise ValueError(
+                f"Per-site {label} must match the number of primitive-cell atoms.")
+        return None, values
+    table = parse_element_table(symbols, table_json, table_file, fallback, label)
+    return table, np.array([table[s] for s in symbols], dtype=float)
 
 
 def build_model_context(
@@ -130,51 +147,31 @@ def build_model_context(
             f"parse NAC parameters from them; fix the file or supply an "
             f"explicit BORN file (Card 6f use_born=1)."
         )
-    # Full Monkhorst-Pack mesh with eigenvectors. The MT2 directional-DW path
-    # (load_phonopy_mesh) computes the IDENTICAL run — same resolved force
-    # constants, same NAC policy, same run_mesh(with_eigenvectors=True,
-    # is_mesh_symmetry=False), pinned single-thread BLAS — so when the caller
-    # hands that Mesh in (preloaded_full_mesh) the eigensolve is
-    # reused instead of repeated; the symmetry-reduced run below still runs on
-    # the freshly loaded phonon object. A dimension mismatch falls back to the
-    # fresh run rather than trusting a wrong cache.
-    _full_mesh = None
+    # Full Monkhorst-Pack mesh with eigenvectors. The MT2 path (load_phonopy_mesh)
+    # runs the identical mesh and passes it in as preloaded_full_mesh, which
+    # skips the duplicate eigensolve.
+    from irma.core.phonopy_io import openmp_unpinned_serial_setup
     if preloaded_full_mesh is not None:
-        n_q_expected = int(np.prod([int(m) for m in args.mesh]))
-        _freqs_pre = np.asarray(preloaded_full_mesh.frequencies, dtype=float)
-        if _freqs_pre.shape[0] == n_q_expected:
-            _full_mesh = preloaded_full_mesh
-            mesh = _full_mesh          # context["mesh"] = the full-MP mesh
-            print(
-                f"Reusing the MT2 full phonopy mesh {tuple(args.mesh)} "
-                "(eigenvectors shared; skipping the duplicate eigensolve)..."
-            )
-        else:
-            print(
-                f"NOTE: preloaded full mesh has {_freqs_pre.shape[0]} q-points, "
-                f"expected {n_q_expected}; running the full mesh fresh."
-            )
-    if _full_mesh is None:
+        mesh = preloaded_full_mesh
+        print(
+            f"Reusing the MT2 full phonopy mesh {tuple(args.mesh)} "
+            "(eigenvectors shared; skipping the duplicate eigensolve)..."
+        )
+    else:
         print(
             f"Running phonopy mesh {tuple(args.mesh)} with eigenvectors and full mesh symmetry disabled..."
         )
-        from irma.core.phonopy_io import openmp_unpinned_serial_setup
         with openmp_unpinned_serial_setup():
             phonon.run_mesh(args.mesh, with_eigenvectors=True,
                             is_mesh_symmetry=False)
         mesh = phonon.mesh
-        assert mesh is not None
-        # The full-mesh arrays are extracted into plain numpy BEFORE re-running
-        # the mesh, so the second (symmetry-reduced) run can reuse the SAME
-        # phonopy object: one phonopy.load / force-constants parse instead of
-        # two.
-        _full_mesh = phonon.mesh
-    _full_frequencies = np.asarray(_full_mesh.frequencies, dtype=float)
-    _full_eigenvectors = np.asarray(_full_mesh.eigenvectors)
+    # Read before the symmetry-reduced run below replaces phonon.mesh, so both
+    # runs share one phonopy.load.
+    _full_frequencies = np.asarray(mesh.frequencies, dtype=float)
+    _full_eigenvectors = np.asarray(mesh.eigenvectors)
     print(
         f"Running phonopy mesh {tuple(args.mesh)} again with symmetry reduction for incoherent one-phonon mode sums..."
     )
-    from irma.core.phonopy_io import openmp_unpinned_serial_setup
     with openmp_unpinned_serial_setup():
         phonon.run_mesh(
             args.mesh,
@@ -182,7 +179,6 @@ def build_model_context(
             is_mesh_symmetry=True,
         )
     incoherent_one_phonon_mesh = phonon.mesh
-    assert incoherent_one_phonon_mesh is not None
 
     # UNITS. phonopy keeps the cell in the CALCULATOR's native length unit and
     # phonopy.load never converts it, so `phonon.primitive.cell` is bohr for a
@@ -214,13 +210,7 @@ def build_model_context(
         len(primitive.masses),
     )
     incoherent_one_phonon_mesh_weights = np.asarray(
-        getattr(
-            incoherent_one_phonon_mesh,
-            "weights",
-            np.ones(incoherent_one_phonon_mesh_frequencies.shape[0]),
-        ),
-        dtype=float,
-    )
+        incoherent_one_phonon_mesh.weights, dtype=float)
     print(
         "Using symmetry-reduced weighted mesh with "
         f"{len(incoherent_one_phonon_mesh_qpoints)} q-points "
@@ -268,17 +258,11 @@ def build_model_context(
     n_branches = mesh_frequencies.shape[1]
     mesh_mode_energies_mev = (mesh_frequencies * THzToEv * 1000.0).reshape(-1)
     valid_modes = mode_floor_mask(
-        mesh_mode_energies_mev, _full_mesh.qpoints, n_branches,
+        mesh_mode_energies_mev, mesh.qpoints, n_branches,
         min_phonon_energy_mev)
     mesh_mode_energies_mev = mesh_mode_energies_mev[valid_modes]
     max_mode_energy_mev = float(np.max(mesh_mode_energies_mev)) if len(mesh_mode_energies_mev) else 0.0
 
-    incoherent_one_phonon_q_weight_norm = float(np.sum(incoherent_one_phonon_mesh_weights))
-    multiphonon_mode_energies_mev = incoherent_one_phonon_mode_energies_mev
-    multiphonon_mode_frequencies_thz = incoherent_one_phonon_mode_frequencies_thz
-    multiphonon_mode_weights = incoherent_one_phonon_mode_weights
-    multiphonon_mode_eigvecs_valid = incoherent_one_phonon_mode_eigvecs_valid
-    multiphonon_q_weight_norm = incoherent_one_phonon_q_weight_norm
     multiphonon_mode_projection_components = None
     multiphonon_star_counts = None
     if len(incoherent_one_phonon_mesh_qpoints) < len(mesh_frequencies):
@@ -312,19 +296,12 @@ def build_model_context(
         "frequency_factor_to_thz": frequency_factor_to_thz,
         "min_phonon_energy_mev": min_phonon_energy_mev,
         "incoherent_one_phonon_mesh_qpoints": incoherent_one_phonon_mesh_qpoints,
-        "incoherent_one_phonon_mesh_frequencies": incoherent_one_phonon_mesh_frequencies,
-        "incoherent_one_phonon_mesh_eigenvectors": incoherent_one_phonon_mesh_eigenvectors,
         "incoherent_one_phonon_mesh_weights": incoherent_one_phonon_mesh_weights,
         "incoherent_one_phonon_mode_energies_mev": incoherent_one_phonon_mode_energies_mev,
         "incoherent_one_phonon_mode_frequencies_thz": incoherent_one_phonon_mode_frequencies_thz,
         "incoherent_one_phonon_mode_weights": incoherent_one_phonon_mode_weights,
         "incoherent_one_phonon_mode_eigvecs_valid": incoherent_one_phonon_mode_eigvecs_valid,
         "max_mode_energy_mev": max_mode_energy_mev,
-        "multiphonon_mode_energies_mev": multiphonon_mode_energies_mev,
-        "multiphonon_mode_frequencies_thz": multiphonon_mode_frequencies_thz,
-        "multiphonon_mode_weights": multiphonon_mode_weights,
-        "multiphonon_mode_eigvecs_valid": multiphonon_mode_eigvecs_valid,
-        "multiphonon_q_weight_norm": multiphonon_q_weight_norm,
         "multiphonon_mode_projection_components": multiphonon_mode_projection_components,
         "multiphonon_star_counts": multiphonon_star_counts,
     }
@@ -398,43 +375,15 @@ def build_compute_context(
     mev_to_joule = EV * 1e-3
     unit_conversion = 1.0 / (AMU * (2 * np.pi * THz) ** 2)
 
-    site_scattering_lengths = getattr(args, "site_scattering_lengths_angstrom", None)
-    if site_scattering_lengths is None:
-        scattering_lengths = parse_scattering_lengths(
-            list(primitive.symbols),
-            args.scattering_lengths_json,
-            args.scattering_lengths_file,
-        )
-        site_scattering_lengths = np.array(
-            [scattering_lengths[s] for s in primitive.symbols],
-            dtype=float,
-        )
-    else:
-        scattering_lengths = None
-        site_scattering_lengths = np.asarray(site_scattering_lengths, dtype=float)
-        if len(site_scattering_lengths) != len(primitive.symbols):
-            raise ValueError(
-                "site_scattering_lengths_angstrom must match the number of primitive-cell atoms."
-            )
-
-    site_incoherent_cross_sections = getattr(args, "site_incoherent_cross_sections_barn", None)
-    if site_incoherent_cross_sections is None:
-        sigma_inc = parse_incoherent_cross_sections(
-            list(primitive.symbols),
-            args.incoherent_cross_sections_json,
-            args.incoherent_cross_sections_file,
-        )
-        site_incoherent_cross_sections = np.array(
-            [sigma_inc[s] for s in primitive.symbols],
-            dtype=float,
-        )
-    else:
-        sigma_inc = None
-        site_incoherent_cross_sections = np.asarray(site_incoherent_cross_sections, dtype=float)
-        if len(site_incoherent_cross_sections) != len(primitive.symbols):
-            raise ValueError(
-                "site_incoherent_cross_sections_barn must match the number of primitive-cell atoms."
-            )
+    symbols = list(primitive.symbols)
+    scattering_lengths, site_scattering_lengths = _site_values(
+        getattr(args, "site_scattering_lengths_angstrom", None), symbols,
+        args.scattering_lengths_json, args.scattering_lengths_file,
+        _FALLBACK_C_SCATTERING_LENGTHS_ANGSTROM, "coherent scattering lengths")
+    sigma_inc, site_incoherent_cross_sections = _site_values(
+        getattr(args, "site_incoherent_cross_sections_barn", None), symbols,
+        args.incoherent_cross_sections_json, args.incoherent_cross_sections_file,
+        _FALLBACK_C_INCOHERENT_CROSS_SECTIONS_BARN, "incoherent cross sections")
 
     sigma_coh_by_atom = np.array(
         [4.0 * np.pi * bcoh**2 * ANG2_TO_BARN for bcoh in site_scattering_lengths],

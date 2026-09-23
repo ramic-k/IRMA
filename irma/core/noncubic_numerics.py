@@ -1,47 +1,27 @@
 """Low-level numerical primitives for the noncubic inelastic engine.
 
-Pure NumPy/math array-accumulation, sphere sampling, and energy-grid
-construction/rebinning used by both the setup path and the multiprocessing
-worker kernels. These carry no ``WORKER_STATE`` coupling, so they live here
-to keep ``noncubic_engine`` focused on the parallel kernels and the
-compute-phase orchestration; ``noncubic_engine`` re-exports them for
-backward compatibility (the worker kernels reference them through that
-module's namespace, inherited by the fork pool).
+Array accumulation, sphere sampling and energy-grid construction and
+rebinning, used by the setup path and the worker kernels. They do not touch
+``WORKER_STATE``; ``noncubic_engine`` re-exports them.
 """
 from __future__ import annotations
 
-
 import numpy as np
 
-# Relative tolerance for classifying a grid as uniform in
-# ``infer_uniform_spacing_or_none`` (below). Calibrated against the IRMA/OCLIMAX
-# export energy/Q grids (written to ~6-7 significant figures), where genuine
-# uniform grids carry round-trip noise well below this bound. NOTE: this verdict
-# only drives informational metadata (de_used/dq_used) and the *choice* of work
-# spacing -- it never selects the raw min-diff spacing on its own; the work-grid
-# path (build_uniform_positive_work_grid) bounds the bin count independently, so
-# a uniform-by-intent grid that trips this tolerance is still rebinned in an
-# integral-conserving way rather than blowing up the work grid.
+# Relative tolerance for treating a grid as uniform (grids written to 6-7
+# significant figures carry round-trip noise well below it).
 UNIFORM_GRID_RTOL = 2.5e-6
 
-# A non-uniform output grid's phonon region is taken as its multiphonon work
-# spacing when a run of at least this many consecutive equal spacings lies
-# below the highest phonon energy; no such run means the grid has no linear
-# phonon region (a hand-written LEAPR-style grid, or a phonon region of fewer
-# steps) and the median spacing is used instead.
+# A phonon region is a run of at least this many equal spacings below the
+# highest phonon energy...
 PHONON_REGION_MIN_REPEATS = 10
-# Spacings within this fraction of a run's first spacing belong to the run:
-# wide enough for the six-digit values of a deck file, narrow against the
-# few-percent growth of a log tail's spacings.
+# ...equal to within this fraction of the run's first spacing.
 PHONON_REGION_STEP_RTOL = 5.0e-3
 
-# Work-spacing bound for NON-uniform output grids: a log-tailed grid's raw
-# minimum spacing can be orders of magnitude below what the smooth
-# multiphonon convolution resolves, ballooning the work grid to ~1e10 bins.
-# Uniform output grids are never bounded (their spacing is already sane).
+# Bin cap for the work grid of a non-uniform output grid, whose minimum
+# spacing (a log tail) can be far finer than the multiphonon term needs.
 MAX_MULTIPHONON_WORK_BINS = 200_000
-# Absolute backstop converting any future sizing pathology into a clear
-# failure instead of an OOM kill.
+# Any work grid larger than this is an error rather than an out-of-memory kill.
 HARD_WORK_BIN_LIMIT = 5_000_000
 
 
@@ -76,12 +56,7 @@ def precompute_histogram_lookup(
     # A line exactly at the top edge belongs to the last bin (searchsorted
     # side="right" would otherwise index one past it and drop the line).
     bin_indices[energies_mev == e_edges_mev[-1]] = len(e_bin_widths_mev) - 1
-    valid = (
-        (energies_mev >= e_edges_mev[0])
-        & (energies_mev <= e_edges_mev[-1])
-        & (bin_indices >= 0)
-        & (bin_indices < len(e_bin_widths_mev))
-    )
+    valid = (energies_mev >= e_edges_mev[0]) & (energies_mev <= e_edges_mev[-1])
     valid_indices = np.flatnonzero(valid).astype(np.intp, copy=False)
     valid_bins = bin_indices[valid]
     inv_bin_widths = 1.0 / e_bin_widths_mev[valid_bins]
@@ -111,8 +86,6 @@ def build_signed_energy_grid(e_grid_mev: np.ndarray) -> tuple[np.ndarray, slice]
     public output grid may be non-uniform; in that case the multiphonon stage
     works on a separate uniform grid and is rebinned afterward.
     """
-    if np.any(e_grid_mev < -1.0e-12):
-        raise ValueError("Energy grid must be non-negative to build a signed mirror grid.")
     neg = -e_grid_mev[::-1]
     if abs(float(e_grid_mev[0])) < 1.0e-12:
         neg = neg[:-1]
@@ -181,18 +154,11 @@ def phonon_region_spacing(e_output_mev: np.ndarray,
     tail above it. The phonon region is therefore the FIRST run of at least
     ``PHONON_REGION_MIN_REPEATS`` consecutive spacings equal to the run's
     first spacing within ``PHONON_REGION_STEP_RTOL``, below
-    ``phonon_max_energy_mev``. The tolerance absorbs the six significant
-    digits a deck file carries (a step of 0.026 beta read back from values
-    near 8 varies by 4e-4 of itself) while staying far below the few
-    percent by which neighbouring log-tail spacings differ. Taking the
-    first run, not the most common spacing, keeps a uniform high-beta tail
-    that happens to lie below the phonon maximum (a deck whose ``freq_max``
-    is below the model's highest mode) from being mistaken for the phonon
-    region; a run whose step is below a hundred-thousandth of the phonon
-    maximum is ignored, which no phonon subdivision produces but a nearly
-    flat log segment can. Returns None when no such run exists (a grid with
-    no linear region, or a phonon region of fewer steps than the threshold)
-    or when the phonon maximum is not positive.
+    ``phonon_max_energy_mev``. The first run is used, not the most common
+    spacing, so that a uniform high-beta tail below the phonon maximum is not
+    taken for the phonon region. Runs with a step below 1e-5 of the phonon
+    maximum (a nearly flat log segment) are ignored. Returns None when there
+    is no such run or the phonon maximum is not positive.
     """
     if phonon_max_energy_mev is None or not float(phonon_max_energy_mev) > 0.0:
         return None
@@ -219,7 +185,6 @@ def phonon_region_spacing(e_output_mev: np.ndarray,
 
 def build_uniform_positive_work_grid(
     e_output_mev: np.ndarray,
-    emax_factor: float = 1.0,
     phonon_max_energy_mev: float | None = None,
 ) -> tuple[np.ndarray, float]:
     """Build a uniform internal energy grid for the multiphonon convolutions.
@@ -230,61 +195,30 @@ def build_uniform_positive_work_grid(
     the output grid conserves the integral (mass), so this is correct by
     construction — only the E=0 DENSITY readout looks halved.
 
-    ``phonon_max_energy_mev`` is the highest phonon energy of the model. When
-    the output grid is non-uniform and too finely spaced somewhere to be used
-    as the work grid, the work spacing is the output grid's own phonon-region
-    step: the spacing that repeats across the linear region below that
-    energy (``phonon_region_spacing``). The deck's phonon subdivision
-    (``n_phonon`` in the automatic grids) therefore sets the multiphonon
-    resolution as well as the output resolution, and adding or moving tail
-    points above the phonon range cannot change it. Without the phonon
-    energy, or for a grid with no repeated spacing, the median output spacing
-    is used; the median alone dropped from 0.67 meV to 12.7 meV on graphite
-    when a beta grid gained 200 tail points, and moved the cross section by
-    0.3% over 0.5 to 2 eV.
+    ``phonon_max_energy_mev`` is the highest phonon energy of the model. A
+    non-uniform output grid uses its minimum spacing, unless that needs more
+    than ``MAX_MULTIPHONON_WORK_BINS`` bins. Then the work spacing is the
+    output grid's phonon-region step (``phonon_region_spacing``), so the
+    deck's phonon subdivision sets the multiphonon resolution and tail points
+    above the phonon range cannot change it; without a phonon region it is
+    the median output spacing. The multiphonon term is smooth, so it needs the
+    resolution of the one-phonon seed, not of the finest output bin.
     """
     spacing = infer_uniform_spacing_or_none(e_output_mev)
-    e_max = float(centers_to_edges(e_output_mev)[-1]) * max(float(emax_factor), 1.0)
+    e_max = float(centers_to_edges(e_output_mev)[-1])
     if spacing is None:
-        # Non-uniform output grid. By default keep the minimum positive
-        # spacing, so the work grid resolves the finest output bin (and is
-        # unaffected by the bin cap whenever that minimum already fits).
         diffs = np.diff(e_output_mev)
         min_spacing = float(np.min(diffs))
         if e_max / min_spacing > MAX_MULTIPHONON_WORK_BINS:
-            # The minimum spacing comes from a log-thermal floor (down to
-            # ~1 neV on an auto grid) and would force the work grid past the
-            # bin cap. The MULTIPHONON background is a high-order
-            # self-convolution and therefore smooth; it needs the resolution
-            # of the one-phonon seed it is built from, not the finest output
-            # bin. That resolution is set by the phonon spectrum when the
-            # caller supplies it, and only otherwise by the output grid's
-            # median spacing (the old rule, kept for callers without a
-            # phonon model). Grids whose minimum already fits under the cap
-            # are untouched, and the one-phonon terms are deposited on the
-            # output grid directly, so neither is affected.
             floor = e_max / MAX_MULTIPHONON_WORK_BINS
             phonon_spacing = (phonon_region_spacing(e_output_mev, phonon_max_energy_mev)
                               if phonon_max_energy_mev is not None else None)
-            if phonon_spacing is not None:
-                spacing = max(phonon_spacing, floor)
-                rule = (f"the output grid's phonon-region spacing "
-                        f"{phonon_spacing:.6g} meV (below the highest phonon "
-                        f"energy {float(phonon_max_energy_mev):.6g} meV)")
-                if spacing > phonon_spacing:
-                    rule += (f", widened to {spacing:.6g} meV by the "
-                             f"{MAX_MULTIPHONON_WORK_BINS}-bin cap")
-            else:
-                median_spacing = float(np.median(diffs))
-                spacing = max(median_spacing, floor)
-                rule = f"the median output spacing {spacing:.6g} meV"
+            if phonon_spacing is None:
+                phonon_spacing = float(np.median(diffs))
+            spacing = max(phonon_spacing, floor)
             print(
-                f"Multiphonon work grid: non-uniform output grid; the minimum "
-                f"spacing {min_spacing:.6g} meV would need "
-                f"{int(np.ceil(e_max / min_spacing))} bins (above the "
-                f"{MAX_MULTIPHONON_WORK_BINS} cap). Using {rule} "
-                f"({int(np.ceil(e_max / spacing))} bins) — the smooth "
-                f"multiphonon background does not resolve below it.",
+                f"Multiphonon work grid: spacing {spacing:.6g} meV, "
+                f"{int(np.ceil(e_max / spacing))} bins (non-uniform output grid).",
                 flush=True,
             )
         else:
