@@ -90,11 +90,7 @@ def test_kinematic_mask_forbidden_energy_is_all_inaccessible():
 
 
 # ---- parallelism: the forward model must NOT default to serial --------------
-def test_resolve_jobs_auto_uses_all_cores():
-    assert _resolve_jobs(None) == max(1, os.cpu_count() or 1)
-    assert _resolve_jobs(None) > 1 or (os.cpu_count() or 1) == 1
-
-
-def test_resolve_jobs_explicit_is_honored():
+def test_resolve_jobs():
+    assert _resolve_jobs(None) == max(1, os.cpu_count() or 1)   # auto: every core
     assert _resolve_jobs(8) == 8          # explicit beats auto
     assert _resolve_jobs(1) == 1          # explicit serial still allowed
