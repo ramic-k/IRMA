@@ -113,7 +113,6 @@ def _grid_digest(values: np.ndarray) -> str:
 def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
                          mesh_dim, grid_key, q_grid_ang_inv, e_grid_mev,
                          num_directions, multiphonon_num_directions, num_jobs,
-                         sigma_mev,
                          multiphonon_max_order,
                          min_phonon_energy_mev=0.0,
                          scattering_lengths_json=None,
@@ -125,10 +124,9 @@ def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
 
     One key discipline for every consumer (the ENDF standalone path and the
     spectra bridge): identical model + mesh + grids + sampling -> the cached
-    context; anything else -> a fresh build. ``build_compute_context`` consumes
-    none of sigma_mev / multiphonon_max_order; they
-    stay in the key as a deliberately conservative over-key (a hit can never
-    return wrong arrays). ``preloaded_full_mesh`` skips the duplicate full-mesh
+    context; anything else -> a fresh build. ``build_compute_context`` does not
+    consume multiphonon_max_order; it stays in the key as a conservative
+    over-key (a hit can never return wrong arrays). ``preloaded_full_mesh`` skips the duplicate full-mesh
     eigensolve on a build.
 
     Two cache layers: besides the full-context entry,
@@ -157,7 +155,6 @@ def get_or_build_context(*, phonopy_yaml, force_constants, force_sets, born,
         int(num_directions),
         int(multiphonon_num_directions),
         int(max(1, int(num_jobs))),
-        float(sigma_mev),
         int(multiphonon_max_order),
         float(min_phonon_energy_mev),
         scattering_lengths_json,
@@ -280,7 +277,6 @@ def run_noncubic_standalone_sab(
     born_path: str | None = None,
     num_jobs: int,
     workdir: str | None = None,
-    sigma_mev: float | None = None,
     inelastic_mode: int = 1,
     represented_principal_site_count: int | None = None,
     principal_group_index: int = 0,
@@ -339,7 +335,6 @@ def run_noncubic_standalone_sab(
         getattr(controls, "min_phonon_energy_mev", 0.0))
     num_directions = int(controls.num_directions)
     multiphonon_num_directions = int(controls.multiphonon_num_directions)
-    sigma_mev = 0.0 if sigma_mev is None else float(sigma_mev)
 
     q_grid_ang_inv, e_grid_mev, alpha_abs_expected, beta_downscatter_abs_expected = _irma_grid_to_physical_qe(
         alpha, beta, lat, temperature_k, awr
@@ -380,7 +375,7 @@ def run_noncubic_standalone_sab(
         e_grid_mev=e_grid_mev, num_directions=num_directions,
         multiphonon_num_directions=multiphonon_num_directions,
         num_jobs=num_jobs,
-        sigma_mev=sigma_mev, multiphonon_max_order=multiphonon_max_order,
+        multiphonon_max_order=multiphonon_max_order,
         min_phonon_energy_mev=min_phonon_energy_mev,
         scattering_lengths_json=scattering_lengths_json,
         incoherent_cross_sections_json=incoherent_cross_sections_json,
@@ -404,7 +399,6 @@ def run_noncubic_standalone_sab(
         num_directions=num_directions,
         multiphonon_num_directions=multiphonon_num_directions,
         jobs=max(1, int(num_jobs)),
-        sigma_mev=sigma_mev,
         multiphonon_max_order=multiphonon_max_order,
         auto_multiphonon_order=auto_multiphonon_order,
         min_phonon_energy_mev=min_phonon_energy_mev,

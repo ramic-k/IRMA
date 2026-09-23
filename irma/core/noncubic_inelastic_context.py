@@ -20,7 +20,6 @@ the model layer is grid-independent, so only the grid layer is rebuilt
 
 from __future__ import annotations
 
-import inspect
 import time
 
 import numpy as np
@@ -153,19 +152,7 @@ def build_model_context(
         print("Loading phonopy object with NAC (embedded in phonopy.yaml)...")
     else:
         print("Loading phonopy object...")
-    # Force phonopy's C/OpenMP backend, NOT the Rust `phonors` backend, exactly as
-    # load_phonopy_mesh does (phonopy_io.py). phonopy>=4 defaults to lang="Rust" when
-    # `phonors` is installed; phonors uses a rayon global thread pool whose worker
-    # threads do NOT survive fork(). This model context is built in the PARENT (see
-    # build_compute_context) BEFORE the engine forks its ProcessPool (Card 6f
-    # ncpu>1), so a rayon pool initialized here would deadlock every worker. Only
-    # pass `lang` when this phonopy accepts it: older phonopy predates phonors, has
-    # no such parameter, and is already fork-safe (would raise TypeError otherwise).
-    backend_kwargs = (
-        {"lang": "C"}
-        if "lang" in inspect.signature(phonopy.load).parameters
-        else {}
-    )
+    # Same (C) backend as load_phonopy_mesh, so both loaders give identical arrays.
     with isolated_phonopy_cwd():
         phonon = phonopy.load(
             phonopy_yaml,
@@ -174,7 +161,7 @@ def build_model_context(
             born_filename=born_path,
             is_nac=apply_nac,
             **pinned_primitive_matrix_kwargs(phonopy_yaml),
-            **backend_kwargs,
+            lang="C",
         )
     if born_path is not None and phonon.nac_params is None:
         raise RuntimeError(

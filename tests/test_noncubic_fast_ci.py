@@ -162,39 +162,6 @@ def test_parallel_pool_matches_serial_byte_for_byte(tapes):
     assert open(out).read() == open(tapes[1]).read()
 
 
-def test_batched_qpoints_eigh_matches_fallback(monkeypatch):
-    """The stacked-eigh fast path and the QpointsPhonon fallback (used on
-    phonopy >= 4, which removed run_dynamical_matrix_solver_c) must agree —
-    this is the import break the phonopy-4.2.0 CI venv caught after perf
-    round 2."""
-    import numpy as np
-    import phonopy
-    import phonopy.harmonic.dynamical_matrix as dmmod
-    from irma.core.noncubic_engine import _batched_qpoints_eigh
-    from irma.core.phonopy_io import (
-        isolated_phonopy_cwd, resolve_force_constants_source)
-
-    fc_kwargs = resolve_force_constants_source(_YAML)
-    with isolated_phonopy_cwd():
-        ph = phonopy.load(phonopy_yaml=_YAML, is_nac=False, **fc_kwargs)
-    ph.run_mesh([2, 2, 2], with_eigenvectors=False)   # builds the dyn matrix
-    qpts = np.array([[0.1, 0.2, 0.3], [0.0, 0.0, 0.25], [0.4, -0.3, 0.1]])
-
-    factor = float(ph.unit_conversion_factor)
-    f_fast, e_fast = _batched_qpoints_eigh(ph.dynamical_matrix, qpts, factor)
-    if hasattr(dmmod, "run_dynamical_matrix_solver_c"):
-        monkeypatch.delattr(dmmod, "run_dynamical_matrix_solver_c")
-    f_ref, e_ref = _batched_qpoints_eigh(ph.dynamical_matrix, qpts, factor)
-
-    assert np.allclose(f_fast, f_ref, rtol=0, atol=1e-10)
-    # eigenvector phases are LAPACK-arbitrary per column; compare physical
-    # overlap |<e1|e2>| = 1 per (q, band) instead of raw components
-    for iq in range(qpts.shape[0]):
-        for ib in range(f_ref.shape[1]):
-            v1, v2 = e_fast[iq][:, ib], e_ref[iq][:, ib]
-            assert abs(abs(np.vdot(v1, v2)) - 1.0) < 1e-10
-
-
 def test_split_principal_tape_matches_merged_single_type(tmp_path):
     """QA4 F3 equivalence proof: the same graphite cell spelled as TWO Card 6d
     carbon entries (2 + 2 positions) must produce a BYTE-IDENTICAL mode-1 tape

@@ -79,12 +79,9 @@ from irma.core.noncubic_numerics import (  # re-exported for back-compat
     MAX_MULTIPHONON_WORK_BINS,
     HARD_WORK_BIN_LIMIT,
     fibonacci_sphere,
-    gaussian_add,
-    histogram_add,
     precompute_histogram_lookup,
     bincount_add,
     build_signed_energy_grid,
-    add_line_to_row,
     centers_to_edges,
     infer_uniform_spacing_or_none,
     build_uniform_positive_work_grid,
@@ -109,8 +106,8 @@ THz = 1000000000000.0
 # --- spawn-pool worker layer (lives in noncubic_workers) ---------------------
 # The ProcessPoolExecutor kernels (accumulate_*_block), the WORKER_STATE
 # global + set_worker_state, the shared-memory staging/attach helpers, the
-# thread-limiting pool initializer, the sparse-block IPC, and the projection /
-# q-sampling / precompute helpers live in noncubic_workers so this module
+# thread-limiting pool initializer, and the projection / q-sampling /
+# precompute helpers live in noncubic_workers so this module
 # stays navigable. Re-imported here so compute_from_args and existing
 # ``from irma.core.noncubic_engine import ...`` callers keep working
 # unchanged. WORKER_STATE itself is intentionally NOT re-exported:
@@ -121,7 +118,6 @@ THz = 1000000000000.0
 from irma.core.noncubic_workers import (  # noqa: F401  (re-exported for callers)
     NATIVE_THREAD_ENV_VARS,
     BARN_PER_M2,
-    BOSE_T0_LIMIT_K,
     limit_native_threads_to_one,
     _pool_worker_init,
     _dispatch_block,
@@ -130,19 +126,14 @@ from irma.core.noncubic_workers import (  # noqa: F401  (re-exported for callers
     contract_real_symmetric_projection_components,
     build_star_averaged_projection_components,
     precompute_directional_multiphonon_orders,
-    _warn_kernel_area_mismatch,
+    multiphonon_seed_area_deficit,
     build_q_bin_sampling,
     set_worker_state,
-    _SPARSE_BLOCK_TAG,
-    _SPARSE_BLOCK_DENSITY_CUTOFF,
-    compress_block_result,
-    accumulate_block_result,
     build_q_vectors,
     principal_weighted_coherent_partition,
     _batched_qpoints_eigh,
     accumulate_coherent_block,
     accumulate_incoherent_shell_block,
-    recursive_multiphonon_orders_no_factorial,
     accumulate_incoherent_multiphonon_direction_block,
 )
 
@@ -210,7 +201,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "quadrature). Converged by ~50-100 for graphite-like crystals; default 1000 "
              "is well inside the converged regime. Cost is linear in the count.",
     )
-    parser.add_argument("--sigma-mev", type=float, default=0.0)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--q-chunk-size", type=int, default=20000)
     parser.add_argument("--multiphonon-max-order", type=int, default=100)
@@ -429,20 +419,9 @@ def compute_from_args(
             phonon_cutoff_summary = _summary(mesh_data, args.temperature)
             for _line in format_phonon_cutoff_summary(phonon_cutoff_summary):
                 print(_line, flush=True)
-        if args.temperature <= BOSE_T0_LIMIT_K:
-            incoherent_one_phonon_mode_occupancies = np.zeros_like(
-                incoherent_one_phonon_mode_frequencies_thz
-            )
-        else:
-            incoherent_one_phonon_exponent = np.clip(
-                incoherent_one_phonon_mode_frequencies_thz * THzToEv
-                / (_BK_EV_PER_K * args.temperature),
-                0.0,
-                700.0,
-            )
-            incoherent_one_phonon_mode_occupancies = 1.0 / np.expm1(
-                incoherent_one_phonon_exponent
-            )
+        incoherent_one_phonon_mode_occupancies = 1.0 / np.expm1(np.clip(
+            incoherent_one_phonon_mode_frequencies_thz * THzToEv
+            / (_BK_EV_PER_K * args.temperature), 0.0, 700.0))
 
         # --- Site groups, principal-scatterer bookkeeping and the multiphonon order.
         # The incoherent multiphonon sum is Poisson(2W = Q^2 u.U.u); at the grid's
@@ -610,7 +589,7 @@ def compute_from_args(
             if num_jobs == 1:
                 for block_index, block in enumerate(block_list, start=1):
                     try:
-                        result = accumulate_block_result(result, worker(block))
+                        result += worker(block)
                     except Exception as exc:
                         raise RuntimeError(
                             f"{label}: worker failed on block "
@@ -655,8 +634,7 @@ def compute_from_args(
                     pool = cf.ProcessPoolExecutor(
                         max_workers=num_jobs,
                         mp_context=ctx,
-                        initializer=_pool_worker_init,
-                        initargs=(_ncw._KERNEL_AREA_WARNED,))
+                        initializer=_pool_worker_init)
                     pool_holder["pool"] = pool
                 state_ref, shm_handles = share_worker_state(_ncw.WORKER_STATE)
                 try:
@@ -681,7 +659,7 @@ def compute_from_args(
                             raise RuntimeError(
                                 f"{label}: worker failed on block "
                                 f"{block_index}/{len(block_list)}") from exc
-                        result = accumulate_block_result(result, block_partial)
+                        result += block_partial
                         print(
                             f"{label}: block {block_index}/{len(block_list)} done "
                             f"after {time.time() - phase_start:.1f} s",
@@ -719,7 +697,6 @@ def compute_from_args(
                 "e_grid_mev": e_grid_mev,
                 "e_edges_mev": e_edges_mev,
                 "e_bin_widths_mev": e_bin_widths_mev,
-                "sigma_mev": args.sigma_mev,
                 "sample_weights": sample_weights,
                 "mev_to_joule": mev_to_joule,
                 "one_phonon_creation_scale": one_phonon_creation_scale,
@@ -782,7 +759,6 @@ def compute_from_args(
                 "e_grid_mev": e_grid_mev,
                 "e_edges_mev": e_edges_mev,
                 "e_bin_widths_mev": e_bin_widths_mev,
-                "sigma_mev": args.sigma_mev,
                 "incoherent_prefactors": prefactors,
                 "mesh_mode_energies_mev": incoherent_one_phonon_mode_energies_mev,
                 "mesh_mode_bose_prefactors": incoherent_one_phonon_mode_creation_prefactors,
@@ -906,6 +882,20 @@ def compute_from_args(
                 / multiphonon_q_weight_norm
                 / multiphonon_mode_frequencies_thz
             )
+            seed_deficit = multiphonon_seed_area_deficit(
+                multiphonon_base_prefactors, multiphonon_mode_eigvecs_valid,
+                multiphonon_creation_prefactors, multiphonon_absorption_prefactors,
+                signed_emission_lookup[0], signed_absorption_lookup[0], thermal_mats)
+            if seed_deficit > 1.0e-5:
+                print(
+                    f"WARNING: the multiphonon one-phonon seed differs from the "
+                    f"Debye-Waller displacement by up to {seed_deficit * 100:.2f}% "
+                    f"(tolerance 1e-05): phonon modes fall outside the multiphonon "
+                    f"work grid, so the multiphonon background loses area. Extend "
+                    f"the energy grid (decks: the beta grid; spectra: "
+                    f"grid.e_max_meV) above the highest phonon energy.",
+                    flush=True,
+                )
 
             if emit_gain_side:
                 multiphonon_initial = np.zeros(
@@ -954,11 +944,8 @@ def compute_from_args(
                     "mesh_mode_eigvecs": multiphonon_mode_eigvecs_valid,
                     "mesh_mode_projection_components": multiphonon_mode_projection_components,
                     "e_signed_grid_mev": e_signed_grid_mev,
-                    "e_signed_edges_mev": e_signed_edges_mev,
-                    "e_signed_bin_widths_mev": e_signed_bin_widths_mev,
                     "de_mev": de_work_mev,
-                    "sigma_mev": args.sigma_mev,
-                    "max_order": args.multiphonon_max_order,
+                        "max_order": args.multiphonon_max_order,
                     "positive_slice": positive_slice,
                     "thermal_mats": thermal_mats,
                     "q_bin_sample_mags": q_bin_sample_mags,
@@ -967,7 +954,6 @@ def compute_from_args(
                     "num_total_dirs": len(multiphonon_directions),
                     "sigma0_emission_lookup": signed_emission_lookup,
                     "sigma0_absorption_lookup": signed_absorption_lookup,
-                    "collect_last_order": False,
                     "emit_gain_side": emit_gain_side,
                 }
             )
@@ -1144,7 +1130,6 @@ def compute_from_args(
             "grid_from_oclimax_csv": str(Path(args.grid_from_oclimax_csv).resolve()) if args.grid_from_oclimax_csv else None,
             "q_grid_file": str(Path(args.q_grid_file).resolve()) if args.q_grid_file else None,
             "e_grid_file": str(Path(args.e_grid_file).resolve()) if args.e_grid_file else None,
-            "sigma_meV": args.sigma_mev,
             "jobs": num_jobs,
             "num_directions": args.num_directions,
             "multiphonon_num_directions": multiphonon_num_directions,
@@ -1233,7 +1218,6 @@ def run_noncubic_sab_inprocess(
     num_directions: int = 10000,
     multiphonon_num_directions: int = 1000,
     jobs: int = 1,
-    sigma_mev: float = 0.0,
     multiphonon_max_order: int = 100,
     auto_multiphonon_order: bool = False,
     min_phonon_energy_mev: float = 0.0,
@@ -1285,7 +1269,6 @@ def run_noncubic_sab_inprocess(
         e_grid_file=None,
         num_directions=int(num_directions),
         multiphonon_num_directions=int(multiphonon_num_directions),
-        sigma_mev=float(sigma_mev),
         jobs=int(jobs),
         q_chunk_size=20000,
         multiphonon_max_order=int(multiphonon_max_order),

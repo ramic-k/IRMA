@@ -68,7 +68,7 @@ def test_graphite_single_pack_engine_equality(tmp_path):
         alpha=np.asarray(_ALPHA, float), beta=np.asarray(_BETA, float), lat=1,
         temperature_k=296.0, awr=11.898,
         phonopy_yaml_path=str(_GRAPHITE_YAML), mesh_dim=(2, 2, 2),
-        num_jobs=1, sigma_mev=0.0,
+        num_jobs=1,
         controls=NoncubicInelasticControls(
             num_directions=64, multiphonon_num_directions=16,
             multiphonon_max_order=2, auto_multiphonon_order=False),

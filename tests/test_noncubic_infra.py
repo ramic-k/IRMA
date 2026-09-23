@@ -5,8 +5,6 @@ Covers the concurrency / native-thread / CLI-validation findings:
 * F15  -- the GUI runner sets OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES at import
           (setdefault) so a fork from the non-main GUI thread does not abort on
           macOS Cocoa.
-* C7    -- the pool worker initializer detaches the inherited GUI stdout/stderr
-          redirector, rebinding to the real interpreter streams.
 * C8    -- the pool worker initializer FORCE-sets the native-thread env vars to
           "1" (overriding inherited values), while the parent-side limiter only
           setdefaults them.
@@ -22,7 +20,6 @@ no Tk widgets are instantiated here.
 import importlib
 import inspect
 import os
-import sys
 
 import numpy as np
 import pytest
@@ -55,24 +52,6 @@ def test_pool_worker_init_forces_thread_env(monkeypatch):
     ne._pool_worker_init()
     for name in ne.NATIVE_THREAD_ENV_VARS:
         assert os.environ[name] == "1", name
-
-
-# --------------------------------------------------------------------------- #
-# C7 -- worker initializer detaches the inherited stdout/stderr redirector
-# --------------------------------------------------------------------------- #
-def test_pool_worker_init_rebinds_streams(monkeypatch):
-    class _FakeRedirector:
-        def write(self, text):
-            return len(text)
-
-        def flush(self):
-            pass
-
-    monkeypatch.setattr(sys, "stdout", _FakeRedirector())
-    monkeypatch.setattr(sys, "stderr", _FakeRedirector())
-    ne._pool_worker_init()
-    assert sys.stdout is sys.__stdout__
-    assert sys.stderr is sys.__stderr__
 
 
 # --------------------------------------------------------------------------- #

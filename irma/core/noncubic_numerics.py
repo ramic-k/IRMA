@@ -10,7 +10,6 @@ module's namespace, inherited by the fork pool).
 """
 from __future__ import annotations
 
-import math
 
 import numpy as np
 
@@ -58,59 +57,6 @@ def fibonacci_sphere(num_points: int) -> np.ndarray:
     x = r_xy * np.cos(phi)
     y = r_xy * np.sin(phi)
     return np.column_stack((x, y, z))
-
-
-def gaussian_add(
-    sqe: np.ndarray,
-    q_index: int,
-    energy_mev: float,
-    weight_barn: float,
-    e_grid_mev: np.ndarray,
-    e_edges_mev: np.ndarray,
-    e_bin_widths_mev: np.ndarray,
-    sigma_mev: float,
-    dir_weight: float,
-) -> None:
-    """Add a Gaussian-broadened line with unit area to possibly non-uniform bins."""
-    if len(e_grid_mev) == 0:
-        return
-
-    half_width = max(4.0 * sigma_mev, float(np.max(e_bin_widths_mev)))
-    lo = max(0, np.searchsorted(e_edges_mev, energy_mev - half_width, side="right") - 1)
-    hi = min(len(e_grid_mev), np.searchsorted(e_edges_mev, energy_mev + half_width, side="left"))
-    if hi <= lo:
-        return
-
-    scale = sigma_mev * np.sqrt(2.0)
-    z_lo = (e_edges_mev[lo:hi] - energy_mev) / scale
-    z_hi = (e_edges_mev[lo + 1 : hi + 1] - energy_mev) / scale
-    erf_lo = np.array([math.erf(float(value)) for value in z_lo], dtype=float)
-    erf_hi = np.array([math.erf(float(value)) for value in z_hi], dtype=float)
-    bin_content = 0.5 * weight_barn * dir_weight * (erf_hi - erf_lo)
-    sqe[q_index, lo:hi] += bin_content / e_bin_widths_mev[lo:hi]
-
-
-def histogram_add(
-    sqe: np.ndarray,
-    q_index: int,
-    energy_mev: float,
-    weight_barn: float,
-    e_edges_mev: np.ndarray,
-    e_bin_widths_mev: np.ndarray,
-    dir_weight: float,
-) -> None:
-    """Add a delta peak by depositing its weight into one possibly non-uniform energy bin."""
-    if len(e_bin_widths_mev) == 0:
-        return
-
-    if energy_mev < e_edges_mev[0] or energy_mev > e_edges_mev[-1]:
-        return
-    if energy_mev == e_edges_mev[-1]:
-        bin_index = len(e_bin_widths_mev) - 1
-    else:
-        bin_index = int(np.searchsorted(e_edges_mev, energy_mev, side="right") - 1)
-    if 0 <= bin_index < sqe.shape[1]:
-        sqe[q_index, bin_index] += weight_barn * dir_weight / e_bin_widths_mev[bin_index]
 
 
 def precompute_histogram_lookup(
@@ -193,33 +139,6 @@ def build_gain_output_grid(e_grid_mev: np.ndarray) -> tuple[np.ndarray, np.ndarr
             "to mirror into a gain grid.")
     e_gain = -pos[::-1]
     return e_gain, centers_to_edges(e_gain)
-
-
-def add_line_to_row(
-    row: np.ndarray,
-    energy_mev: float,
-    weight_units: float,
-    e_grid_mev: np.ndarray,
-    e_edges_mev: np.ndarray,
-    e_bin_widths_mev: np.ndarray,
-    sigma_mev: float,
-) -> None:
-    """Deposit a single line into a 1D signed-energy row."""
-    row2d = row[np.newaxis, :]
-    if sigma_mev > 0.0:
-        gaussian_add(
-            row2d,
-            0,
-            energy_mev,
-            weight_units,
-            e_grid_mev,
-            e_edges_mev,
-            e_bin_widths_mev,
-            sigma_mev,
-            1.0,
-        )
-    else:
-        histogram_add(row2d, 0, energy_mev, weight_units, e_edges_mev, e_bin_widths_mev, 1.0)
 
 
 def centers_to_edges(centers: np.ndarray, lower_bound: float | None = None) -> np.ndarray:
