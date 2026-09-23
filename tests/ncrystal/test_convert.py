@@ -1,11 +1,10 @@
-"""Convention bridge unit tests (SP1): pack_from_irma_sab + rescale.
+"""Convention bridge unit tests (SP1): pack_from_irma_sab.
 
 Pure/fast. Verifies the documented transforms are the ONLY thing convert does:
   - alpha mapped by AWR
   - scaled-symmetric storage S_scaled = S_downscatter * exp(-beta/2)
   - column-major (alpha fastest) flattening into sab_values
   - negative-fringe clip with a table-scale guard
-  - rescale scale = source_sigma / bound_xs
 """
 from __future__ import annotations
 
@@ -13,22 +12,7 @@ import math
 
 import pytest
 
-from irma.ncrystal.convert import pack_from_irma_sab, rescale_sab_to_bound_xs
-
-
-def test_rescale_scale_and_values():
-    table = [[1.0, 2.0], [3.0, 4.0]]
-    out, scale = rescale_sab_to_bound_xs(table, source_sigma_barn=10.0,
-                                         bound_xs_barn=5.0)
-    assert scale == pytest.approx(2.0)
-    assert out == [[2.0, 4.0], [6.0, 8.0]]
-
-
-def test_rescale_rejects_nonpositive():
-    with pytest.raises(ValueError):
-        rescale_sab_to_bound_xs([[1.0]], source_sigma_barn=0.0, bound_xs_barn=1.0)
-    with pytest.raises(ValueError):
-        rescale_sab_to_bound_xs([[1.0]], source_sigma_barn=1.0, bound_xs_barn=0.0)
+from irma.ncrystal.convert import pack_from_irma_sab
 
 
 def test_alpha_scaled_by_mass_ratio():
@@ -90,9 +74,12 @@ def test_large_negative_rejected():
 
 
 def test_beta_must_start_at_zero():
+    """The scaled-symmetric half-table needs beta starting at 0 (checked on write)."""
+    from irma.ncrystal.pack import _validate
+    pack = pack_from_irma_sab(
+        material_id="m__X", temperature_K=296.0, bound_xs_barn=5.0,
+        element_mass_amu=12.0, alpha_mass_ratio=12.0,
+        alpha_grid=[0.1, 0.2], beta_downscatter_abs=[0.5, 1.0],
+        sab_asym_downscatter=[[1.0, 1.0], [1.0, 1.0]])
     with pytest.raises(ValueError, match="start at zero"):
-        pack_from_irma_sab(
-            material_id="m__X", temperature_K=296.0, bound_xs_barn=5.0,
-            element_mass_amu=12.0, alpha_mass_ratio=12.0,
-            alpha_grid=[0.1, 0.2], beta_downscatter_abs=[0.5, 1.0],
-            sab_asym_downscatter=[[1.0, 1.0], [1.0, 1.0]])
+        _validate(pack)

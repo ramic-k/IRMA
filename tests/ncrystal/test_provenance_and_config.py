@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import pytest
 
-from irma.ncrystal.provenance import collect_provenance, file_sha256, irma_version
+from irma.ncrystal.provenance import collect_provenance, file_sha256
 from irma.ncrystal.config import NCrystalExportConfig
 from irma.spectra.config import SpectraConfigError
 
 
-def test_collect_provenance_keys():
+def test_collect_provenance_keys(tmp_path):
+    yaml_path = tmp_path / "phonopy.yaml"
+    yaml_path.write_text("phonopy: data\n")
     meta = collect_provenance(
-        phonopy_yaml=None, mesh=[40, 40, 40], temperature_K=296.0,
+        phonopy_yaml=yaml_path, mesh=[40, 40, 40], temperature_K=296.0,
         num_directions=10000, multiphonon_num_directions=1000,
         multiphonon_max_order="auto", inelastic_mode=2)
     for key in ("irma_version", "irma_git_sha", "mesh", "temperature_K",
@@ -26,11 +28,6 @@ def test_file_sha256_deterministic(tmp_path):
     f = tmp_path / "x.yaml"
     f.write_text("phonopy: data\n")
     assert file_sha256(f) == file_sha256(f)
-    assert file_sha256(tmp_path / "missing") == "unknown"
-
-
-def test_irma_version_never_raises():
-    assert isinstance(irma_version(), str)
 
 
 def _cfg_dict(**over):

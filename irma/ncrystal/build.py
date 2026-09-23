@@ -434,7 +434,6 @@ def _attach_elastic(pack, elastic_state, neutron_by_symbol, *,
     U = np.asarray(elastic_state["thermal_displacement_matrices_ang2"], float)
     symbols = [str(s) for s in elastic_state["primitive_symbols"]]
     frac = np.asarray(elastic_state["primitive_scaled_positions"], float)
-    pack.elastic_coherent = True            # full physical elastic (both channels)
     pack.elastic_u_tensors_a2 = [float(v) for v in U.reshape(-1)]
     pack.elastic_u_symbols = symbols
     pack.elastic_u_frac_positions = [float(v) for v in frac.reshape(-1)]

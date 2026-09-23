@@ -52,33 +52,27 @@ def _fmt(value: float) -> str:
     return f"{float(value):.12g}"
 
 
-def build_base_ncmat(
+def assemble_material_ncmat(
     *,
     lattice_ang,
     scaled_positions: Sequence[Sequence[float]],
     symbols: Sequence[str],
+    pack_filenames: Sequence[str],
     debye_temperatures: dict[str, float],
 ) -> str:
-    """Build a valid NCMAT (v5) for the phonopy primitive cell.
+    """A complete, loadable NCMAT (v5): the phonopy cell plus ``@CUSTOM_IRMA``.
 
-    ``@CELL`` + ``@ATOMPOSITIONS`` carry the exact phonopy geometry (so the pack's
-    DW-tensor positions match the material's atom sites). Each element gets a
-    ``@DYNINFO type=vdosdebye`` with a Debye temperature back-derived from the
-    phonopy mean-squared displacement (:func:`debye_temperature_from_msd`), which
-    gives NCrystal a valid MSD source to construct the crystalline material. Both
-    the base inelastic and (for an elastic export) the base elastic are then
-    overridden by the plugin, so this placeholder dynamics never reaches the
-    cross section. Neutron data per element comes from NCrystal's built-in atom
-    database (natural-element b_coh / sigma_inc / sigma_abs); supply an
-    ``@ATOMDB`` yourself for non-natural isotopics.
+    ``@CELL`` + ``@ATOMPOSITIONS`` carry the exact phonopy geometry (so the
+    pack's DW-tensor positions match the material's atom sites). Each element
+    gets a ``@DYNINFO type=vdosdebye`` placeholder whose Debye temperature
+    (:func:`debye_temperature_from_msd`) gives NCrystal a valid MSD source; the
+    plugin overrides it, and the element neutron data come from NCrystal's
+    atom database. ``@CUSTOM_IRMA`` lists one ``pack <path>`` line per
+    principal pack (the only key the plugin accepts).
 
-    The NCMAT carries no ``@TEMPERATURE`` (that section is NCMAT v7+; this is v5),
-    so NCrystal defaults the material to 293.15 K. The pack's S(alpha,beta) is
-    precomputed at a single bake temperature and the plugin does NOT interpolate,
-    so load at that temperature with ``;temp=<bakeT>`` (required whenever the pack
-    is not baked at 293.15 K). The plugin REJECTS a requested/pack temperature
-    mismatch with a clear error rather than silently sampling the wrong-temperature
-    law.
+    v5 has no ``@TEMPERATURE``, so NCrystal defaults to 293.15 K: load with
+    ``;temp=<bakeT>``; the plugin rejects a temperature that differs from the
+    pack's and does not interpolate.
     """
     positions = np.asarray(scaled_positions, float).reshape(len(symbols), 3)
     a, b, c, alpha, beta, gamma = lattice_to_cell_params(lattice_ang)
@@ -100,31 +94,5 @@ def build_base_ncmat(
         lines.append(f"  fraction {_fmt(counts[sym] / ntot)}")
         lines.append("  type vdosdebye")
         lines.append(f"  debye_temp {_fmt(theta)}")
+    lines += ["", "@CUSTOM_IRMA"] + [f"  pack {fn}" for fn in pack_filenames]
     return "\n".join(lines) + "\n"
-
-
-def custom_irma_section(pack_filenames: Sequence[str]) -> str:
-    """The ``@CUSTOM_IRMA`` block referencing the per-principal pack files.
-
-    The plugin parser accepts ONLY ``pack <path>`` lines (one per principal
-    pack); no other keys.
-    """
-    lines = ["@CUSTOM_IRMA"]
-    for fn in pack_filenames:
-        lines.append(f"  pack {fn}")
-    return "\n".join(lines) + "\n"
-
-
-def assemble_material_ncmat(
-    *,
-    lattice_ang,
-    scaled_positions: Sequence[Sequence[float]],
-    symbols: Sequence[str],
-    pack_filenames: Sequence[str],
-    debye_temperatures: dict[str, float],
-) -> str:
-    """A complete, loadable ``.ncmat``: phonopy structure + ``@CUSTOM_IRMA``."""
-    base = build_base_ncmat(
-        lattice_ang=lattice_ang, scaled_positions=scaled_positions,
-        symbols=symbols, debye_temperatures=debye_temperatures)
-    return base + "\n" + custom_irma_section(pack_filenames)

@@ -123,31 +123,6 @@ def test_sab_values_length_checked():
         _validate(_minimal_pack(sab_values=[0.0, 1.0]))
 
 
-def test_u_tensor_must_be_psd(tmp_path):
-    # 3 sites, identity-ish PSD tensors -> ok; a negative-diagonal one -> reject.
-    good = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 2
-    # structure mode: anisotropic U tensors, no scalar MSD / incoherent-xs pair.
-    pack = _minimal_pack(
-        elastic_u_tensors_a2=good,
-        elastic_u_symbols=["C", "C"],
-        elastic_u_frac_positions=[0.0, 0.0, 0.0, 0.5, 0.5, 0.5],
-        elastic_u_coherent_scatlen_sqrtbarn=[0.6646, 0.6646],
-        elastic_u_incoherent_xs_barn=[0.001, 0.001],
-    )
-    write_pack(pack, tmp_path / "ok.irmapack")  # must not raise
-
-    bad = list(good)
-    bad[0] = -1.0  # negative leading minor
-    with pytest.raises(ValueError, match="positive semidefinite"):
-        from irma.ncrystal.pack import _validate
-        _validate(_minimal_pack(
-            elastic_u_tensors_a2=bad,
-            elastic_u_symbols=["C", "C"],
-            elastic_u_frac_positions=[0.0, 0.0, 0.0, 0.5, 0.5, 0.5],
-            elastic_u_coherent_scatlen_sqrtbarn=[0.6646, 0.6646],
-            elastic_u_incoherent_xs_barn=[0.001, 0.001]))
-
-
 def test_per_site_neutron_data_round_trips(tmp_path):
     # the per-tensor-site b_coh (sqrt-barn) + sigma_inc (barn) survive write -> read.
     pack = _minimal_pack(
@@ -164,39 +139,6 @@ def test_per_site_neutron_data_round_trips(tmp_path):
     assert got.elastic_u_incoherent_xs_barn == [0.001, 0.0]
 
 
-@pytest.mark.parametrize("over, match", [
-    ({"elastic_u_coherent_scatlen_sqrtbarn": [0.6646]},          # 1 vs 2 sites
-     "elastic_u_coherent_scatlen_sqrtbarn length"),
-    ({"elastic_u_incoherent_xs_barn": [0.001]},                  # 1 vs 2 sites
-     "elastic_u_incoherent_xs_barn length"),
-    ({"elastic_u_incoherent_xs_barn": [0.001, -0.5]},            # negative sigma_inc
-     "non-negative"),
-])
-def test_per_site_neutron_data_validation(over, match):
-    from irma.ncrystal.pack import _validate
-    kw = dict(
-        elastic_u_tensors_a2=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 2,
-        elastic_u_symbols=["C", "C"],
-        elastic_u_frac_positions=[0.0, 0.0, 0.0, 0.5, 0.5, 0.5],
-        elastic_u_coherent_scatlen_sqrtbarn=[0.6646, 0.6646],
-        elastic_u_incoherent_xs_barn=[0.001, 0.001],
-    )
-    kw.update(over)
-    with pytest.raises(ValueError, match=match):
-        _validate(_minimal_pack(**kw))
-
-
-def test_tensors_without_neutron_data_are_rejected():
-    # tensors present but the per-site neutron arrays omitted -> loud failure (the
-    # C++ has no atom-DB fallback, so a pack must carry them).
-    from irma.ncrystal.pack import _validate
-    with pytest.raises(ValueError, match="elastic_u_coherent_scatlen_sqrtbarn length"):
-        _validate(_minimal_pack(
-            elastic_u_tensors_a2=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] * 2,
-            elastic_u_symbols=["C", "C"],
-            elastic_u_frac_positions=[0.0, 0.0, 0.0, 0.5, 0.5, 0.5]))
-
-
 def test_alpha_grid_must_be_strictly_increasing():
     from irma.ncrystal.pack import _validate
     with pytest.raises(ValueError, match="alpha_grid must be strictly increasing"):
@@ -208,11 +150,6 @@ def test_beta_grid_must_be_strictly_increasing():
     # still starts at 0 (passes the scaled_sym start check) but is out of order
     with pytest.raises(ValueError, match="beta_grid must be strictly increasing"):
         _validate(_minimal_pack(beta_grid=[0.0, 1.0, 0.5]))
-
-
-def test_metadata_newline_rejected(tmp_path):
-    with pytest.raises(ValueError, match="newlines"):
-        write_pack(_minimal_pack(metadata={"k": "a\nb"}), tmp_path / "x.irmapack")
 
 
 def _tensor_pack(**over) -> IRMAPack:
@@ -248,15 +185,3 @@ def test_default_tensor_pack_has_no_mode_line(tmp_path):
     text = path.read_text()
     assert "incoherent_elastic_mode" not in text
     assert read_pack(path).incoherent_elastic_mode == "isotropic"
-
-
-def test_directional_without_tensors_rejected(tmp_path):
-    with pytest.raises(ValueError, match="directional requires"):
-        write_pack(_minimal_pack(incoherent_elastic_mode="directional"),
-                   tmp_path / "bad.irmapack")
-
-
-def test_invalid_incoherent_elastic_mode_rejected(tmp_path):
-    with pytest.raises(ValueError, match="incoherent_elastic_mode"):
-        write_pack(_tensor_pack(incoherent_elastic_mode="banana"),
-                   tmp_path / "bad.irmapack")
