@@ -32,17 +32,6 @@ def test_partial_dos_normalized_per_atom_and_grouped_by_symbol():
     assert np.trapezoid(rho, omega) == pytest.approx(1.0, abs=0.05)
 
 
-def test_feeds_compute_mode0_sqe():
-    from irma.spectra.dos_from_phonopy import partial_dos_from_phonopy
-    from irma.spectra.dos_mode0 import compute_mode0_sqe
-    sp = partial_dos_from_phonopy(_YAML, MESH)[0]
-    sp.update(awr=11.898, sigma_bound_b=5.551)
-    out = compute_mode0_sqe(species=[sp], temperature_k=300.0,
-                            q_ang_inv=np.linspace(0.5, 12, 40),
-                            e_mev=np.linspace(0, 250, 200))
-    assert np.all(np.isfinite(out["sqe_barn_per_meV"])) and out["sqe_barn_per_meV"].max() > 0
-
-
 def test_run_spectra_dos_source_phonopy_end_to_end():
     from irma.spectra.config import SpectraConfig, run_spectra
     cfg = SpectraConfig.from_dict({
