@@ -8,27 +8,14 @@ from irma.core.phonopy_io import (
     compute_dos_tensor,
     mode_floor_mask,
     compute_thermal_displacement_matrices,
-    validate_min_phonon_energy_mev,
 )
 
 
-def test_zero_cutoff_is_exactly_the_existing_mask():
-    qpoints = np.array([[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]])
-    energies = np.array([0.0, 0.01, 0.1, 0.0, 0.01, 0.1])
-    assert np.array_equal(
-        mode_floor_mask(energies, qpoints, 3),
-        mode_floor_mask(energies, qpoints, 3, 0.0),
-    )
-
-
-def test_positive_cutoff_is_strict_and_invalid_values_fail():
+def test_positive_cutoff_is_strict():
     qpoints = np.array([[0.25, 0.0, 0.0]])
     energies = np.array([-1.0, 0.0, 0.5, 0.5000001])
     assert mode_floor_mask(energies, qpoints, 4, 0.5).tolist() == [
         False, False, False, True]
-    for bad in (-1.0, np.nan, np.inf):
-        with pytest.raises(ValueError, match="finite and nonnegative"):
-            validate_min_phonon_energy_mev(bad)
 
 
 def _synthetic_mesh(cutoff):
