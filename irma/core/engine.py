@@ -67,8 +67,6 @@ from irma.core.kernels import (
 from irma.core.crystal import (
     AtomSite, CrystalStructure,
     compute_bragg_edges_general, coher,
-    _build_atom_types_expanded, _group_phonopy_atoms_by_type,
-    _average_site_quantity, _compute_per_species_msd,
 )
 from irma.core.crystal_cards import _parse_crystal_cards
 # _grouped_coherent_s_table is unused inside engine.py but re-exported via

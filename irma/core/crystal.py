@@ -153,112 +153,66 @@ def _get_reciprocal_lattice_matrix(a, b, c, alpha_deg, beta_deg, gamma_deg):
     ])
     return k2pi * np.linalg.inv(L).T
 
-def compute_bragg_edges_general(
-    crystal, emax, dcutoff=None, fsquarecut=1e-5,
-):
-    """Compute Bragg-edge cross-section data for any polycrystalline material.
+# Planes whose |F|^2 (or, with several species, whose attenuation-proof bound
+# (sum_s |b_s f_s|)^2) is below this are dropped.
+_FSQUARECUT = 1e-5
 
-    ``dcutoff`` (the minimum d-spacing enumerated, in Angstrom) defaults to
-    the value implied by ``emax`` — d_min = sqrt(WL2EKIN / (4 emax)) with a
-    5% margin — so the edge list always reaches ``emax``. An explicit
-    dcutoff LARGER than the derived value caps the reachable edge energy at
-    WL2EKIN / (4 dcutoff^2) regardless of emax; a warning is printed when
-    that happens.
+
+def compute_bragg_edges_general(crystal, emax):
+    """Bragg-edge cross-section data for a polycrystalline material up to ``emax`` [eV].
 
     Returns
     -------
     bragg_data : ndarray, shape (N, 2)
-        Column 0: Bragg-edge energy E_threshold [eV], ascending.
-        Column 1: Per-plane-group cross-section contribution [barn·eV]
-                  (Debye-Waller NOT included).
+        Edge energy [eV], ascending, and the edge's cross-section contribution
+        [barn eV] without Debye-Waller. A flat endpoint (emax, 0) is appended.
     nbe : int
         Number of rows in bragg_data.
     species_corr : ndarray, shape (nbe, nspecies, nspecies)
-        Per-species correlation matrix for Debye-Waller application.
-    bragg_dir_terms : list[list[tuple[ndarray, ndarray, tuple]]]
-        For each Bragg edge, a list of plane contributions
-        ``(G_hat, D_st_plane, site_terms)`` retained separately for
-        directional Debye-Waller evaluation. This avoids collapsing all
-        equal-energy reflections onto a single representative direction.
-        ``site_terms = (cos_arr, sin_arr, species_idx_arr, pref)`` carries
-        the per-SITE phase factors of the plane (cos/sin of
-        ``2*pi*(h,k,l).pos_i``, flattened species-then-position) plus each
-        site's species index and the plane prefactor
-        ``pref = d*mult*xsectfact``, so a consumer with non-uniform
-        per-site Debye-Waller tensors can rebuild the attenuated structure
-        factor site-by-site as ``|sum_i b_i exp(-2 W_i E) exp(i phi_i)|^2
-        * pref`` instead of using the species-collapsed ``D_st_plane``
-        (review finding P3). ``D_st_plane == pref * (fr fr^T + fi fi^T)``,
-        so the two forms coincide exactly when the tensors are uniform
-        within each species.
+        Per-species correlation matrix of each edge, for the Debye-Waller factors.
+    bragg_dir_terms : list[list[tuple]]
+        Per edge, the planes merged into it as ``(G_hat, D_st_plane, site_terms)``,
+        with ``site_terms = (cos, sin, species_idx, pref)`` the per-site phases
+        (species then position order) and ``pref = d*mult*xsectfact``, for the
+        directional and site-resolved Debye-Waller factors.
+        ``D_st_plane == pref * (fr fr^T + fi fi^T)``.
     """
     V = crystal.volume
-    N = crystal.n_atoms
-
     if V <= 0.0:
         raise ValueError(f"Non-positive unit-cell volume {V:.6g} Å³.")
-    if N == 0:
-        raise ValueError("Crystal has no atom sites.")
-
-    xsectfact = 0.5 * WL2EKIN / (V * N)
-
-    # Derive the d-spacing cutoff from emax (5% margin) unless the caller
-    # supplied one; warn when an explicit cutoff caps the edge list below
-    # the requested emax.
-    dcutoff_for_emax = np.sqrt(WL2EKIN / (4.0 * emax)) * 0.95
-    if dcutoff is None:
-        dcutoff = dcutoff_for_emax
-    elif dcutoff > dcutoff_for_emax:
-        e_reachable = WL2EKIN / (4.0 * dcutoff ** 2)
-        print(f"WARNING: dcutoff={dcutoff:g} A caps Bragg edges at "
-              f"{e_reachable:.4g} eV, below the requested "
-              f"emax={emax:g} eV (a cutoff <= {dcutoff_for_emax:.4g} A "
-              f"is needed to reach it).")
+    xsectfact = 0.5 * WL2EKIN / (V * crystal.n_atoms)
+    mult = 2.0      # the half-space loop counts each Friedel pair once
 
     G = _get_reciprocal_lattice_matrix(
         crystal.a, crystal.b, crystal.c,
         crystal.alpha, crystal.beta, crystal.gamma,
     )
-
-    ksq_max = (2.0 * np.pi / dcutoff) ** 2
-
-    # Tight per-index bounds, valid for ANY cell (not just orthogonal):
-    # over the ellipsoid {m : |G m| <= K}, max|h| = K·||row_1(G^{-1})||,
-    # and the rows of G^{-1} are the direct lattice vectors / 2π (norms
-    # a, b, c), so max|h| = (2π/dcutoff)·(a/2π) = a/dcutoff, etc.
-    h_max = max(1, int(np.ceil(crystal.a / dcutoff)) + 1)
-    k_max = max(1, int(np.ceil(crystal.b / dcutoff)) + 1)
-    l_max = max(1, int(np.ceil(crystal.c / dcutoff)) + 1)
+    # Index bounds for d >= dmin: max|h| = a/dmin, etc., for any cell.
+    dmin = np.sqrt(WL2EKIN / (4.0 * emax)) * 0.95
+    h_max = int(np.ceil(crystal.a / dmin)) + 1
+    k_max = int(np.ceil(crystal.b / dmin)) + 1
+    l_max = int(np.ceil(crystal.c / dmin)) + 1
 
     sites_data = [
         (s.b_coh_sqrtbarn, np.asarray(s.positions, dtype=float))
         for s in crystal.sites
     ]
     nspecies = len(crystal.sites)
-
-    # Species index of every site, flattened species-then-position -- the same
-    # order the per-plane site_cos/site_sin arrays use below. One shared
-    # read-only array referenced by every plane's site_terms.
+    # Species index of every site, in the order of the per-plane phase arrays.
     site_species_idx = np.concatenate([
         np.full(len(pos), si, dtype=np.intp)
         for si, (_, pos) in enumerate(sites_data)
     ])
 
-    plane_list = []
-
+    planes = []
     for h in range(0, h_max + 1):
         k_lo = 0 if h == 0 else -k_max
         for k in range(k_lo, k_max + 1):
             l_lo = 1 if (h == 0 and k == 0) else -l_max
             for l in range(l_lo, l_max + 1):
-
                 k_vec = G @ np.array([h, k, l], dtype=float)
-                ksq   = float(np.dot(k_vec, k_vec))
-
-                if ksq < 1e-30 or ksq > ksq_max:
-                    continue
-
-                d     = 2.0 * np.pi / np.sqrt(ksq)
+                ksq = float(np.dot(k_vec, k_vec))
+                d = 2.0 * np.pi / np.sqrt(ksq)
                 E_thr = WL2EKIN / (4.0 * d * d)
                 if E_thr > emax:
                     continue
@@ -283,92 +237,52 @@ def compute_bragg_edges_general(
                 for si in range(nspecies):
                     real_part += sites_data[si][0] * form_real[si]
                     imag_part += sites_data[si][0] * form_imag[si]
-
                 F2 = real_part**2 + imag_part**2
 
-                if F2 < fsquarecut:
-                    # A sub-cut TOTAL amplitude can still acquire finite
-                    # intensity at temperature when SPECIES attenuate
-                    # differently (unequal Debye-Waller lifts a cross-species
-                    # cancellation -- pre-release review P2), so for
-                    # multi-species cells the prune criterion is the
-                    # attenuation-proof upper bound (sum_s |b_s f_s|)^2:
-                    # differential per-species attenuation can at most remove
-                    # the cancellation, never exceed that bound. Systematic
-                    # absences cancel WITHIN a species (f_s == 0 for every
-                    # species), so they stay pruned; single-species cells are
-                    # unchanged by construction (bound == |F|^2 there is
-                    # false in general, but with one species the bound equals
-                    # |b_0 f_0|^2 == F2). Residual limitation: an
-                    # INTRA-species cancellation between sites with unequal
-                    # directional tensors is still pruned (the demonstrated
-                    # defect and its regression gate are cross-species).
+                if F2 < _FSQUARECUT:
+                    # Unequal per-species Debye-Waller factors can lift a
+                    # cross-species cancellation, so keep the plane unless
+                    # even (sum_s |b_s f_s|)^2 is below the cut.
                     if nspecies < 2:
                         continue
                     f2_bound = sum(
                         abs(sites_data[si][0]) * hypot(form_real[si],
                                                        form_imag[si])
                         for si in range(nspecies)) ** 2
-                    if f2_bound < fsquarecut:
+                    if f2_bound < _FSQUARECUT:
                         continue
 
                 C_st = (np.outer(form_real, form_real) +
                         np.outer(form_imag, form_imag))
+                D_st = d * C_st * mult * xsectfact
+                site_terms = (np.concatenate(cos_parts), np.concatenate(sin_parts),
+                              site_species_idx, d * mult * xsectfact)
+                planes.append((E_thr, d, d * F2 * mult * xsectfact, D_st,
+                               k_vec / np.sqrt(ksq), site_terms))
 
-                # Per-site phase factors, flattened in site_species_idx order,
-                # for the site-resolved directional Debye-Waller consumers.
-                site_cos = np.concatenate(cos_parts)
-                site_sin = np.concatenate(sin_parts)
-
-                G_hat = k_vec / np.sqrt(ksq)
-                plane_list.append([d, F2, 2.0, C_st, G_hat,
-                                   site_cos, site_sin])
-
-    if not plane_list:
+    if not planes:
         return (np.empty((0, 2), dtype=float), 0,
                 np.empty((0, nspecies, nspecies), dtype=float), [])
 
-    plane_list.sort(key=lambda x: -x[0])
-
-    pairs = []
-    for d, F2, mult, C_st, G_hat, site_cos, site_sin in plane_list:
-        E_thr = WL2EKIN / (4.0 * d * d)
-        sigma = d * F2 * mult * xsectfact
-        D_st = d * C_st * mult * xsectfact
-        # (cos, sin, species index, plane prefactor d*mult*xsectfact): enough
-        # for a consumer to rebuild the DW-attenuated |F|^2 site-by-site.
-        site_terms = (site_cos, site_sin, site_species_idx,
-                      d * mult * xsectfact)
-        pairs.append([E_thr, sigma, D_st,
-                      [(G_hat.copy(), D_st.copy(), site_terms)]])
-
-    pairs.sort(key=lambda p: p[0])
-
+    # Ascending energy; equal energies keep descending d, then enumeration order.
+    planes.sort(key=lambda p: (p[0], -p[1]))
     TOLER = 1e-6
-    combined = []
-    for E, sig, D_st, dir_terms in pairs:
+    combined = []       # [E, sigma, D_st sum, dir_terms]; merged within TOLER of the first E
+    for E, _, sig, D_st, G_hat, site_terms in planes:
         if combined and (E - combined[-1][0]) < TOLER:
             combined[-1][1] += sig
             combined[-1][2] = combined[-1][2] + D_st
-            combined[-1][3].extend(dir_terms)
+            combined[-1][3].append((G_hat, D_st, site_terms))
         else:
-            combined.append([E, sig, D_st.copy(), list(dir_terms)])
+            combined.append([E, sig, D_st, [(G_hat, D_st, site_terms)]])
 
     bragg_data = np.array([[e[0], e[1]] for e in combined], dtype=float)
-    nbe = int(bragg_data.shape[0])
+    species_corr = np.array([e[2] for e in combined], dtype=float)
+    bragg_dir_terms = [e[3] for e in combined]
+    nbe = len(combined)
 
-    species_corr = np.zeros((nbe, nspecies, nspecies), dtype=float)
-    bragg_dir_terms = []
-    for j, entry in enumerate(combined):
-        species_corr[j] = entry[2]
-        bragg_dir_terms.append(entry[3])
-
-    if nbe > 0 and bragg_data[-1, 0] < emax:
-        # Define S(E,T) up to emax with a FLAT extension above the last real
-        # Bragg edge (ENDF-102 7.2.2: "should be defined up to 5 eV"). The
-        # endpoint carries ZERO increment (and zero species/empty directional
-        # terms) so cumulative S stays constant from the last edge to emax and
-        # sigma = S/E simply decays as 1/E.
+    if bragg_data[-1, 0] < emax:
+        # Flat extension to emax (ENDF-102 7.2.2): a zero-increment endpoint.
         bragg_data = np.vstack([bragg_data, [emax, 0.0]])
         species_corr = np.concatenate(
             [species_corr, np.zeros((1, nspecies, nspecies), dtype=float)], axis=0)
@@ -376,6 +290,7 @@ def compute_bragg_edges_general(
         nbe += 1
 
     return bragg_data, nbe, species_corr, bragg_dir_terms
+
 
 def _frac_pos_matches(pos_a, pos_b, tol=5.0e-4):
     """True if two fractional positions coincide modulo lattice translations.
@@ -429,12 +344,9 @@ def _build_atom_types_expanded(crystal_info, mesh_data):
 
 def _group_phonopy_atoms_by_type(atom_types, atom_types_expanded):
     """Return phonopy-atom indices grouped by Card 6d atom type."""
-    atom_type_site_groups = [[] for _ in atom_types]
-    for d_idx, at_d in enumerate(atom_types_expanded):
-        for si, at_si in enumerate(atom_types):
-            if at_d is at_si:
-                atom_type_site_groups[si].append(d_idx)
-                break
+    atom_type_site_groups = [
+        [i for i, at_d in enumerate(atom_types_expanded) if at_d is at]
+        for at in atom_types]
 
     for si, site_indices in enumerate(atom_type_site_groups):
         if site_indices:
@@ -529,12 +441,6 @@ def _site_tensors_uniform(site_tensors, site_indices):
         np.array_equal(F0, arr[gi])
         or float(np.max(np.abs(arr[gi] - F0))) <= tol
         for gi in site_indices[1:])
-
-def _average_site_quantity(site_quantity, site_indices, quantity_name):
-    """Average a per-phonopy-site quantity over the requested site indices."""
-    if not site_indices:
-        raise ValueError(f"Cannot average {quantity_name}: no matching phonopy sites")
-    return np.mean(np.asarray(site_quantity)[site_indices], axis=0)
 
 def coher(lat, natom, emax):
     """Compute Bragg energies and structure factors for coherent elastic.

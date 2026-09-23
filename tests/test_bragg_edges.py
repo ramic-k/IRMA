@@ -16,8 +16,7 @@ from irma.core.crystal import _get_reciprocal_lattice_matrix
 
 
 def _edges(graphite, emax=5.0):
-    dcut = sqrt(WL2EKIN / (4.0 * emax)) * 0.95
-    return compute_bragg_edges_general(graphite, emax=emax, dcutoff=dcut)
+    return compute_bragg_edges_general(graphite, emax=emax)
 
 
 def _metric_tensor_inv(cr):
@@ -117,7 +116,7 @@ def test_oblique_edges_complete_and_correct(cell, request):
     a wrong metric and too-tight enumeration bounds."""
     cr = request.getfixturevalue(cell)
     emax, dcut = 2.0, sqrt(WL2EKIN / (4.0 * 2.0)) * 0.95
-    bragg, nbe, _, _ = compute_bragg_edges_general(cr, emax=emax, dcutoff=dcut)
+    bragg, nbe, _, _ = compute_bragg_edges_general(cr, emax=emax)
     # Strip the appended flat emax endpoint
     E_code, s_code = bragg[:-1, 0], bragg[:-1, 1]
     E_ref, s_ref = _brute_force_edges(cr, emax, dcut)
