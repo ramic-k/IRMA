@@ -311,10 +311,49 @@ def _normalize_shape(shape):
     return shape
 
 
-def resolution_convolve(E_out, I_in, width, shape="gaussian"):
+# How far past the window the input is sampled, in units of the largest width
+# on the window: a Gaussian to 6 sigma; a Lorentzian until at most 1e-3 of its
+# area lies outside, x = w / tan(pi/2 * 1e-3), about 637 HWHM.
+PAD_WIDTHS = {"gaussian": 6.0, "lorentzian": 1.0 / np.tan(0.5 * np.pi * 1e-3)}
+
+
+def pad_reach(E_out, width, shape="gaussian"):
+    """How far [meV] the input is needed past each end of the window
+    ``E_out``: ``PAD_WIDTHS[shape]`` times the largest width on the window."""
+    shape = _normalize_shape(shape)
+    E_out = np.asarray(E_out, float)
+    return PAD_WIDTHS[shape] * float(np.max(np.clip(_resolve_width(E_out, width), 1e-6, None)))
+
+
+def padded_grid(E_out, width, shape="gaussian", support=None):
+    """``E_out`` extended on both sides by the reach of the resolution kernel.
+
+    The convolved value near a window edge needs the input just outside the
+    window. Callers sample the input on this grid and pass it to
+    :func:`resolution_convolve` as ``E_in``. The extension continues the
+    window's end steps out to ``PAD_WIDTHS[shape]`` times the largest width on
+    the window. ``support=(lo, hi)`` is the range outside which the input is
+    zero; if given, the extension stops there.
+    """
+    E_out = np.asarray(E_out, float)
+    if E_out.size < 2:
+        return E_out
+    reach = pad_reach(E_out, width, shape)
+    lo, hi = E_out[0] - reach, E_out[-1] + reach
+    if support is not None:
+        lo, hi = max(lo, float(support[0])), min(hi, float(support[1]))
+    h_lo, h_hi = E_out[1] - E_out[0], E_out[-1] - E_out[-2]
+    n_lo = max(int(np.ceil((E_out[0] - lo) / h_lo - 1e-9)), 0)
+    n_hi = max(int(np.ceil((hi - E_out[-1]) / h_hi - 1e-9)), 0)
+    return np.concatenate([E_out[0] - h_lo * np.arange(n_lo, 0, -1), E_out,
+                           E_out[-1] + h_hi * np.arange(1, n_hi + 1)])
+
+
+def resolution_convolve(E_out, I_in, width, shape="gaussian", E_in=None):
     """Convolve I_in with an energy-dependent resolution kernel.
 
-    The kernel width at output energy E is w(E) (meV). ``width`` may be a
+    ``I_in`` is sampled on ``E_in`` (default ``E_out``); the result is on
+    ``E_out``. The kernel width at energy E is w(E) (meV). ``width`` may be a
     polynomial coeff sequence (w = poly(E) via :func:`sigma_of_E`) or a
     callable ``E -> w`` (e.g. the direct-geometry
     :func:`irma.spectra.chopper_resolution.chopper_sigma_of_E` model). For
@@ -326,50 +365,98 @@ def resolution_convolve(E_out, I_in, width, shape="gaussian"):
     resolution function -- ERES/QRES are its Gaussian sigma polynomials -- so the
     Gaussian path is the OCLIMAX-equivalent; the Lorentzian is the extra option.)
 
-    Each input intensity is redistributed over output energies by a normalized
-    resolution kernel, with two physically required properties:
+    Each input intensity is spread over the output energies by the analytic,
+    unit-area line shape whose width is evaluated at the *input* (true)
+    energy, so a feature at energy E is smeared symmetrically about E with
+    width w(E). A true delta at E comes back centred on E (not pulled toward
+    where the width is larger). Indexing the width on the output energy
+    instead would shift the centroid under a varying-width kernel.
 
-    * UNBIASED -- the kernel width is evaluated at the *input* (true) energy, so
-      a feature at energy E is smeared symmetrically about E with width w(E). A
-      true delta at E comes back centred on E (not pulled toward where the width
-      is larger). Indexing the width on the output energy instead would shift the
-      centroid under a varying-width kernel.
-    * FLUX-CONSERVING -- we column-normalize (divide by the weight each *input*
-      bin deposits on the finite ``E_out`` grid), so ``integral(out) ==
-      integral(in)`` exactly, for any input and any width. (Row-normalizing on
-      the output instead would preserve a flat input but leak flux under a
-      varying width; the analytic infinite-domain norm does neither and
-      suppresses the truncated tail at the grid edges.)
+    Each line shape is scaled so that its samples add up to 1 over the
+    uniform ``E_out`` grid continued past both ends (:func:`_grid_sum`), so
+    the broadening neither creates nor loses intensity, even when the grid
+    step is coarse compared with the width. Nothing is renormalized to the
+    window: the result on ``E_out`` is the restriction of the full
+    convolution and does not depend on where the window starts or ends,
+    provided the input covers the kernel's reach beyond ``E_out``. Sample it
+    on :func:`padded_grid` and pass that grid as ``E_in``; with
+    ``E_in = E_out`` the values near the window edges lack the intensity from
+    outside the window.
     """
-    R = resolution_kernel(E_out, width, shape=shape)
-    return apply_resolution_kernel(R, E_out, I_in)
+    R = resolution_kernel(E_out, width, shape=shape, E_in=E_in)
+    return apply_resolution_kernel(R, E_out if E_in is None else E_in, I_in)
 
 
-def resolution_kernel(E_out, width, shape="gaussian"):
-    """The column-normalized (nE, nE) kernel :func:`resolution_convolve` uses.
+def _grid_step(E_out):
+    """The step of a uniform energy grid (None for a single point)."""
+    if E_out.size < 2:
+        return None
+    h = float(E_out[1] - E_out[0])
+    if not np.allclose(np.diff(E_out), h, rtol=1e-6, atol=0.0):
+        raise ValueError("resolution broadening needs a uniform energy grid")
+    return h
 
-    Precompute it once when broadening MANY spectra on the same grid with the
+
+def _grid_sum(offset, width, step, shape):
+    """``step * sum_n K(offset + n*step)`` over an infinite grid: what the
+    samples of the unit-area line shape K of the given width add up to.
+
+    It is 1 when the step is fine compared with the width, and above or below
+    1 on a coarse grid. Lorentzian (HWHM w): the closed form
+    sinh(a)/(cosh(a) - cos t) with a = 2 pi w/step, t = 2 pi offset/step.
+    Gaussian (sigma, s = sigma/step): the direct sum over the grid points
+    within 9 steps of the centre when s < 1, else the Poisson-summation form
+    1 + 2 exp(-2 pi^2 s^2) cos t (the next term is below 1e-34).
+    """
+    offset = np.asarray(offset, float)
+    width = np.asarray(width, float)
+    t = 2.0 * np.pi * offset / step
+    if shape == "lorentzian":
+        q = np.exp(-2.0 * np.pi * width / step)
+        return (1.0 - q * q) / (1.0 + q * q - 2.0 * q * np.cos(t))
+    s = width / step
+    total = 1.0 + 2.0 * np.exp(-2.0 * np.pi ** 2 * s ** 2) * np.cos(t)
+    fine = s < 1.0
+    if np.any(fine):
+        u, sf = (offset / step)[fine], s[fine]
+        n = np.round(-u)[:, None] + np.arange(-9, 10)[None, :]
+        total = np.array(total, float, copy=True)
+        total[fine] = (np.exp(-0.5 * ((n + u[:, None]) / sf[:, None]) ** 2).sum(axis=1)
+                       / (np.sqrt(2.0 * np.pi) * sf))
+    return total
+
+
+def resolution_kernel(E_out, width, shape="gaussian", E_in=None):
+    """The (nE_out, nE_in) kernel :func:`resolution_convolve` uses.
+
+    Column j is the line shape of width w(E_in[j]) centred on E_in[j],
+    evaluated at ``E_out`` and divided by its :func:`_grid_sum` on the
+    ``E_out`` grid; ``E_in`` defaults to ``E_out``.
+    Precompute it once when broadening MANY spectra on the same grids with the
     same width (e.g. every Q row of a 2-D map) and apply each row with
     :func:`apply_resolution_kernel` — identical arithmetic to calling
     ``resolution_convolve`` per row, with the kernel build hoisted out.
     """
     shape = _normalize_shape(shape)
     E_out = np.asarray(E_out, float)
-    w = np.clip(_resolve_width(E_out, width), 1e-6, None)  # width at each energy
-    dE = E_out[:, None] - E_out[None, :]                   # E_out_i - E_in_j
-    wj = w[None, :]                                        # width at the INPUT energy
+    E_in = E_out if E_in is None else np.asarray(E_in, float)
+    w = np.clip(_resolve_width(E_in, width), 1e-6, None)   # width at each INPUT energy
+    dE = E_out[:, None] - E_in[None, :]                    # E_out_i - E_in_j
+    wj = w[None, :]
     if shape == "gaussian":
         R = np.exp(-0.5 * (dE / wj) ** 2) / (np.sqrt(2 * np.pi) * wj)
     else:  # lorentzian: L(x;w) = (1/pi) * w / (x^2 + w^2), w = HWHM
         R = (wj / np.pi) / (dE ** 2 + wj ** 2)
-    norm = np.trapezoid(R, E_out, axis=0)                 # weight each INPUT bin deposits
-    return R / np.where(norm > 0.0, norm, 1.0)[None, :]
+    h = _grid_step(E_out)
+    if h is None:
+        return R
+    return R / _grid_sum(E_out[0] - E_in, w, h, shape)[None, :]
 
 
-def apply_resolution_kernel(R, E_out, I_in):
-    """Apply a precomputed :func:`resolution_kernel` to one spectrum."""
+def apply_resolution_kernel(R, E_in, I_in):
+    """Apply a precomputed :func:`resolution_kernel` to one spectrum sampled on ``E_in``."""
     return np.trapezoid(R * np.asarray(I_in, float)[None, :],
-                  np.asarray(E_out, float), axis=1)
+                  np.asarray(E_in, float), axis=1)
 
 
 def elastic_line(E_out, area, width, shape="gaussian"):
@@ -377,9 +464,13 @@ def elastic_line(E_out, area, width, shape="gaussian"):
 
     THERMR keeps the elastic channel as a delta at zero energy transfer
     (E'=E) in a separate MT; the visible peak appears only after the instrument
-    resolution is applied. We reproduce that: delta(E)*area -> a normalized line
+    resolution is applied. We reproduce that: delta(E)*area -> the line
     shape at 0 with the same width source used for the inelastic kernel
-    (poly coeffs or a callable -- see :func:`resolution_convolve`).
+    (poly coeffs or a callable -- see :func:`resolution_convolve`), evaluated
+    on ``E_out`` and scaled like a kernel column, so its samples on the
+    ``E_out`` grid continued past both ends add up to ``area``. It is not
+    renormalized on the window: an axis that starts at E=0 carries half the
+    line, and one that excludes E=0 carries its tail.
     """
     shape = _normalize_shape(shape)
     w0 = max(float(_resolve_width(np.array([0.0]), width)[0]), 1e-6)
@@ -388,12 +479,9 @@ def elastic_line(E_out, area, width, shape="gaussian"):
         line = np.exp(-0.5 * (E_out / w0) ** 2) / (np.sqrt(2 * np.pi) * w0)
     else:
         line = (w0 / np.pi) / (E_out ** 2 + w0 ** 2)
-    # Grid-normalize like the inelastic kernel when E=0 is inside the window
-    # (a window that excludes E=0 keeps the analytic tail).
-    if E_out.size >= 2 and E_out[0] <= 0.0 <= E_out[-1]:
-        norm = np.trapezoid(line, E_out)
-        if norm > 0.0:
-            line = line / norm
+    h = _grid_step(E_out)
+    if h is not None:
+        line = line / float(_grid_sum(E_out[0], w0, h, shape))
     return area * line
 
 
@@ -420,10 +508,13 @@ def instrument_spectrum(p: PowderSQE, Q_of_E, E_out, sigma_coeffs,
     """
     q, Es, Ss = signed_sqe(p, include_gain=include_gain)
     interp = sqe_interpolator(q, Es, Ss)
-    I_raw = sample_along(interp, Q_of_E, E_out)
+    # S is sampled past both window edges so the convolution there sees the
+    # intensity outside the window (S is zero beyond the powder's energy range)
+    E_in = padded_grid(E_out, sigma_coeffs, shape=shape, support=(Es[0], Es[-1]))
+    I_raw = sample_along(interp, Q_of_E, E_in)
     if kinematic_factor is not None:
-        I_raw = I_raw * np.nan_to_num(kinematic_factor(E_out), nan=0.0)
-    I_inel = resolution_convolve(E_out, I_raw, sigma_coeffs, shape=shape)
+        I_raw = I_raw * np.nan_to_num(kinematic_factor(E_in), nan=0.0)
+    I_inel = resolution_convolve(E_out, I_raw, sigma_coeffs, shape=shape, E_in=E_in)
     I_el = (elastic_line(E_out, elastic_area, sigma_coeffs, shape=shape)
             if elastic_area is not None else np.zeros_like(E_out))
     return {

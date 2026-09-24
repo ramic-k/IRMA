@@ -141,16 +141,19 @@ With `physics.elastic: true` (the default) the map carries the same elastic
 model as the 1-D spectra: the per-Q elastic cross section appears as a ridge
 at `E = 0` (the Bragg peaks plus the incoherent Debye-Waller line, smeared
 over the map's `--dq-map` Q bin) and is broadened by the energy-resolution
-model like every other feature. A subtlety for absolute-intensity
-comparisons only: the two products
-deliberately differ in how they normalize the elastic line when the energy
-axis starts at 0 (`e_min = 0`, the default). The 1-D spectra renormalize the
-visible half-peak so that its integral equals the full per-Q elastic area;
-the map instead deposits `area/dE` in the boundary bin, which retains only
-half the area under trapezoidal integration (the run prints a NOTE when this
-applies). For absolute-intensity comparisons between the map and the 1-D
-spectra, use `e_min < 0` so the whole line is on-axis and the two conventions
-agree.
+model like every other feature.
+
+Both the map and the 1-D spectra show the part of the broadened spectrum
+that falls inside the energy axis: the convolution uses `S(Q,E)` beyond both
+axis ends, and nothing is renormalized to the axis. A value at a given energy
+therefore does not depend on `e_min` or `e_max`. Each resolution line shape is
+scaled so that its samples on the energy grid (continued past the axis) add up
+to 1, so a grid step that is coarse compared with the resolution width, such
+as VISION's 1 meV step against its 0.3 meV width near `E = 0`, neither creates
+nor loses intensity. When the axis starts at 0
+(`e_min = 0`, the default), only the loss half of the elastic line is on it,
+so its integral over the axis is half the elastic area; use `e_min < 0` to
+see the whole line.
 
 ### Common flags (all geometries)
 

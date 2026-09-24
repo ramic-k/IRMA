@@ -62,8 +62,9 @@ _LIVE = dict(
 # tolerance is therefore 1e-4 — loose enough for platform jitter, tight
 # enough that any real orchestration regression (wrong sqe key, dropped
 # component, broken normalization) still fails.
-_I_INELASTIC = 2.891399038353e-02
-_I_ELASTIC = 7.831436600712e-05
+# The axis starts at E=0, so the elastic pin is half the line's area.
+_I_INELASTIC = 2.888525860058e-02
+_I_ELASTIC = 3.915718308255e-05
 
 
 def test_compute_spectrum_live_engine_mode1_with_elastic():
