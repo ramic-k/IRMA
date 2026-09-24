@@ -16,7 +16,9 @@ AMASSN = 1.00866491595     # neutron mass in amu
 
 THERM = 0.0253  # thermal energy in eV (for lat=1 scaling)
 
-# WL2EKIN = h²/(2 m_n)  [eV·Å²]   (de Broglie E = h²/(2 m_n λ²); CODATA 2018, matches NCrystal wl2ekin from NCDefs.hh)
+# WL2EKIN = h²/(2 m_n)  [eV·Å²]   (de Broglie E = h²/(2 m_n λ²)). The CODATA 2014
+# value, copied from NCrystal's NCDefs.hh so Bragg thresholds match NCrystal; it
+# differs by 9e-9 relative from the CODATA 2018 constants below.
 WL2EKIN: float = 0.081804209605330899
 
 # ============================================================================
