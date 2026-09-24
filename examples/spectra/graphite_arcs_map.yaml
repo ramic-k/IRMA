@@ -9,7 +9,7 @@
 #       --angle-range 2.4 136 -o graphite_arcs_sqe.csv
 #
 # (.npz output: just change the extension. Omit --mask for the full rectangle.)
-# Runtime: ~1-2 minutes with the quick settings below.
+# Runtime: a few seconds with the quick settings below.
 material:
   phonopy_yaml: ../../tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml
   mesh: [12, 12, 12]                # production: [40, 40, 40]

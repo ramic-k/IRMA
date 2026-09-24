@@ -7,7 +7,7 @@
 # Run from this directory (examples/spectra/):
 #   python -m irma spectra run graphite_mode0_phonopy.yaml -o graphite_vision_mode0p.csv
 #
-# Runtime: ~1 minute (dominated by the 24^3 phonon mesh).
+# Runtime: a few seconds (mostly the 24^3 phonon mesh).
 material:
   phonopy_yaml: ../../tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml
   mesh: [24, 24, 24]

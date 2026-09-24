@@ -2,7 +2,8 @@
 
 The generalized coherent-elastic calculator (compute_bragg_edges_general,
 NCrystal-style; T. Kittelmann et al., Comp. Phys. Comm. 267 (2021) 108082),
-the LEAPR built-in materials (coher: graphite/Be/BeO/Al/Pb/Fe), and the
+the LEAPR built-in materials (coher, ported from NJOY2016 leapr.f90:
+graphite/Be/BeO/Al/Pb/Fe), and the
 phonopy-site bookkeeping used by the iel=10 path.
 
 The reciprocal-lattice and Bragg-edge algorithms are derived in part from

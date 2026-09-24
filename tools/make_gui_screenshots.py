@@ -26,7 +26,7 @@ Usage
 
 The ``--with-runs`` scenes execute real calculations (the committed graphite
 examples): the classic ``iel=10`` TSL deck for the Run tab (~1-2 min), the
-mode-0 VISION spectrum (~seconds) and the ARCS map example (~1-2 min).
+mode-0 VISION spectrum and the ARCS map example (a few seconds each).
 """
 
 import argparse
