@@ -1,24 +1,12 @@
 """A dynamic per-element scatterer table for the Neutron-Scattering panel.
 
-One row per scattering element, built by the user via "+ Add element" (so the
-GUI never needs to know the elements ahead of time). Columns appear/disappear by
-context: the DOS-file / unit / multiplicity columns only in DOS-file mode 0, the
-positions column only when a mode-0 coherent-elastic crystal is in play. Each row
-carries its own DOS-file Browse button, so a per-element file pick is well-defined
-even though the element set is user-declared.
-
-All columns are always present in the data model (so toggling context never loses
-what you typed); the panel's ``build_config`` filters out the columns that don't
-apply to the active context.
-
-The same table also serves the MLIP emit form as a per-species NUCLEAR-DATA
-EDITOR (``ElementTable(parent, nuclide_editor=True)``). That mode is opt-in
-and additive: it appends two columns of its own (``mode`` and ``nuclide``)
-to the instance's column list, leaves ``_COLS`` / ``_KEYS`` -- the fixed key
-set the NS and NCrystal panels read -- untouched, and changes no behavior of
-``add_row`` / ``autofill_row`` / ``set_symbols`` / ``get_rows`` / ``set_rows``
-for a table built without the flag. See ``set_species`` for the editor's
-contract.
+One row per scattering element, added by the user with "+ Add element". The
+DOS-file, unit and multiplicity columns show only in DOS-file mode 0, the
+positions column only when a mode-0 coherent-elastic crystal is used; every
+column stays in the data model, and the panel's ``build_config`` keeps the
+ones that apply. ``ElementTable(parent, nuclide_editor=True)`` is the MLIP emit
+form's per-species nuclear-data editor, with two extra columns (``mode`` and
+``nuclide``); see ``set_species``.
 """
 import tkinter as tk
 from tkinter import ttk, filedialog
@@ -45,14 +33,9 @@ DOS_COLS = ("multiplicity", "dos_unit", "dos_file")
 POS_COL = ("positions",)
 
 # ---------------------------------------------------------------------------
-# Nuclear-data-editor mode (opt-in; the MLIP emit form).
-#
-# These two columns are deliberately NOT in _COLS: appending them there would
-# add two keys to every get_rows() dict and two header cells to the NS and
-# NCrystal tables, which read the table through a fixed key set. Each
-# instance builds its own column list instead (self._cols / self._keys), so a
-# table constructed without nuclide_editor=True is byte-for-byte the table
-# those panels have always had.
+# Nuclear-data-editor mode (the MLIP emit form). These two columns are not in
+# _COLS, which the NS and NCrystal tables read as a fixed key set; an editor
+# instance adds them to its own column list (self._cols / self._keys).
 # ---------------------------------------------------------------------------
 _NUCLIDE_COLS = [("mode", "source", 8), ("nuclide", "isotope", 9)]
 MODE_NATURAL = "natural"
@@ -67,7 +50,7 @@ NUCLIDE_EDITOR_COLS = ("symbol", "mode", "nuclide",
 #: the constants a `custom` row can supply, in emitted-argument order
 CUSTOM_FIELDS = ("b_coh_fm", "sigma_inc_b", "awr")
 #: relative mass disagreement (isotope vs the bundle's phonopy mass) that
-#: earns a row warning. 1% separates a genuine isotope substitution
+#: triggers a row warning. 1% separates a genuine isotope substitution
 #: (13-C is 8% heavier than natural C, 2-H is 100% heavier than 1-H) from
 #: the rounding between an abundance-averaged mass and a tabulated one.
 MASS_WARN_REL = 0.01
@@ -98,7 +81,7 @@ class ElementTable(ttk.Frame):
         # editor mode: masses read from the bundle's phonopy.yaml, keyed by
         # symbol, used only for the isotope-vs-model mass warning
         self._masses = {}
-        # a short line shown INSTEAD of an empty grid (editor mode: "no
+        # a short line shown instead of an empty grid (editor mode: "no
         # bundle selected yet"); never both
         self._hint = ttk.Label(self, foreground="gray", justify=tk.LEFT,
                                wraplength=520)
@@ -241,23 +224,13 @@ class ElementTable(ttk.Frame):
         return r
 
     def autofill_row(self, r):
-        """Fill the row's EMPTY nuclear columns from the built-in table.
+        """Fill the row's empty nuclear columns from irma.core.nuclear_data.
 
-        Values come from irma.core.nuclear_data (the Rauch-Waschkowski /
-        Sears compilation via periodictable; sigma_bound derived from
-        b_coh + sigma_inc for in-deck consistency). Only blank fields are
-        touched -- anything the user typed wins. Energy-dependent
-        nuclides (B, Cd, Gd, ...) are never prefilled: their tabulated
-        scattering lengths are resonance-region values unsuitable as
-        static constants. Unknown symbols are ignored silently (the
-        panel's own validation reports them at build time).
-
-        The row remembers which values IT filled (``r["_autofill"]``).
-        When the symbol later changes, still-untouched machine values are
-        cleared first so they refresh for the new symbol -- otherwise
-        editing the prefilled default row's symbol would silently keep
-        the old element's constants. User-edited fields differ from the
-        recorded value and are never cleared.
+        Only blank fields are filled, so values the user typed win.
+        Energy-dependent nuclides (B, Cd, Gd, ...) are never prefilled, and
+        unknown symbols are left for the panel's validation. The row records
+        the values it filled (``r["_autofill"]``); when the symbol changes,
+        those still unedited are cleared so they refresh for the new symbol.
         """
         symbol = r["_var"]["symbol"].get().strip()
         prev = r.get("_autofill")
@@ -285,14 +258,9 @@ class ElementTable(ttk.Frame):
         return bool(filled)
 
     def set_symbols(self, syms):
-        """Rebuild the table with one row per symbol, carrying matching
-        existing rows over -- values AND autofill provenance -- then
-        autofilling the blank nuclear columns of every row.
-
-        The provenance carry-over matters: rebuilding via
-        ``set_rows(get_rows())`` would strip ``_autofill``, and a
-        machine-filled row that loses its record silently keeps the old
-        element's constants on a later symbol edit."""
+        """Rebuild the table with one row per symbol, carrying matching rows
+        over with their values and autofill record (so a later symbol edit
+        still refreshes machine-filled values), then autofill blank columns."""
         by_sym = {}
         for r in self.rows:
             by_sym.setdefault(r["_var"]["symbol"].get().strip(), r)
@@ -350,19 +318,12 @@ class ElementTable(ttk.Frame):
 
     # -- nuclear-data editor ----------------------------------------------
     def set_species(self, symbols, masses=None):
-        """Editor mode: one row per species, every row starting Natural.
+        """Editor mode: one row per species, each starting as Natural (which
+        emits nothing, so an untouched table gives the CLI's default emission).
 
-        ``symbols`` is the species list discovered from the phonon model
-        (the caller reads it; the table never touches the filesystem) and
-        ``masses`` the model's per-species mass in amu, used only for the
-        isotope-vs-model mass warning. Passing an empty list clears the
-        table, which is how "no bundle selected" is expressed -- the panel
-        pairs that with ``set_hint``.
-
-        Natural is the default for every row and emits nothing, so a table
-        left untouched reproduces the CLI's own default emission exactly.
-        A species whose resolved record is energy-dependent, or has no
-        tabulated data at all, is opened as Custom straight away.
+        ``masses`` (amu per species) is used only for the mass warning; an
+        empty ``symbols`` clears the table. A species whose record is
+        energy-dependent or missing opens as Custom.
         """
         self._masses = {str(k): float(v) for k, v in (masses or {}).items()
                         if isinstance(v, (int, float))}
@@ -380,24 +341,14 @@ class ElementTable(ttk.Frame):
         return [f"{n.A}-{n.symbol}" for n in isotopes(symbol)]
 
     def sync_nuclide_row(self, r, relayout=True):
-        """Re-resolve one editor row: constants, disclosure, and notes.
+        """Re-resolve one editor row after a mode or isotope change.
 
-        Called on every mode / isotope change. Three things happen here:
-
-        * the constants shown are always the ones that WILL be emitted --
-          mirrored read-only from the resolved table entry for Natural and
-          Isotope, editable only for Custom;
-        * ENERGY-DEPENDENT RECOVERY: if the resolved entry is flagged (its
-          tabulated scattering length is a resonance-region value) or has
-          no data at all, the row flips itself to Custom with blank boxes
-          and a note. That is the whole point of the editor -- the fix
-          happens in the row that caused it, before anything is emitted,
-          instead of as a preflight error naming a CLI flag after the
-          emit has already refused to publish any file. The flag is read
-          off ``Nuclide.energy_dependent``, never a symbol list: natural B
-          and Cd are flagged but natural Li is not, while 6-Li and 10-B
-          are and 7-Li and 11-B are not;
-        * the isotope-vs-model MASS CHECK (warn, never block).
+        The constants shown are the ones that will be emitted: read-only
+        from the resolved entry for Natural and Isotope, editable for Custom.
+        An entry flagged energy-dependent (``Nuclide.energy_dependent``) or
+        missing switches the row to Custom with blank boxes and a note, so the
+        user fixes it in this row before anything is emitted. An isotope mass
+        that differs from the model's mass adds a warning (it does not block).
         """
         if not self.nuclide_editor:
             return
@@ -421,9 +372,8 @@ class ElementTable(ttk.Frame):
                 var[key].set(f"{getattr(base, key):.6g}")
         elif was != MODE_CUSTOM:
             # entering Custom: seed from the table when that is safe, and
-            # blank when it is not -- an energy-dependent record must never
-            # arrive as a silent prefill, which is exactly the emit-time
-            # refusal this row is recovering from
+            # blank when it is not (an energy-dependent record is never a
+            # silent prefill)
             for key in CUSTOM_FIELDS:
                 var[key].set("" if flagged else f"{getattr(base, key):.6g}")
         editable = "normal" if mode == MODE_CUSTOM else "readonly"
@@ -439,7 +389,7 @@ class ElementTable(ttk.Frame):
             notes.append(
                 f"{label or sym}: the tabulated scattering length is "
                 f"ENERGY-DEPENDENT (a resonance-region value), not a safe "
-                f"static prefill. Enter b_coh_fm AND sigma_inc_b for the "
+                f"static prefill. Enter b_coh_fm and sigma_inc_b for the "
                 f"energy range you are evaluating.")
         if r.get("_flagged") and not self._custom_complete(r):
             notes.append("values still needed before this can be emitted.")
@@ -457,17 +407,10 @@ class ElementTable(ttk.Frame):
                     and r["_var"]["sigma_inc_b"].get().strip())
 
     def _mass_note(self, symbol, label, base):
-        """H/D check: the isotope's mass vs the model's mass for the species.
-
-        ``irma.mlip.phonons`` passes the structure's masses to PhonopyAtoms
-        explicitly, and emit keeps pointing every downstream consumer at
-        that same phonopy.yaml. So an isotope picked here changes the
-        scattering constants but NOT the masses the Debye-Waller factors
-        and prefactors are built from: choosing 2-H on a bundle relaxed
-        with ordinary hydrogen gives deuterium constants on hydrogen
-        dynamics. Warn, do not block -- the pairing is occasionally what
-        the user wants, and the bundle is the thing that would have to be
-        rebuilt.
+        """Isotope mass vs the model's mass for the species (e.g. 2-H on a
+        hydrogen bundle): an isotope changes the scattering constants but not
+        the masses in the bundle's phonopy.yaml, which the Debye-Waller
+        factors use. A warning only; the fix is to rebuild the bundle.
         """
         if not label or base is None:
             return []
@@ -479,10 +422,8 @@ class ElementTable(ttk.Frame):
         if abs(iso_mass - model_mass) <= MASS_WARN_REL * abs(model_mass):
             return []
         return [f"mass check: {label} is {iso_mass:.4g} amu but the bundle's "
-                f"phonopy.yaml carries {model_mass:.4g} amu for {symbol}, so "
-                f"the emitted constants would ride on the model's masses "
-                f"(Debye-Waller factors, prefactors). Rebuild the bundle "
-                f"with the isotope mass if that matters."]
+                f"phonopy.yaml has {model_mass:.4g} amu for {symbol}; rebuild "
+                f"the bundle to change the masses."]
 
     def nuclide_rows(self):
         """Editor rows as plain dicts, for the panel's argv assembly.

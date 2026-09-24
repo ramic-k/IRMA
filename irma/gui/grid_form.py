@@ -1,26 +1,12 @@
 """Reusable S(alpha,beta) grid input widgets for the IRMA GUI.
 
-Two shared surfaces live here:
-
-* :func:`build_auto_grid_entries` -- the ONE builder for the seven converged
-  auto-grid knob fields (n_lower ... alpha_nlog), used by BOTH the ENDF
-  Evaluation grid tab and the NCrystal panel. Field labels, help text, and
-  defaults are defined once (defaults from
-  :data:`irma.core.grids.AUTO_GRID_DEFAULTS`), so a default or wording change
-  propagates to both panels automatically.
-* :class:`SabGridForm` -- the NCrystal panel's grid-mode selector (automatic
-  vs explicit alpha/beta), wrapping the shared knob fields.
-
-The AUTOMATIC mode is the converged ENDF-style grid (irma.core.grids:
-generate_beta_grid + generate_alpha_grid); freq_max is auto-estimated from the
-phonopy mesh when left blank. This is NOT a uniform Q/E grid -- that
-under-integrates the thermal cross section. EXPLICIT mode takes BOTH
-alpha_grid and beta_grid as float lists (dimensionless, ENDF lat convention).
-
-No config type is imported; ``export_fields()`` returns ONLY the active mode's
-keys as a plain dict that maps straight onto NCrystalExportConfig's export keys,
-and ``load_fields()`` reads that same dict back (the panel builds it off a
-loaded config), so the two directions share one key list.
+* :func:`build_auto_grid_entries` builds the seven automatic-grid fields
+  (n_lower ... alpha_nlog) for both the ENDF Evaluation grid tab and the
+  NCrystal panel, with labels, help and defaults
+  (:data:`irma.core.grids.AUTO_GRID_DEFAULTS`) defined once.
+* :class:`SabGridForm` is the NCrystal panel's grid-mode selector: automatic
+  (the converged ENDF grid, not a uniform Q/E grid) or explicit alpha/beta
+  lists. Its export and load use the export keys of NCrystalExportConfig.
 """
 
 import tkinter as tk
@@ -38,11 +24,10 @@ _MODE_BY_LABEL = {_AUTO_LABEL: "auto", _EXPLICIT_LABEL: "explicit"}
 
 
 # ---------------------------------------------------------------------------
-# The ONE field specification for the seven converged auto-grid knobs, shared
-# by the ENDF Evaluation grid tab and the NCrystal panel: (attribute name,
-# label, help title, help text). Defaults are injected from
-# irma.core.grids.AUTO_GRID_DEFAULTS so the numbers can never drift between
-# the two panels or the export config.
+# The seven automatic-grid fields shared by the ENDF Evaluation grid tab and
+# the NCrystal panel: (attribute name, label, help title, help text). The
+# defaults come from irma.core.grids.AUTO_GRID_DEFAULTS, so the two panels
+# and the export config use the same numbers.
 # ---------------------------------------------------------------------------
 _D = AUTO_GRID_DEFAULTS
 AUTO_GRID_FIELDS = (
@@ -116,10 +101,9 @@ AUTO_GRID_FIELDS = (
      "grid from Q cut to the kinematic maximum)."),
 )
 
-# The ONE mapping between the seven knob WIDGETS and the export/config keys
-# they carry: (widget attribute, export key, parser, parse-error label).
-# export_fields() and load_fields() both walk this tuple, so a key can never
-# be written in one direction and missed in the other.
+# The seven fields and the export/config keys they carry: (widget
+# attribute, export key, parser, parse-error label). export_fields() and
+# load_fields() both use this tuple, so the two directions use the same keys.
 _AUTO_EXPORT_FIELDS = (
     ("n_lower", "n_lower", parse_int, "n_lower"),
     ("n_phonon", "n_phonon", parse_int, "n_phonon"),
@@ -130,7 +114,7 @@ _AUTO_EXPORT_FIELDS = (
     ("alpha_nlog", "alpha_nlog", parse_int, "alpha N log"),
 )
 
-#: Every export key this form can produce, in BOTH modes. A panel loading a
+#: Every export key this form can produce, in both modes. A panel loading a
 #: config reads these attributes off it to build ``load_fields``' argument, so
 #: the form stays the single owner of its own key set.
 GRID_EXPORT_KEYS = (tuple(key for _a, key, _p, _l in _AUTO_EXPORT_FIELDS)
@@ -142,14 +126,9 @@ AUTO_GRID_ENTRY_DEFAULTS = {attr: str(_D[key])
 
 
 def build_auto_grid_entries(parent, width=12):
-    """Create the seven shared auto-grid knob fields inside ``parent``.
-
-    The single builder both panels use: each field is a
-    :class:`~irma.gui.widgets.LabeledEntry` (packed ``fill=X, pady=2``) with
-    the shared label, help text, and default from :data:`AUTO_GRID_FIELDS` /
-    :data:`AUTO_GRID_ENTRY_DEFAULTS`. Returns ``{name: LabeledEntry}`` in
-    field order.
-    """
+    """Create the seven automatic-grid fields (LabeledEntry, packed
+    ``fill=X, pady=2``) inside ``parent``; returns ``{name: LabeledEntry}``
+    in field order."""
     entries = {}
     for name, label, help_title, help_text in AUTO_GRID_FIELDS:
         w = LabeledEntry(parent, label, default=AUTO_GRID_ENTRY_DEFAULTS[name],
@@ -168,7 +147,7 @@ HELP = {
         "How the grid for the S(alpha,beta) table (scattering probability "
         "versus momentum exchange, alpha, and energy exchange, beta) is "
         "set.\n\n"
-        "  automatic (converged, from phonopy) (default): the SAME converged "
+        "  automatic (converged, from phonopy) (default): the same converged "
         "grid the ENDF evaluator builds: generate_beta_grid (log/linear/log "
         "in beta) plus generate_alpha_grid (linear in Q to the cut, then a log "
         "tail). This is the recommended choice; a uniform Q/E grid would "
@@ -178,7 +157,7 @@ HELP = {
     "freq_max_eV": (
         "Maximum phonon frequency [eV], used to size the linear phonon region "
         "of the beta grid (phonons are the lattice vibrations of the "
-        "material).\n\nLEAVE BLANK to auto-estimate it from the phonopy mesh "
+        "material).\n\nLeave blank to estimate it from the phonopy mesh "
         "(recommended). Set a value to pin it (e.g. 0.20). Used only in "
         "automatic mode."),
     "alpha_grid": (
@@ -196,25 +175,16 @@ HELP = {
 
 
 def _parse_float_list(label, text):
-    """Parse a space/comma-separated float list, naming the field on failure.
-
-    Splits ``text`` on commas and whitespace and ``float()``s each token, so the
-    error dialog says WHICH grid field is bad (parse_float-style) instead of a
-    bare conversion message. Returns ``[]`` for blank/whitespace-only input.
-    """
+    """Parse a space/comma-separated float list, naming the field on
+    failure; ``[]`` for blank input."""
     tokens = text.replace(",", " ").split()
     return [parse_float(label, tok) for tok in tokens]
 
 
 class SabGridForm(ttk.Frame):
-    """Grid-mode selector + the converged auto-grid knobs + explicit alpha/beta.
-
-    Progressive disclosure: only the active mode's fields are shown
-    (automatic -> the converged-grid knobs, explicit -> the two grid
-    lists), and ``export_fields()`` returns ONLY the active mode's
-    keys. ``load_fields()`` is its inverse and picks the mode from the
-    data. No config import -- pure widget values <-> dict.
-    """
+    """Grid-mode selector with the automatic-grid fields or the explicit
+    alpha/beta lists; only the active mode's fields are shown and
+    exported."""
 
     def __init__(self, parent, padding=0):
         super().__init__(parent, padding=padding)
@@ -226,10 +196,8 @@ class SabGridForm(ttk.Frame):
         self.grid_mode.combo.bind("<<ComboboxSelected>>",
                                   lambda _e: self._sync_enabled())
 
-        # AUTOMATIC: freq_max (blank -> auto-estimate from phonopy) + the seven
-        # shared converged-grid knobs, built by the ONE builder both panels use
-        # (labels/help/defaults from AUTO_GRID_FIELDS; defaults trace back to
-        # irma.core.grids.AUTO_GRID_DEFAULTS).
+        # automatic: freq_max (blank -> estimated from phonopy) and the seven
+        # shared automatic-grid fields
         self._auto_frame = ttk.Frame(self)
         self._auto_frame.pack(fill=tk.X)
         self.freq_max = LabeledEntry(self._auto_frame,
@@ -240,7 +208,7 @@ class SabGridForm(ttk.Frame):
         for name, w in build_auto_grid_entries(self._auto_frame).items():
             setattr(self, name, w)
 
-        # EXPLICIT: dimensionless alpha/beta float lists (blank by default).
+        # explicit: dimensionless alpha/beta float lists (blank by default)
         self._explicit_frame = ttk.Frame(self)
         self.alpha_grid = LabeledEntry(self._explicit_frame, "alpha_grid:",
                                        default="",
@@ -258,8 +226,7 @@ class SabGridForm(ttk.Frame):
         return _MODE_BY_LABEL[self.grid_mode.get()]
 
     def _sync_enabled(self):
-        """Show only the active mode's fields (progressive disclosure;
-        export_fields stays the source of truth for the returned keys)."""
+        """Show only the active mode's fields."""
         if self.mode() == "explicit":
             self._auto_frame.pack_forget()
             self._explicit_frame.pack(fill=tk.X)
@@ -269,23 +236,16 @@ class SabGridForm(ttk.Frame):
 
     # ---------------------------------------------------------------- export --
     def export_fields(self):
-        """Return ONLY the active mode's grid keys, ready to merge into the
-        export dict.
-
-        AUTOMATIC -> {n_lower, n_phonon, n_upper, beta_max_eV, alpha_dq_invA,
-                      alpha_qcut_invA, alpha_nlog} (+ freq_max_eV ONLY if set;
-                      blank means auto-estimate from the phonopy mesh).
-        EXPLICIT  -> {alpha_grid, beta_grid} (lists of floats).
-
-        Raises a clear :class:`ValueError` (parse-style, naming the field) on a
-        bad number, and in explicit mode requires BOTH lists non-empty.
-        """
+        """The active mode's grid keys for the export dict: the seven
+        automatic-grid keys plus freq_max_eV when set, or alpha_grid and
+        beta_grid. Raises ValueError naming the field on a bad number, or
+        when an explicit list is empty."""
         if self.mode() == "explicit":
             alpha = _parse_float_list("alpha_grid", self.alpha_grid.get())
             beta = _parse_float_list("beta_grid", self.beta_grid.get())
             if not alpha or not beta:
                 raise ValueError(
-                    "explicit grid: provide BOTH alpha_grid and beta_grid "
+                    "explicit grid: provide both alpha_grid and beta_grid "
                     "(non-empty float lists), or switch to automatic mode")
             return {"alpha_grid": alpha, "beta_grid": beta}
         fields = {key: parser(label, getattr(self, attr).get())
@@ -297,8 +257,8 @@ class SabGridForm(ttk.Frame):
 
     # ---------------------------------------------------------------- load ---
     def reset(self):
-        """Put BOTH mode groups back to the values a fresh form ships and
-        select automatic mode."""
+        """Put both mode groups back to the values of a fresh form and select
+        automatic mode."""
         self.grid_mode.set(_AUTO_LABEL)
         self.freq_max.set("")
         for attr, _key, _parser, _label in _AUTO_EXPORT_FIELDS:
@@ -308,18 +268,10 @@ class SabGridForm(ttk.Frame):
         self._sync_enabled()
 
     def load_fields(self, fields):
-        """Inverse of :meth:`export_fields`: populate the form from a mapping
-        of export keys (the panel reads them off a loaded config).
-
-        The MODE comes from the data, exactly as the config decides it:
-        ``alpha_grid`` AND ``beta_grid`` both present -> explicit, anything
-        else -> automatic. Both groups are reset first, so the inactive mode's
-        widgets hold their shipped defaults rather than a half-filled mixture
-        of this config and whatever was on screen before; a value of None (the
-        config's "omitted") leaves the default in place too. Values are set,
-        not parsed -- a mapping built off a validated config carries numbers,
-        so this cannot fail partway and leave the form inconsistent.
-        """
+        """Inverse of :meth:`export_fields`. The mode comes from the data, as
+        in the config: alpha_grid and beta_grid both present means explicit.
+        The form is reset first, so the inactive mode keeps its defaults, and
+        a None value keeps the default too."""
         self.reset()
         alpha, beta = fields.get("alpha_grid"), fields.get("beta_grid")
         if alpha is not None and beta is not None:
