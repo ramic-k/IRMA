@@ -87,7 +87,7 @@ def test_resolution_response_is_unbiased_under_varying_width():
     area = _trapz(out, E)
     centroid = _trapz(E * out, E) / area
     std = np.sqrt(_trapz((E - centroid) ** 2 * out, E) / area)
-    assert centroid == pytest.approx(E0, abs=0.05)        # unbiased (was ~162.9)
+    assert centroid == pytest.approx(E0, abs=0.05)        # unbiased
     assert std == pytest.approx(0.5 + 0.2 * E0, rel=0.02)  # width at the TRUE energy
 
 

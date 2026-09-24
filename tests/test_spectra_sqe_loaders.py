@@ -1,4 +1,4 @@
-"""Public irma.spectra.sqe loaders / helpers (previously zero CI coverage).
+"""Public irma.spectra.sqe loaders / helpers.
 
 ``sqe_interpolator``, ``from_oclimax`` and ``instrument_spectrum`` are exported
 but were exercised only through the skip-gated forward gate. Tiny hand-built

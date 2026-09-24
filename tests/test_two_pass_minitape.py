@@ -1,8 +1,7 @@
 """Fast CI byte-identity for the two-pass bound-secondary path (b7=0).
 
 The mixed-moderator merge (principal law combined with a bound secondary
-computed in a second full temperature pass, BeO-style) was previously
-pinned only by the slow, manually-run BeO expected validation. A miniature
+computed in a second full temperature pass, BeO-style). A miniature
 two-pass deck (4 alpha x 6 beta, 296 K, principal + secondary spectrum
 blocks, nss=1 b7=0 mss=1) must reproduce the vendored NJOY2016.78 tape
 in MF7: byte-identical everywhere except the incoherent-elastic SB head

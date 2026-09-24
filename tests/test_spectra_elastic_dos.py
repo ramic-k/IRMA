@@ -103,7 +103,7 @@ def test_matches_engine_builder_for_isotropic_U():
 
 def test_incoherent_sums_all_species_not_just_principal():
     """The incoherent line keeps EVERY species even when the largest-|b_coh|
-    scatterer has zero sigma_inc (the old principal-only bug)."""
+    scatterer has zero sigma_inc."""
     cr = CrystalStructure(4.0, 4.0, 4.0, 90, 90, 90, [
         AtomSite(b_coh_fm=6.0, positions=[(0.0, 0.0, 0.0)]),         # bigger |b_coh|, no inc
         AtomSite(b_coh_fm=-3.0, positions=[(0.5, 0.5, 0.5)]),        # carries the incoherent

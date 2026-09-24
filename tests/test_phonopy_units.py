@@ -79,8 +79,8 @@ def _bohr():
 # ------------------------------------------------------- geometry readers ---
 
 def test_prefill_reader_accepts_and_converts_a_bohr_model(twins):
-    """The prefill used to REFUSE a bohr model. Now it converts, and the two
-    twins fill Card 6c/6d with the same numbers."""
+    """The prefill converts a bohr model, and the two twins fill Card 6c/6d
+    with the same numbers."""
     from irma.core.phonopy_io import load_phonopy_primitive_structure
     ang, bohr_yaml = twins
     a = load_phonopy_primitive_structure(ang)
@@ -156,8 +156,8 @@ def test_model_context_frequencies_agree_across_calculators(twin_contexts):
 
 def test_coherent_one_phonon_frequencies_agree_across_calculators(twins):
     """End of the chain: the frequencies the coherent worker actually solves
-    for. These come from _batched_qpoints_eigh, which used to multiply every
-    model's eigenvalues by the VASP factor."""
+    for. These come from _batched_qpoints_eigh, which must apply each model's
+    own frequency factor, not the VASP one."""
     pytest.importorskip("phonopy")
     import phonopy
     from irma.core.noncubic_workers import _batched_qpoints_eigh

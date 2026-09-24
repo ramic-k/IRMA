@@ -1,4 +1,4 @@
-"""irma.spectra.elastic.from_engine_elastic_state (P5) -- engine-free CI pins.
+"""irma.spectra.elastic.from_engine_elastic_state -- engine-free pins.
 
 Builds an ElasticModel tape-free from a synthetic engine elastic_state (the DW
 matrices + primitive geometry the noncubic engine surfaces) and checks the
@@ -130,9 +130,9 @@ def test_two_species_grouping():
 
 
 def test_incoherent_keeps_every_species_channel():
-    """QA4 F1: a hydrogenous-like sample must keep the strong-incoherent
-    minority species' Debye-Waller line even when the coherent principal is the
-    other species (previously only the principal's sigma_inc survived)."""
+    """A hydrogenous-like sample must keep the strong-incoherent minority
+    species' Debye-Waller line even when the coherent principal is the other
+    species, not only the principal's sigma_inc."""
     # 'Zr'-like principal by |b_coh| with negligible sigma_inc; 'H'-like
     # minority with sigma_inc ~80 b. 1 Zr + 2 H per cell.
     st = _state(a=4.8, symbols=("Zr", "H", "H"),
