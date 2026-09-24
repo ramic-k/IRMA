@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
         yaml = None
 
     # Input problems exit 2, run failures exit 3 (the deck CLI's convention).
+    # The file check comes first so a bare install reports a missing file too.
+    if not args.config.exists():
+        print(f"\nNCrystal export config error:\n  config file not found: "
+              f"{args.config}", file=sys.stderr)
+        return 2
     if yaml is None:
         print("\nNCrystal export config error:\n  PyYAML is required to read "
               "the export config (install the spectra extras: "
@@ -40,10 +45,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         cfg = NCrystalExportConfig.from_yaml(args.config)
-    except FileNotFoundError:
-        print(f"\nNCrystal export config error:\n  config file not found: "
-              f"{args.config}", file=sys.stderr)
-        return 2
     except yaml.YAMLError as exc:
         print(f"\nNCrystal export config error:\n  {args.config} is not valid "
               f"YAML: {exc}", file=sys.stderr)
