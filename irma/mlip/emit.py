@@ -274,9 +274,16 @@ def emit_endf_decks(bundle: Bundle, *, temperature_k, mats, nuclides=None,
     if not temperature_k > 0:
         raise ValueError(f"--temperature must be > 0, got {temperature_k!r}")
 
+    disordered = bool(bundle.manifest.get("disordered"))
+    if float(min_phonon_energy_mev) > 0.0 and (disordered or inelastic_mode == 0):
+        raise ValueError(
+            "--min-phonon-energy applies to the phonopy-backed decks "
+            "(--inelastic-mode 1 or 2) only; the DOS-driven "
+            + ("classic deck of a disordered bundle" if disordered else "mode-0 deck")
+            + " does not use it")
     out_dir = out_dir or bundle.path
     os.makedirs(out_dir, exist_ok=True)
-    if bundle.manifest.get("disordered"):
+    if disordered:
         if inelastic_mode is not None:
             raise ValueError(
                 "disordered bundles use the DOS-driven classic path and "
@@ -588,6 +595,11 @@ def emit_spectra_yaml(bundle: Bundle, *, temperature_k,
                               progress=progress)
 
     disordered = bool(bundle.manifest.get("disordered"))
+    if disordered and float(min_phonon_energy_mev) > 0.0:
+        raise ValueError(
+            "--min-phonon-energy applies to the phonopy-backed spectra config "
+            "of a crystalline bundle only; the mode-0 config of a disordered "
+            "bundle does not use it")
     out_path = out_path or os.path.join(bundle.path, "spectra.yaml")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     _guard_target(out_path, overwrite)

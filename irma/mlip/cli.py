@@ -235,8 +235,8 @@ def _build_parser():
                    help="remove every phonon mode with energy at or below this "
                         "value (meV) from all terms; written into the mode-1/2 "
                         "ENDF decks and the crystalline spectra and NCrystal "
-                        "configs (mode-0 decks and disordered bundles do not "
-                        "use it); 0 = the automatic floors only (default: 0)")
+                        "configs (mode-0 decks and disordered bundles refuse "
+                        "it); 0 = the automatic floors only (default: 0)")
     e.add_argument("--overwrite", action="store_true",
                    help="replace existing emitted files")
     _add_emit_options(e)
