@@ -38,7 +38,7 @@ def test_gui_missing_tkinter_friendly_message(monkeypatch, capsys):
     # main() returns the exit code (wrappers do sys.exit(main())); a missing
     # GUI -> nonzero (4), not the success (0) path.
     rc = cli.main()
-    assert rc == 4 and rc != 0
+    assert rc == 4
 
     err = capsys.readouterr().err
     assert "tkinter" in err.lower()
