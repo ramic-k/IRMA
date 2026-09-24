@@ -59,18 +59,14 @@ def _lat_flag(path):
     return int(EndfParserPy().parsefile(path)[7][4]["LAT"])
 
 
-@pytest.fixture(scope="module")
-def lat0_tapes():
-    return {1: _run_lat0(1, "m1"), 2: _run_lat0(2, "m2")}
-
-
-@pytest.mark.parametrize("mode", [1, 2])
-def test_lat0_law_matches_lat1_pins_and_is_physical(lat0_tapes, mode):
+def test_lat0_law_matches_lat1_pins_and_is_physical():
     """With bit-identical physical grids the lat=0 law must hit the same
-    pins as the lat=1 run (_PINS from test_noncubic_fast_ci)."""
-    s_sum, s_min, teff0 = _mt4_stats(lat0_tapes[mode])
-    assert _lat_flag(lat0_tapes[mode]) == 0     # the lat=0 branch wrote it
-    assert s_sum == pytest.approx(_PINS[mode], rel=1.0e-6)
+    pin as the lat=1 run (_PINS from test_noncubic_fast_ci). The grid
+    conversion does not depend on the mode, so mode 1 is enough."""
+    tape = _run_lat0(1, "m1")
+    s_sum, s_min, teff0 = _mt4_stats(tape)
+    assert _lat_flag(tape) == 0                 # the lat=0 branch wrote it
+    assert s_sum == pytest.approx(_PINS[1], rel=1.0e-6)
     assert s_min >= 0.0
     assert teff0 == pytest.approx(_TEFF0, abs=0.01)
 
