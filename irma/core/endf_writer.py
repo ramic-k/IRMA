@@ -85,10 +85,6 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
             dwpix_out[i] = dwpix[i] / (aws * tempr[i] * BK)
             dwp1_out[i] = dwp1[i] / (awr * tempr[i] * BK)
 
-    # Determine symmetry type
-    # isym: 0 = symmetric S, 1 = S for +/- beta (coldh),
-    #        2 = ss for -beta, 3 = ss for +/- beta
-
     parser = _writer()
 
     # ---- MF1/MT451 ----
@@ -213,9 +209,11 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
         if lat == 1:
             sc_vals[nt] = THERM / (BK * tempr[nt])
 
-    # Low-temperature underflow detector (isym=0, ilog=0): beta grows like 1/T,
-    # so S*exp(-beta/2) at large transfer can fall below what ENDF can hold
-    # while the scattering there is significant. Counted per temperature.
+    # Low-temperature loss detector (isym=0, ilog=0): beta grows like 1/T, so
+    # S*exp(-beta/2) at large transfer can fall below the Card 4 smin cutoff
+    # (default 1e-75, which writes it as 0) or THERMR's ~1e-98 floor while the
+    # scattering there is significant. Counted per temperature; values below
+    # _ENDF_S_FLOOR (between the two) count as lost.
     _lln_loss_n = [0] * ntempr
     _lln_loss_emax = [0.0] * ntempr
     _lln_check = (isym == 0 and ilog == 0 and ssm is not None
@@ -241,7 +239,7 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
                             beta_card=beta_val, temp_k=tempr[nt])
                     for j in range(nalpha)]
             # Points with significant scattering that the linear symmetric
-            # storage underflows.
+            # storage loses.
             if _lln_sig > 0.0:
                 for j in range(nalpha):
                     if ssm[i_beta, j, nt] > _lln_sig and 0.0 <= vals[j] < _ENDF_S_FLOOR:
@@ -265,12 +263,13 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
                 f"WARNING: at T={tempr[_nt]:g} K, {_lln_loss_n[_nt]} S(alpha,beta) "
                 f"points with significant scattering (up to "
                 f"{_lln_loss_emax[_nt]:.0f} meV transfer) underflow the linear "
-                f"ilog=0 storage and are written as 0; set ilog=1 on Card 4.",
+                f"ilog=0 storage (below the Card 4 smin cutoff, default 1e-75, "
+                f"or THERMR's ~1e-98 floor) and are lost; set ilog=1 on Card 4.",
                 flush=True,
             )
 
     # Effective temperature table(s).
-    # Teff0 is the PRINCIPAL scatterer's effective temperature. Where it lives
+    # Teff0 is the principal scatterer's effective temperature. Where it lives
     # depends on how many scatterer passes ran (mirroring NJOY's temp arrays):
     #   * single pass (nss=0, or an analytic b7>0 secondary): the principal's
     #     values are in tempf; tempf1 is never filled.
@@ -342,7 +341,7 @@ def _asym_overflow_s(s_stored, be, beta_card, temp_k, smin):
     branches of :func:`_compute_endf_s`, and only when ``math.exp(be/2)``
     alone exceeds float64 (be/2 > ln(DBL_MAX) ~ 709.78 -- lat=1 at
     cryogenic temperature scales the stored beta by THERM/(k*T)). The
-    PRODUCT is usually still representable: by detailed balance the stored
+    product is usually still representable: by detailed balance the stored
     value is ~exp(-be/2), so the direct-form crash is an evaluation-order
     artifact. Evaluate exp(log(S) + be/2) instead -- the same quantity the
     isym=1 ilog=1 branch writes in log form without ever overflowing.
@@ -488,9 +487,9 @@ def _coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta):
 
 def _coherent_s_table_or_grouped(bragg, nedge, ntempr, tempr, edge_delta,
                                  crystal_info):
-    """The kinematic coherent Bragg edges, GROUPED above the threshold when Card 6b
+    """The kinematic coherent Bragg edges, grouped above the threshold when Card 6b
     enables it (ENDF-102 7.2.2), else the full set. Shared by the plain coherent
-    path AND the extinction splice, so grouping composes with extinction (the
+    path and the extinction splice, so grouping composes with extinction (the
     extinction path feeds the grouped edges as its above-cutoff piece)."""
     group_bpd = int(crystal_info.get('coh_edge_group_bins_per_decade', 0))
     if group_bpd > 0:
@@ -593,8 +592,7 @@ def _build_coherent_elastic(mat, za, awr, bragg, nedge, ntempr,
     moderator.
     """
     # Isotropic DW integral per temperature. For an SCT (b7==0) mixed
-    # moderator the principal and secondary scatterer integrals are averaged
-    # (byte-identical to the former per-edge averaging).
+    # moderator the principal and secondary scatterer integrals are averaged.
     if nss > 0 and b7 == 0.0:
         w_iso = [(dwpix[i] + dwp1[i]) / 2.0 for i in range(ntempr)]
     else:
@@ -621,8 +619,8 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
     the paper: K. Ramic, J. I. Damian Marquez, et al., NIM-A 1027 (2022) 166227.
 
     For CEF:
-      - Single atom (nat=1): Eq 24/25 — store the designated-coherent component, scale by
-        (σ_coh + σ_inc) / σ_dominant
+      - Single atom (nat=1): Eq 24/25 — store the dominant component (coherent
+        when σ_coh > σ_inc, else incoherent), scaled by (σ_coh + σ_inc) / σ_dominant
       - Polyatomic (nat>1): Eq 26 — DC atom gets coherent elastic scaled
         by 1/f_DC; other atoms get incoherent elastic with redistribution
 
@@ -775,7 +773,7 @@ def _grouped_coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta_fn,
         idx = np.arange(j, k)
         # Do not silently clamp a non-positive bin increment caused by
         # negative interference terms / roundoff: ungroup it so every step
-        # stays physical. A bin whose increments are exactly zero at EVERY
+        # stays physical. A bin whose increments are exactly zero at every
         # temperature (Debye-Waller underflow at high E) carries no cross
         # section at all -- merge it into one zero step instead of emitting
         # one redundant point per raw edge.
@@ -884,7 +882,9 @@ def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
 
 def _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out, sb_value,
                           npr=1):
-    """Build LTHR=2 (incoherent elastic) section for CEF non-DC atom.
+    """Build an LTHR=2 (incoherent elastic) section: iel<0, the single-atom SEF
+    case with sigma_coh <= sigma_inc, and the SEF principal that is not the DC
+    atom.
 
     sb_value is the per-principal bound cross section (barns), including any
     Eq 26 redistribution. The tape stores SB = sb_value*npr, the molecular
@@ -919,8 +919,8 @@ def _build_mef_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
     """Build MF7/MT2 with LTHR=3 (mixed elastic format).
 
     Stores both coherent elastic (Bragg edges, per atom) and incoherent
-    elastic in a single section, following the proposed ENDF extension
-    (Eq 23 from the paper).
+    elastic in a single section, the LTHR=3 form of ENDF-6 (Eq 23 of Ramic
+    et al., NIM-A 1027 (2022) 166227).
 
     The incoherent SB follows the molecular convention ``SB = sigma_inc_p *
     npr`` (npr is recorded in MF7/MT4 B(6)), the same convention the classic
@@ -936,7 +936,7 @@ def _build_mef_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
     The incoherent term's W' stays isotropic: the LTHR=3 tabulation supports
     only a scalar W', so this uses the powder-averaged (isotropic) trace Tr(F)/3
     of the per-species displacement tensor F (the same F as in W_s(Ĝ) above).
-    For an anisotropic material that is an APPROXIMATION to the true
+    For an anisotropic material that is an approximation to the true
     direction-averaged incoherent DW, which the scalar ENDF MF7/MT2 format cannot
     represent exactly; the full anisotropy is carried instead in the coherent
     (per-plane W_s(Ĝ) above) and inelastic channels.
