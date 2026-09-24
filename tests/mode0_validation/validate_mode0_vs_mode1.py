@@ -7,7 +7,7 @@ ATOM, so they should agree in ABSOLUTE scale -- the integral ratio
 mode0/mode1 should be ~ 1. The one understood difference is the Debye-Waller:
 mode 0 is ISOTROPIC (one scalar lambda_s per species from the DOS), mode 1 is
 ANISOTROPIC (per-atom U tensors from phonopy). Graphite is strongly anisotropic,
-so a small residual (in both the ~2% integral excess and the shape) is expected
+so a small residual (in the integral and in the shape) is expected
 and physical -- the same isotropic approximation OCLIMAX TASK=0 makes.
 
 Run (needs phonopy):

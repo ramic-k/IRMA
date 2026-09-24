@@ -6,8 +6,8 @@
   ],
   "T_K": 300.0,
   "n_atoms_cell": 4,
-  "integral_mode0": 0.04749763162488169,
-  "integral_mode1": 0.0467336186167734,
-  "integral_ratio_mode0_over_mode1": 1.0163482527294403,
-  "shape_cosine_similarity": 0.919987405438113
+  "integral_mode0": 0.04666705278424114,
+  "integral_mode1": 0.046742661185236366,
+  "integral_ratio_mode0_over_mode1": 0.9983824540777514,
+  "shape_cosine_similarity": 0.9702081301957464
 }
