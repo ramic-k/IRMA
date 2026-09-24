@@ -151,34 +151,25 @@ def _dw_frame_rotation(card6c, lattice_ang):
     return None
 
 
-def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
-    """Parse the generalized-elastic card block (iel=10): Cards 6b-6g.
-
-    Reads the elastic/inelastic mode controls, lattice, atom types and
-    positions, the Card 6e partial spectra (mode 0), and — for inelastic_mode=1/2 —
-    the phonopy mesh controls (loading the mesh once for all
-    temperatures). Returns the populated crystal_info dict.
-    """
-    # Card 6b: elastic_mode nat nspec inelastic_mode [bins_per_decade threshold_eV]
+def read_card_6b(reader, ncold=0, nsk=0, nss=0, b7=0.0):
+    """Card 6b, checked against Cards 5-6: ``(elastic_mode, nat, nspec,
+    inelastic_mode, bins_per_decade, threshold_ev)``, the threshold as
+    written (0 means the 1 eV default)."""
     reader.card("Card 6b (elastic_mode nat nspec inelastic_mode [grouping])")
     fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
     elastic_mode = reader.to_int(fvals[0], "elastic_mode")   # 1=SEF, 2=MEF
-    nat = reader.to_int(fvals[1], "nat")            # number of distinct atom types
-    nspec = reader.to_int(fvals[2], "nspec")          # number of partial phonon spectra (Card 6e blocks)
-    inelastic_mode = reader.to_int(fvals[3], "inelastic_mode")   # 0=isotropic, 1/2=in-process noncubic SAB
-    # Bragg-edge grouping knob (field 5) + threshold in eV (field 6).
-    edge_group_bins_per_decade = reader.to_int(fvals[4], "bins_per_decade")  # 0 = off (keep all edges)
+    nat = reader.to_int(fvals[1], "nat")              # number of atom types
+    nspec = reader.to_int(fvals[2], "nspec")          # Card 6e blocks
+    inelastic_mode = reader.to_int(fvals[3], "inelastic_mode")
+    # Bragg-edge grouping (field 5, 0 = off) and its threshold in eV (field 6)
+    bins_per_decade = reader.to_int(fvals[4], "bins_per_decade")
     reader.require(
-        edge_group_bins_per_decade >= 0,
+        bins_per_decade >= 0,
         f"Card 6b bins_per_decade (field 5) must be >= 0 (0 = grouping off), "
-        f"got {edge_group_bins_per_decade}")
+        f"got {bins_per_decade}")
     reader.require(
         fvals[5] >= 0.0,
         f"Card 6b grouping threshold (field 6) must be >= 0, got {fvals[5]:g}")
-    edge_group_threshold_ev = (
-        float(fvals[5]) if fvals[5] > 0 else 1.0             # ENDF-102 default: 1 eV
-    )
-
     reader.require(elastic_mode in (1, 2),
                    f"elastic_mode must be 1 (SEF) or 2 (MEF), got {elastic_mode}")
     reader.require(nat >= 1, f"nat must be >= 1, got {nat}")
@@ -209,20 +200,15 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
         f"Phonopy provides MT4 and the Debye-Waller factors, so Card 6e "
         f"partial spectra are not used (got nspec={nspec})")
     reader.require(nspec >= 0, f"nspec must be >= 0, got {nspec}")
+    return elastic_mode, nat, nspec, inelastic_mode, bins_per_decade, float(fvals[5])
 
-    print(f"  Generalized elastic: elastic_mode={elastic_mode} "
-          f"({'SEF' if elastic_mode == 1 else 'MEF'}), nat={nat}, nspec={nspec}, "
-          f"inelastic_mode={inelastic_mode}")
 
-    # Card 6c: lattice parameters
+def read_card_6c(reader):
+    """Card 6c, checked: ``(a, b, c, alpha, beta, gamma)``."""
     reader.card("Card 6c (lattice a b c alpha beta gamma)")
     fvals = reader.read_floats(6)
     latt_a, latt_b, latt_c = fvals[0], fvals[1], fvals[2]
     latt_alpha, latt_beta, latt_gamma = fvals[3], fvals[4], fvals[5]
-
-    print(f"  Lattice: a={latt_a}, b={latt_b}, c={latt_c}, "
-          f"alpha={latt_alpha}, beta={latt_beta}, gamma={latt_gamma}")
-
     # The cell volume clips a negative metric term to zero, so reject an
     # unphysical cell here.
     for nm, v in (("a", latt_a), ("b", latt_b), ("c", latt_c)):
@@ -240,6 +226,138 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
                    "lattice angles do not form a valid cell "
                    f"(metric determinant term {metric:.6g} <= 0); "
                    f"alpha={latt_alpha}, beta={latt_beta}, gamma={latt_gamma}")
+    return latt_a, latt_b, latt_c, latt_alpha, latt_beta, latt_gamma
+
+
+def read_card_6d(reader, iat):
+    """Card 6d for atom type ``iat + 1``, checked: a dict of Z, A, awr, b_coh
+    [fm], sigma_inc [b], npos and the fractional positions."""
+    reader.card(f"Card 6d (atom type {iat+1}: Z A awr b_coh sigma_inc npos)")
+    fvals = reader.read_floats(6)
+    at_Z = reader.to_int(fvals[0], "Z")
+    at_A = reader.to_int(fvals[1], "A")
+    at_awr = fvals[2]
+    at_sigma_inc = fvals[4]
+    at_npos = reader.to_int(fvals[5], "npos")
+    reader.require(at_Z >= 1, f"Z must be >= 1, got {at_Z}")
+    # A only identifies the nuclide (matched to Card 4 za and Card 6e);
+    # A = 0 is ENDF's natural element.
+    reader.require(at_A >= 0, f"A must be >= 0 (0 = natural "
+                              f"element), got {at_A}")
+    reader.require(at_awr > 0.0, f"awr must be > 0, got {at_awr}")
+    reader.require(at_sigma_inc >= 0.0,
+                   f"sigma_inc must be >= 0, got {at_sigma_inc}")
+    reader.require(at_npos >= 1, f"npos must be >= 1, got {at_npos}")
+    reader.card(f"Card 6d (atom type {iat+1}: {at_npos} fractional positions)")
+    coords_flat = reader.read_float_array(at_npos * 3)
+    positions = [(coords_flat[3 * ip], coords_flat[3 * ip + 1],
+                  coords_flat[3 * ip + 2]) for ip in range(at_npos)]
+    return {'Z': at_Z, 'A': at_A, 'awr': at_awr, 'b_coh': fvals[3],
+            'sigma_inc': at_sigma_inc, 'npos': at_npos, 'positions': positions}
+
+
+def read_card_6e(reader, isp):
+    """Card 6e partial spectrum ``isp + 1``, checked: a dict of Z, A, delta
+    [eV], ni and rho."""
+    reader.card(f"Card 6e (partial spectrum {isp+1}: Z A delta ni)")
+    fvals = reader.read_floats(4)
+    sp_Z = reader.to_int(fvals[0], "Z")
+    sp_A = reader.to_int(fvals[1], "A")
+    sp_delta = fvals[2]
+    sp_ni = reader.to_int(fvals[3], "ni")
+    # Same validity rules as the classic Card 11/12 spectrum: these
+    # spectra feed the per-species Debye-Waller integrals directly.
+    reader.require(sp_delta > 0.0,
+                   f"delta (spectrum spacing, eV) must be > 0, "
+                   f"got {sp_delta:g}")
+    reader.require(sp_ni >= 2,
+                   f"ni (number of spectrum points) must be >= 2, "
+                   f"got {sp_ni}")
+    reader.card(f"Card 6e (partial spectrum {isp+1}: {sp_ni} rho values)")
+    sp_rho = reader.read_float_array(sp_ni)
+    reader.require(bool(np.all(sp_rho >= 0.0)), "rho values must be >= 0")
+    reader.require(bool(np.any(sp_rho > 0.0)), "rho values are all zero")
+    return {'Z': sp_Z, 'A': sp_A, 'delta': sp_delta, 'ni': sp_ni, 'rho': sp_rho}
+
+
+def read_cards_6f_6g(reader):
+    """Cards 6f-1 to 6f-3, the optional minimum-phonon-energy card and Card
+    6g, checked: a dict of phonopy_yaml, mesh, ncpu (as written), use_born,
+    born_path (None without BORN), min_phonon_energy_mev, ndir, mpdir and
+    auto_order."""
+    reader.card("Card 6f-1 (phonopy.yaml path)")
+    phonopy_yaml_path = reader.read_string()
+    reader.card("Card 6f-2 (mesh_nx mesh_ny mesh_nz ncpu use_born)")
+    fvals_nc = reader.read_card_floats()
+    reader.require(
+        len(fvals_nc) == 5,
+        "Card 6f-2 needs 5 values: mesh_nx mesh_ny mesh_nz ncpu use_born")
+    mesh_nx = reader.to_int(fvals_nc[0], "mesh_nx")
+    mesh_ny = reader.to_int(fvals_nc[1], "mesh_ny")
+    mesh_nz = reader.to_int(fvals_nc[2], "mesh_nz")
+    nc_ncpu = reader.to_int(fvals_nc[3], "ncpu")
+    nc_use_born = reader.to_int(fvals_nc[4], "use_born")
+    reader.require(mesh_nx >= 1 and mesh_ny >= 1 and mesh_nz >= 1,
+                   f"mesh dimensions must all be >= 1, got "
+                   f"{mesh_nx}x{mesh_ny}x{mesh_nz}")
+    reader.require(nc_ncpu >= 1, f"ncpu must be >= 1, got {nc_ncpu}")
+    reader.require(nc_use_born in (0, 1),
+                   f"use_born must be 0 or 1, got {nc_use_born}")
+    born_path_nc = None
+    if nc_use_born == 1:
+        reader.card("Card 6f-3 (BORN file path)")
+        born_path_nc = reader.read_string()
+    # Optional one-value card: the minimum phonon energy in meV. A 2- or
+    # 3-value card here is Card 6g.
+    reader.card("optional minimum phonon energy / Card 6g")
+    fvals_nc_ctrl = reader.read_card_floats()
+    min_phonon_energy_mev = 0.0
+    if len(fvals_nc_ctrl) == 1:
+        min_phonon_energy_mev = float(fvals_nc_ctrl[0])
+        reader.require(min_phonon_energy_mev >= 0.0,
+                       "minimum phonon energy must be >= 0 (meV)")
+        reader.card("Card 6g (ndir mpdir [auto])")
+        fvals_nc_ctrl = reader.read_card_floats()
+    # Card 6g: ndir mpdir [auto_multiphonon_order]; the order is Card 3 nphon.
+    reader.require(
+        len(fvals_nc_ctrl) in (2, 3),
+        "Card 6g must contain 2 values plus an optional 3rd value: "
+        "ndir mpdir [auto_multiphonon_order]")
+    ndir = reader.to_int(fvals_nc_ctrl[0], "ndir")
+    mpdir = reader.to_int(fvals_nc_ctrl[1], "mpdir")
+    auto_order = (reader.to_int(fvals_nc_ctrl[2], "auto_order")
+                  if len(fvals_nc_ctrl) == 3 else 0)
+    reader.require(ndir >= 1 and mpdir >= 1,
+                   "Card 6g direction counts must be >= 1.")
+    reader.require(auto_order in (0, 1),
+                   "Card 6g auto_multiphonon_order (3rd field) must be 0 "
+                   "(honor Card 3 nphon) or 1 (auto-size).")
+    return {'phonopy_yaml': phonopy_yaml_path, 'mesh': (mesh_nx, mesh_ny, mesh_nz),
+            'ncpu': nc_ncpu, 'use_born': nc_use_born, 'born_path': born_path_nc,
+            'min_phonon_energy_mev': min_phonon_energy_mev, 'ndir': ndir,
+            'mpdir': mpdir, 'auto_order': auto_order}
+
+
+def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
+    """Parse the generalized-elastic card block (iel=10): Cards 6b-6g.
+
+    Reads the elastic/inelastic mode controls, lattice, atom types and
+    positions, the Card 6e partial spectra (mode 0), and — for inelastic_mode=1/2 —
+    the phonopy mesh controls (loading the mesh once for all
+    temperatures). Returns the populated crystal_info dict.
+    """
+    (elastic_mode, nat, nspec, inelastic_mode, edge_group_bins_per_decade,
+     edge_group_threshold_ev) = read_card_6b(reader, ncold, nsk, nss, b7)
+    if edge_group_threshold_ev <= 0.0:
+        edge_group_threshold_ev = 1.0                  # ENDF-102 default: 1 eV
+
+    print(f"  Generalized elastic: elastic_mode={elastic_mode} "
+          f"({'SEF' if elastic_mode == 1 else 'MEF'}), nat={nat}, nspec={nspec}, "
+          f"inelastic_mode={inelastic_mode}")
+
+    latt_a, latt_b, latt_c, latt_alpha, latt_beta, latt_gamma = read_card_6c(reader)
+    print(f"  Lattice: a={latt_a}, b={latt_b}, c={latt_c}, "
+          f"alpha={latt_alpha}, beta={latt_beta}, gamma={latt_gamma}")
 
     # Card 6d: atom types (repeated nat times)
     atom_types = []
@@ -247,34 +365,10 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
     total_atoms_in_cell = 0
 
     for iat in range(nat):
-        # First line: Z A awr_i b_coh sigma_inc npos
-        reader.card(f"Card 6d (atom type {iat+1}: Z A awr b_coh sigma_inc npos)")
-        fvals = reader.read_floats(6)
-        at_Z = reader.to_int(fvals[0], "Z")
-        at_A = reader.to_int(fvals[1], "A")
-        at_awr = fvals[2]
-        at_b_coh = fvals[3]       # fm
-        at_sigma_inc = fvals[4]   # barns
-        at_npos = reader.to_int(fvals[5], "npos")
-        reader.require(at_Z >= 1, f"Z must be >= 1, got {at_Z}")
-        # A only identifies the nuclide (matched to Card 4 za and Card 6e);
-        # A = 0 is ENDF's natural element.
-        reader.require(at_A >= 0, f"A must be >= 0 (0 = natural "
-                                  f"element), got {at_A}")
-        reader.require(at_awr > 0.0, f"awr must be > 0, got {at_awr}")
-        reader.require(at_sigma_inc >= 0.0,
-                       f"sigma_inc must be >= 0, got {at_sigma_inc}")
-        reader.require(at_npos >= 1, f"npos must be >= 1, got {at_npos}")
-
-        # Read fractional coordinates (npos × 3 values)
-        reader.card(f"Card 6d (atom type {iat+1}: {at_npos} fractional positions)")
-        coords_flat = reader.read_float_array(at_npos * 3)
-        positions = []
-        for ip in range(at_npos):
-            x = coords_flat[3 * ip]
-            y = coords_flat[3 * ip + 1]
-            z = coords_flat[3 * ip + 2]
-            positions.append((x, y, z))
+        at = read_card_6d(reader, iat)
+        at_Z, at_A, at_awr = at['Z'], at['A'], at['awr']
+        at_b_coh, at_sigma_inc = at['b_coh'], at['sigma_inc']
+        at_npos, positions = at['npos'], at['positions']
 
         sigma_coh = 4.0 * pi * at_b_coh**2 * 0.01  # barns (1 barn = 100 fm²)
         total_atoms_in_cell += at_npos
@@ -332,27 +426,9 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
     # inelastic_mode=0; rejected above for modes 1/2).
     partial_spectra = []
     for isp in range(nspec):
-        # First line: Z A delta_s ni_s
-        reader.card(f"Card 6e (partial spectrum {isp+1}: Z A delta ni)")
-        fvals = reader.read_floats(4)
-        sp_Z = reader.to_int(fvals[0], "Z")
-        sp_A = reader.to_int(fvals[1], "A")
-        sp_delta = fvals[2]
-        sp_ni = reader.to_int(fvals[3], "ni")
-        # Same validity rules as the classic Card 11/12 spectrum: these
-        # spectra feed the per-species Debye-Waller integrals directly.
-        reader.require(sp_delta > 0.0,
-                       f"delta (spectrum spacing, eV) must be > 0, "
-                       f"got {sp_delta:g}")
-        reader.require(sp_ni >= 2,
-                       f"ni (number of spectrum points) must be >= 2, "
-                       f"got {sp_ni}")
-
-        # Read phonon spectrum values
-        reader.card(f"Card 6e (partial spectrum {isp+1}: {sp_ni} rho values)")
-        sp_rho = reader.read_float_array(sp_ni)
-        reader.require(bool(np.all(sp_rho >= 0.0)), "rho values must be >= 0")
-        reader.require(bool(np.any(sp_rho > 0.0)), "rho values are all zero")
+        sp = read_card_6e(reader, isp)
+        sp_Z, sp_A, sp_delta, sp_ni, sp_rho = (
+            sp['Z'], sp['A'], sp['delta'], sp['ni'], sp['rho'])
 
         partial_spectra.append({
             'Z': sp_Z, 'A': sp_A,
@@ -446,28 +522,16 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
     # ---- Card 6f: phonopy mesh parameters (inelastic_mode=1/2) ----
     # The mesh is loaded once here and reused for all temperatures.
     if inelastic_mode in (1, 2):
-        # Card 6f-1: phonopy_yaml_path
-        reader.card("Card 6f-1 (phonopy.yaml path)")
-        phonopy_yaml_path = reader.read_string()
+        nc = read_cards_6f_6g(reader)
+        phonopy_yaml_path = nc['phonopy_yaml']
+        mesh_nx, mesh_ny, mesh_nz = nc['mesh']
+        nc_ncpu, nc_use_born, born_path_nc = nc['ncpu'], nc['use_born'], nc['born_path']
+        min_phonon_energy_mev = nc['min_phonon_energy_mev']
+        num_directions_nc = nc['ndir']
+        multiphonon_num_directions_nc = nc['mpdir']
+        auto_multiphonon_order_nc = nc['auto_order']
+        multiphonon_max_order_nc = int(nphon)
         print(f"  Non-cubic: phonopy_yaml = {phonopy_yaml_path}")
-
-        # Card 6f-2: mesh_nx mesh_ny mesh_nz ncpu use_born
-        reader.card("Card 6f-2 (mesh_nx mesh_ny mesh_nz ncpu use_born)")
-        fvals_nc = reader.read_card_floats()
-        reader.require(
-            len(fvals_nc) == 5,
-            "Card 6f-2 needs 5 values: mesh_nx mesh_ny mesh_nz ncpu use_born")
-        mesh_nx = reader.to_int(fvals_nc[0], "mesh_nx")
-        mesh_ny = reader.to_int(fvals_nc[1], "mesh_ny")
-        mesh_nz = reader.to_int(fvals_nc[2], "mesh_nz")
-        nc_ncpu = reader.to_int(fvals_nc[3], "ncpu")
-        nc_use_born = reader.to_int(fvals_nc[4], "use_born")
-        reader.require(mesh_nx >= 1 and mesh_ny >= 1 and mesh_nz >= 1,
-                       f"mesh dimensions must all be >= 1, got "
-                       f"{mesh_nx}x{mesh_ny}x{mesh_nz}")
-        reader.require(nc_ncpu >= 1, f"ncpu must be >= 1, got {nc_ncpu}")
-        reader.require(nc_use_born in (0, 1),
-                       f"use_born must be 0 or 1, got {nc_use_born}")
         # Guard against a self-inflicted OOM from starting far more
         # workers than there are cores: clamp to the available
         # CPU count with a warning rather than failing late.
@@ -476,45 +540,10 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
             print(f"WARNING: Card 6f ncpu={nc_ncpu} exceeds available cores "
                   f"({cpu_avail}); clamping to {cpu_avail}.")
             nc_ncpu = cpu_avail
-
         print(f"  Non-cubic: mesh={mesh_nx}×{mesh_ny}×{mesh_nz}, "
               f"ncpu={nc_ncpu}, use_born={nc_use_born}")
-
-        # Card 6f-3: born_path (only if use_born=1)
-        born_path_nc = None
-        if nc_use_born == 1:
-            reader.card("Card 6f-3 (BORN file path)")
-            born_path_nc = reader.read_string()
+        if born_path_nc is not None:
             print(f"  Non-cubic: BORN path = {born_path_nc}")
-
-        # Optional one-value card: the minimum phonon energy in meV. A 2- or
-        # 3-value card here is Card 6g.
-        reader.card("optional minimum phonon energy / Card 6g")
-        fvals_nc_ctrl = reader.read_card_floats()
-        min_phonon_energy_mev = 0.0
-        if len(fvals_nc_ctrl) == 1:
-            min_phonon_energy_mev = float(fvals_nc_ctrl[0])
-            reader.require(min_phonon_energy_mev >= 0.0,
-                           "minimum phonon energy must be >= 0 (meV)")
-            reader.card("Card 6g (ndir mpdir [auto])")
-            fvals_nc_ctrl = reader.read_card_floats()
-
-        # Card 6g: ndir mpdir [auto_multiphonon_order]; the order is Card 3 nphon.
-        reader.require(
-            len(fvals_nc_ctrl) in (2, 3),
-            "Card 6g must contain 2 values plus an optional 3rd value: "
-            "ndir mpdir [auto_multiphonon_order]")
-        num_directions_nc = reader.to_int(fvals_nc_ctrl[0], "ndir")
-        multiphonon_num_directions_nc = reader.to_int(fvals_nc_ctrl[1], "mpdir")
-        multiphonon_max_order_nc = int(nphon)
-        auto_multiphonon_order_nc = (
-            reader.to_int(fvals_nc_ctrl[2], "auto_order") if len(fvals_nc_ctrl) == 3 else 0
-        )
-        reader.require(num_directions_nc >= 1 and multiphonon_num_directions_nc >= 1,
-                       "Card 6g direction counts must be >= 1.")
-        reader.require(auto_multiphonon_order_nc in (0, 1),
-                       "Card 6g auto_multiphonon_order (3rd field) must be 0 "
-                       "(honor Card 3 nphon) or 1 (auto-size).")
         nc_inelastic_controls = NoncubicInelasticControls(
             num_directions=num_directions_nc,
             multiphonon_num_directions=multiphonon_num_directions_nc,

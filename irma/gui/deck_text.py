@@ -176,112 +176,48 @@ def parse_deck_to_staging(reader, path):
     st['noncubic'] = None
     st['coherent_extinction'] = None
     if iel == 10:
-        # Card 6b: elastic_mode nat nspec inelastic_mode
-        #          [edge_group_bins_per_decade] [edge_group_threshold_eV]
-        fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
-        elastic_mode = reader.to_int(fvals[0], "elastic_mode")
-        nat = reader.to_int(fvals[1], "nat")
-        nspec = reader.to_int(fvals[2], "nspec")
-        inelastic_mode_loaded = reader.to_int(fvals[3], "inelastic_mode")
-        edge_group_bpd = reader.to_int(fvals[4], "bins_per_decade")
-        # the mode selects which cards follow
-        if inelastic_mode_loaded not in (0, 1, 2):
-            raise ValueError(f"Card 6b inelastic_mode must be 0, 1, or 2; "
-                             f"got {inelastic_mode_loaded}.")
-        # the form hides (and would silently clear) these fields in modes 1/2
-        if inelastic_mode_loaded in (1, 2) and (ncold or nsk or nss):
-            raise ValueError(
-                f"ncold/nsk/secondary scatterer are not available with "
-                f"inelastic_mode={inelastic_mode_loaded} (got ncold={ncold}, "
-                f"nsk={nsk}, nss={nss}).")
+        # Cards 6b-6g through the engine's own card readers, so the GUI and
+        # the engine accept the same decks with the same messages; the
+        # engine-only steps (principal merge, phonopy model) are not run.
+        from irma.core.crystal_cards import (
+            read_card_6b, read_card_6c, read_card_6d, read_card_6e,
+            read_cards_6f_6g)
+        (elastic_mode, nat, nspec, inelastic_mode_loaded, edge_group_bpd,
+         edge_group_thr) = read_card_6b(reader, ncold, nsk, nss, b7)
         st['elastic_mode'] = elastic_mode
         st['edge_group_bpd'] = edge_group_bpd
-        st['edge_group_thr'] = fvals[5]
+        st['edge_group_thr'] = edge_group_thr
         st['inelastic_mode'] = inelastic_mode_loaded
+        st['lattice'] = list(read_card_6c(reader))
 
-        # Card 6c: lattice parameters
-        st['lattice'] = list(reader.read_floats(6))
-
-        # Card 6d: atom types
         atoms = []
         for iat in range(nat):
-            fvals = reader.read_floats(6)
-            at_Z = reader.to_int(fvals[0], "Z")
-            at_A = reader.to_int(fvals[1], "A")
-            at_awr = fvals[2]
-            at_b_coh = fvals[3]
-            at_sigma_inc = fvals[4]
-            at_npos = reader.to_int(fvals[5], "npos")
-            coords_flat = reader.read_float_array(at_npos * 3)
-            coords = [
-                (coords_flat[3 * ip], coords_flat[3 * ip + 1],
-                 coords_flat[3 * ip + 2])
-                for ip in range(at_npos)
-            ]
+            at = read_card_6d(reader, iat)
             atoms.append({
-                'Z': at_Z, 'A': at_A, 'awr': at_awr, 'b_coh': at_b_coh,
-                'sigma_inc': at_sigma_inc, 'npos': at_npos, 'coords': coords,
+                'Z': at['Z'], 'A': at['A'], 'awr': at['awr'],
+                'b_coh': at['b_coh'], 'sigma_inc': at['sigma_inc'],
+                'npos': at['npos'], 'coords': at['positions'],
             })
         st['atoms'] = atoms
 
-        # Card 6e: partial spectra (per-species DW, inelastic_mode=0)
         for isp in range(nspec):
-            fvals = reader.read_floats(4)
-            sp_Z = reader.to_int(fvals[0], "Z")
-            sp_A = reader.to_int(fvals[1], "A")
-            sp_delta = fvals[2]
-            sp_ni = reader.to_int(fvals[3], "ni")
-            sp_rho = [float(v) for v in reader.read_float_array(sp_ni)]
+            sp = read_card_6e(reader, isp)
             st['partial_spectra'].append({
-                'Z': sp_Z, 'A': sp_A,
-                'delta': sp_delta, 'ni': sp_ni, 'rho': sp_rho,
+                'Z': sp['Z'], 'A': sp['A'], 'delta': sp['delta'],
+                'ni': sp['ni'], 'rho': [float(v) for v in sp['rho']],
             })
 
-        # Card 6f: phonopy mesh parameters (inelastic_mode=1/2)
         if inelastic_mode_loaded in (1, 2):
-            nc = {}
-            nc['yaml'] = reader.read_string()
-
-            fvals_nc = reader.read_card_floats()
-            if len(fvals_nc) != 5:
-                raise ValueError(
-                    "Card 6f mesh line must contain 5 values "
-                    "(mesh_nx mesh_ny mesh_nz ncpu use_born).")
-            mesh_nx = reader.to_int(fvals_nc[0], "mesh_nx")
-            mesh_ny = reader.to_int(fvals_nc[1], "mesh_ny")
-            mesh_nz = reader.to_int(fvals_nc[2], "mesh_nz")
-            nc_ncpu = reader.to_int(fvals_nc[3], "ncpu")
-            use_born = reader.to_int(fvals_nc[4], "use_born")
-            nc['mesh_nx'] = mesh_nx
-            nc['mesh_ny'] = mesh_ny
-            nc['mesh_nz'] = mesh_nz
-            nc['ncpu'] = nc_ncpu
-            nc['use_born'] = use_born
-            nc['born_path'] = ''
-            if use_born == 1:
-                nc['born_path'] = reader.read_string()
-
-            # Optional one-value minimum-phonon-energy card before Card 6g.
-            # Without it the 2/3-value Card 6g follows directly.
-            fvals_nc_ctrl = reader.read_card_floats()
-            nc['min_phonon_energy_mev'] = 0.0
-            if len(fvals_nc_ctrl) == 1:
-                nc['min_phonon_energy_mev'] = float(fvals_nc_ctrl[0])
-                fvals_nc_ctrl = reader.read_card_floats()
-
-            # Card 6g: required noncubic inelastic controls
-            if len(fvals_nc_ctrl) not in (2, 3):
-                raise ValueError(
-                    "Card 6g is required for inelastic_mode=1/2 and must "
-                    "contain 2 values plus an optional 3rd value.")
-            ndir = reader.to_int(fvals_nc_ctrl[0], "ndir")
-            mpdir = reader.to_int(fvals_nc_ctrl[1], "mpdir")
-            auto_order = (reader.to_int(fvals_nc_ctrl[2], "auto_order")
-                          if len(fvals_nc_ctrl) == 3 else 0)
-            nc['ndir'] = ndir
-            nc['mpdir'] = mpdir
-            nc['auto_order'] = auto_order
-            st['noncubic'] = nc
+            c = read_cards_6f_6g(reader)
+            st['noncubic'] = {
+                'yaml': c['phonopy_yaml'],
+                'mesh_nx': c['mesh'][0], 'mesh_ny': c['mesh'][1],
+                'mesh_nz': c['mesh'][2], 'ncpu': c['ncpu'],
+                'use_born': c['use_born'], 'born_path': c['born_path'] or '',
+                'min_phonon_energy_mev': c['min_phonon_energy_mev'],
+                'ndir': c['ndir'], 'mpdir': c['mpdir'],
+                'auto_order': c['auto_order'],
+            }
 
         # Optional extinction card (last card of the iel=10 block, before Card 7).
         # Reuses the engine's parser so the GUI and the engine accept identical
