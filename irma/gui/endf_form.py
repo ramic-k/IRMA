@@ -2219,6 +2219,40 @@ class EndfFormMixin:
         # ENDF comments (MF1/MT451)
         cf = form_section(frame, "ENDF Comment Cards (MF1/MT451)")
 
+        self.nver = LabeledEntry(
+            cf, "NVER:", "8", width=6,
+            help_title="NVER (Library Version, Card 4)",
+            help_text="The version number of the library the evaluation is "
+                      "labeled for, written to MF1/MT451. With LREL it names "
+                      "the release: ENDF/B-VIII.1 is NVER 8, LREL 1.\n\n"
+                      "Default: 8.")
+        self.nver.pack(fill=tk.X, pady=2)
+        self.lrel = LabeledEntry(
+            cf, "LREL:", "1", width=6,
+            help_title="LREL (Library Release, Card 4)",
+            help_text="The release number within library version NVER, "
+                      "written to MF1/MT451: ENDF/B-VIII.1 is NVER 8, "
+                      "LREL 1; ENDF/B-VIII.0 is NVER 8, LREL 0.\n\n"
+                      "Default: 1.")
+        self.lrel.pack(fill=tk.X, pady=2)
+        hsub_help = ("HSUB is the three sub-library identification lines of "
+                     "MF1/MT451 (comment cards 3-5 of the input file). For "
+                     "a thermal scattering evaluation in ENDF/B-VIII.1 "
+                     "they read:\n\n"
+                     "  ----ENDF/B-VIII.1     MATERIAL   37\n"
+                     "  -----THERMAL NEUTRON SCATTERING DATA\n"
+                     "  ------ENDF-6 FORMAT\n\n"
+                     "Leave all three blank to write these standard lines, "
+                     "built from NVER, LREL and MAT. Each line is truncated "
+                     "to 66 characters.")
+        self.hsub = []
+        for k in range(3):
+            e = LabeledEntry(cf, f"HSUB line {k + 1}:", "", width=66,
+                             help_title="HSUB (Sub-library Lines)",
+                             help_text=hsub_help)
+            e.pack(fill=tk.X, pady=2)
+            self.hsub.append(e)
+
         cf_top = ttk.Frame(cf)
         cf_top.pack(fill=tk.X)
         ttk.Label(cf_top,
@@ -2230,8 +2264,9 @@ class EndfFormMixin:
                    "The standard ENDF layout is:\n"
                    "  Line 1: ZSYMAM + Lab + Date + Author\n"
                    "  Line 2: Reference + Dist/Rev/End dates\n"
-                   "  Lines 3-5: Sub-library identifiers\n"
-                   "  Lines 6+: Free-form description\n\n"
+                   "  Lines 3+: Free-form description\n\n"
+                   "The three sub-library lines (HSUB) between line 2 and "
+                   "the description are the HSUB fields above.\n\n"
                    "Each line is truncated to 66 characters.\n\n"
                    "Example first line:\n"
                    "  6-C-12   LANL     EVAL-JAN24 A.I. Hawari\n\n"
@@ -2409,11 +2444,15 @@ class EndfFormMixin:
         lines.append(f"{_quote(self._imported_title)} /")
         # Card 3 (iprint preserved through import -> export)
         lines.append(f"{ntempr} {self._imported_iprint} {self.nphon.get()} /")
-        # Card 4 (iint appended only when non-default, so classic decks
-        # round-trip byte-identically)
+        # Card 4 (iint, nver and lrel appended only when non-default, so
+        # classic decks round-trip byte-identically)
         smin_s = self.smin.get().strip() or '1e-75'
         card4 = f"{self.mat.get()} {self.za.get()} {isabt} {ilog} {smin_s}"
-        if iint:
+        nver = self.nver.get().strip() or "8"
+        lrel = self.lrel.get().strip() or "1"
+        if (nver, lrel) != ("8", "1"):
+            card4 += f" {iint} {nver} {lrel}"
+        elif iint:
             card4 += f" {iint}"
         lines.append(card4 + " /")
         # Card 5
@@ -2646,8 +2685,18 @@ class EndfFormMixin:
 
         # Comment cards (MF1/MT451). Emit exactly what was stored: interior
         # and leading/trailing whitespace round-trips inside the quotes.
+        # The HSUB fields are comment cards 3-5, after the box's first two.
         comments_raw = self.comments_text.get_text()
-        lines.extend(emit_comment_lines(comments_raw))
+        cards = emit_comment_lines(comments_raw)
+        hsub = [e.get() for e in self.hsub]
+        if any(h.strip() for h in hsub) or len(cards) > 2:
+            head = cards[:2] + ["' ' /"] * (2 - len(cards[:2]))
+            hsub_cards = [f"{_quote(h if h else ' ')} /" for h in hsub]
+            if len(cards) <= 2:
+                while not hsub[len(hsub_cards) - 1].strip():
+                    hsub_cards.pop()
+            cards = head + hsub_cards + cards[2:]
+        lines.extend(cards)
         lines.append("/")
 
         return '\n'.join(lines) + '\n'
@@ -2886,6 +2935,10 @@ class EndfFormMixin:
 
         # Comments
         self.comments_text.clear()
+        self.nver.set("8")
+        self.lrel.set("1")
+        for e in self.hsub:
+            e.set("")
 
     def _apply_imported_state(self, st):
         """Apply a parsed staging dict (from parse_deck_to_staging) to the
@@ -2902,6 +2955,8 @@ class EndfFormMixin:
         self._set_code(self.ilog, st['ilog'])
         self._set_code(self.iint, st['iint'])
         self.smin.set(f"{st['smin']:g}")
+        self.nver.set(str(st['nver']))
+        self.lrel.set(str(st['lrel']))
 
         self.awr.set(str(st['awr']))
         self.spr.set(str(st['spr']))
@@ -3027,5 +3082,10 @@ class EndfFormMixin:
                 _set_values(self.sec_osc_weights, st['sec_osc_w'])
 
         # Comment cards (MF1/MT451) — stored verbatim (whitespace preserved)
-        if st['comments']:
-            self.comments_text.append("\n".join(st['comments']))
+        # comment cards 3-5 go to the HSUB fields, the rest to the box
+        comments = st['comments']
+        for e, h in zip(self.hsub, comments[2:5]):
+            e.set(h)
+        box = comments[:2] + comments[5:]
+        if box:
+            self.comments_text.append("\n".join(box))

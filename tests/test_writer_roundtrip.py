@@ -228,6 +228,26 @@ def test_mf1_header_fields_land_in_spec_columns():
     assert rec2[55:63] == "20170917"                         # ENDATE
 
 
+def test_mf1_library_fields_and_default_hsub(principal_run, principal_tape):
+    """MF1/MT451 EMAX is the MT4 B(4) upper energy. NVER/LREL default to 8/1
+    (ENDF/B-VIII.1) and come from the optional Card 4 fields; blank comment
+    cards 3-5 give the standard ENDF/B thermal HSUB lines for that release."""
+    mf1 = principal_tape[1][451]
+    assert mf1["EMAX"] == principal_tape[7][4]["B"][4]
+    assert (mf1["NVER"], mf1["LREL"]) == (8, 1)
+    lines = principal_run[2]
+    i0 = next(i for i, ln in enumerate(lines)
+              if len(ln) >= 75 and ln[70:72] == " 1" and ln[72:75] == "451")
+    assert [ln[:66].rstrip() for ln in lines[i0 + 6:i0 + 9]] == [
+        "----ENDF/B-VIII.1     MATERIAL    1",
+        "-----THERMAL NEUTRON SCATTERING DATA",
+        "------ENDF-6 FORMAT"]
+    ix = _read_tape_lines(_DECK_PRINCIPAL.replace("1 1./", "1 1. 0 0 1e-75 0 9 0/"))
+    # third record: AWI EMAX LREL 0 NSUB NVER
+    assert ix[i0 + 2][22:33].strip() == "0" and ix[i0 + 2][55:66].strip() == "9"
+    assert ix[i0 + 6].startswith("----ENDF/B-IX.0 ")
+
+
 def test_tape_contains_no_carriage_returns(principal_run):
     """Tapes must be LF-only on every platform: a CRLF tape written on
     Windows would not be byte-identical to the NJOY references."""
