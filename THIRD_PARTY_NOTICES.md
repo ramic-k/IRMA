@@ -5,9 +5,13 @@ The notices below cover third-party code IRMA derives from, retained
 as their licenses require.
 
 IRMA's classic kernels (irma/core/kernels.py) implement the LEAPR algorithms
-of NJOY2016 and are in part derived from its Fortran source (leapr.f90).
-NJOY2016 is distributed under the BSD 3-Clause License with the following
-notice, retained here as required:
+of NJOY2016 and are in part derived from its Fortran source (leapr.f90). Two
+other files are also in part derived from leapr.f90: the built-in LEAPR
+coherent-elastic materials in irma/core/crystal.py (`coher`: its lattice
+data and reciprocal-lattice index box), and the MF7 record layout of the
+ENDF writer in irma/core/endf_writer.py (NJOY's `endout`). NJOY2016 is
+distributed under the BSD 3-Clause License with the following notice,
+conditions and disclaimer, retained here as required:
 
   Copyright (c) 2016, Los Alamos National Security, LLC
   All rights reserved.
@@ -21,6 +25,31 @@ notice, retained here as required:
   SOFTWARE. If software is modified to produce derivative works, such
   modified software should be clearly marked, so as not to confuse it with
   the version available from LANL.
+
+  Additionally, redistribution and use in source and binary forms, with or
+  without modification, are permitted provided that the following conditions
+  are met:
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+  3. Neither the name of Los Alamos National Security, LLC, Los Alamos
+     National Laboratory, LANL, the U.S. Government, nor the names of its
+     contributors may be used to endorse or promote products derived from
+     this software without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY LOS ALAMOS NATIONAL SECURITY, LLC AND
+  CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+  NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+  PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL LOS ALAMOS NATIONAL
+  SECURITY, LLC OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+  NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 IRMA is such a derivative work and is clearly marked as a reimplementation;
 it is not the version available from LANL.
@@ -40,7 +69,10 @@ NCrystal is distributed under the Apache License, Version 2.0
   Copyright 2015-2025 NCrystal developers
 
   This software was mainly developed at the European Spallation Source ERIC
-  (ESS) and the Technical University of Denmark (DTU).
+  (ESS) and the Technical University of Denmark (DTU). This work was
+  supported in part by the European Union's Horizon 2020 research and
+  innovation programme under grant agreement No 676548 (the BrightnESS
+  project) and 951782 (the HighNESS project).
 
 The NCrystal-derived portions have been modified for IRMA (translated to
 Python and adapted to IRMA's data structures); they are redistributed here
@@ -84,12 +116,14 @@ PyChop is acknowledged in two non-code capacities:
     instrument descriptions and from the instrument data files shipped with
     Mantid PyChop. Facts carry no copyright; the source is credited here
     and in the module docstring.
-  * The moderator pulse-width tables and the two disk-chopper calibration
-    constants in irma/spectra/chopper_resolution.py, and the validation
+  * The moderator pulse-width tables and the four disk-chopper calibration
+    constants in irma/spectra/chopper_resolution.py (the lever-arm factor
+    `disk_chpfac_k` and the resolution-disk constant `C_us_hz`, for CNCS and
+    for LET), and the validation
     reference tests/chopper_reference/pychop_reference.json (repository only,
     not packaged), are numerical OUTPUT obtained by evaluating PyChop's
     public API as a black box — tabulated samples of its moderator-width
-    function on IRMA's own grids, and two calibration scalars. The dumper
+    function on IRMA's own grids, and four calibration scalars. The dumper
     script (tests/chopper_reference/dump_pychop_reference.py) contains no PyChop
     code and requires the user's own Mantid installation to run. Program
     output of this kind is not subject to the program's license.
