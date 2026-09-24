@@ -190,9 +190,6 @@ class NCrystalPanel(RunPanel):
 
     error_title = "Export Error"
 
-    # exposed for the test suite (mirrors the module map)
-    _INELASTIC_BY_INT = _INELASTIC_BY_INT
-
     def __init__(self, parent, runner, status_setter=None):
         super().__init__(parent, padding=8)
         self.runner = runner
