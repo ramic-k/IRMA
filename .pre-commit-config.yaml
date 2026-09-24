@@ -1,11 +1,11 @@
 # Optional local pre-commit hooks. Enable with:  pre-commit install
-# Mirrors the CI `ruff-lint` gate (see [tool.ruff] in pyproject.toml) so the same
-# high-signal pyflakes/syntax rules run before each commit. `--fix` auto-applies
-# the safe fixes (unused-import / empty-f-string removal); facades are protected
-# by the per-file-ignores in pyproject.toml.
+# Runs the CI `ruff-lint` rules (see [tool.ruff] in pyproject.toml) before each
+# commit; keep `rev` in the range requirements-dev.txt pins. `--fix` applies the
+# safe fixes (unused-import / empty-f-string removal); the re-export modules are
+# protected by the per-file-ignores in pyproject.toml.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.16
+    rev: v0.16.3
     hooks:
       - id: ruff
         args: [--fix]
