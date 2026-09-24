@@ -508,48 +508,59 @@ def _dispatch_block(state_ref, kernel, block):
     return kernel(block)
 
 
-def principal_weighted_coherent_partition(
+# Modes at one q whose frequencies differ by less than this (THz) count as
+# one degenerate set in principal_share_coherent_partition.
+_DEGENERATE_THZ = 1.0e-7
+
+
+def principal_share_coherent_partition(
     group_amplitudes: np.ndarray,
     principal_group_index: int,
-    group_coherent_weights: np.ndarray,
+    frequencies: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Approximate a principal-only coherent partial from group amplitudes.
+    """A principal's share of the exact coherent one-phonon total.
 
-    ``group_amplitudes`` may be shaped ``(n_groups, n_modes)`` or
-    ``(n_qsamples, n_groups, n_modes)``. ``group_coherent_weights`` holds the
-    per-group bound coherent cross-section weights (any common scale). The
-    returned tuple is:
+    ``group_amplitudes`` is ``(n_qsamples, n_groups, n_modes)`` or
+    ``(n_groups, n_modes)``; ``frequencies`` (THz) has the same shape without
+    the group axis, ascending along the modes as phonopy returns them.
+    Principal ``p`` gets ``|F_p|^2 / sum_g |F_g|^2 * |sum_g F_g|^2``. Every
+    share is non-negative and the shares of all principals add up to the
+    exact total. The eigenvectors of a degenerate set of modes are an
+    arbitrary basis of that set, so both self-term sums are taken over the
+    whole set before dividing, which makes the result independent of the
+    basis the eigensolver returns.
 
-    - selected principal-group coherent contribution
-    - exact principal self term ``|F_p|^2``
-    - weighted principal/non-principal interference sum
-
-    Each pair term ``2 Re(F_p F_o*)`` is split between its two groups in
-    proportion to their coherent weights: the principal keeps
-    ``w_p / (w_p + w_o)``. Summed over all principals every pair term comes
-    back with coefficient 1, so the partials add up to the exact coherent
-    total ``|sum_p F_p|^2`` for any number of groups.
+    Returns the share, the principal self term ``|F_p|^2`` and their
+    difference, the principal's part of the interference.
     """
     principal_amplitude = np.take(group_amplitudes, principal_group_index, axis=-2)
     principal_self = np.abs(principal_amplitude) ** 2
     if group_amplitudes.shape[-2] <= 1:
         return principal_self, principal_self, np.zeros_like(principal_self)
 
-    weights = np.asarray(group_coherent_weights, dtype=float)
-    principal_weight = float(weights[principal_group_index])
-    weighted_cross = None
-    for group_index in range(group_amplitudes.shape[-2]):
-        if group_index == principal_group_index:
-            continue
-        other_amplitude = np.take(group_amplitudes, group_index, axis=-2)
-        pair_term = 2.0 * np.real(principal_amplitude * np.conjugate(other_amplitude))
-        pair_weight_sum = principal_weight + float(weights[group_index])
-        # Zero-weight pairs carry zero amplitude (b_coh = 0 on both sides);
-        # the 0.5 fallback only avoids a 0/0, it never contributes intensity.
-        pair_factor = principal_weight / pair_weight_sum if pair_weight_sum > 0.0 else 0.5
-        contribution = pair_factor * pair_term
-        weighted_cross = contribution if weighted_cross is None else weighted_cross + contribution
-    return principal_self + weighted_cross, principal_self, weighted_cross
+    total = np.abs(group_amplitudes.sum(axis=-2)) ** 2
+    self_sum = (np.abs(group_amplitudes) ** 2).sum(axis=-2)
+    numerator = _sum_over_degenerate_modes(principal_self, frequencies)
+    denominator = _sum_over_degenerate_modes(self_sum, frequencies)
+    # A zero denominator means every amplitude of the set is zero, so its
+    # total is zero too.
+    ratio = np.divide(numerator, denominator, out=np.zeros_like(numerator),
+                      where=denominator > 0.0)
+    share = ratio * total
+    return share, principal_self, share - principal_self
+
+
+def _sum_over_degenerate_modes(values: np.ndarray, frequencies: np.ndarray) -> np.ndarray:
+    """``values`` summed over each run of equal frequencies along the last
+    axis, with the run's sum given to every mode in it."""
+    n_modes = frequencies.shape[-1]
+    freqs = frequencies.reshape(-1, n_modes)
+    starts = np.ones(freqs.shape, dtype=bool)
+    starts[:, 1:] = np.abs(np.diff(freqs, axis=1)) > _DEGENERATE_THZ
+    first = np.maximum.accumulate(np.where(starts, np.arange(n_modes), 0), axis=1)
+    ids = (first + n_modes * np.arange(len(freqs))[:, None]).ravel()
+    sums = np.bincount(ids, weights=values.reshape(-1), minlength=ids.size)
+    return sums[ids].reshape(values.shape)
 
 
 def _batched_qpoints_eigh(dynamical_matrix, qpoints, factor_to_thz):
@@ -571,11 +582,11 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     The harmonic coherent ``n=1`` term: atom amplitudes are summed first and
     squared afterward. With ``coherent_partition_mode='exact-total'`` the total
     is the whole-cell term, the diagonal the per-site sum of ``|A_d|^2`` and
-    the interference the rest. In the principal-xs-weighted mode the total is
-    the principal's share (``principal_weighted_coherent_partition``): the
-    diagonal is the principal group's ``|F_p|^2``, which includes the
-    interference between sites of that group, and the interference is its
-    weighted share of the cross-group terms.
+    the interference the rest. In the principal-share mode the total is the
+    principal's share (``principal_share_coherent_partition``): the diagonal
+    is the principal group's ``|F_p|^2``, which includes the interference
+    between sites of that group, and the interference is the share minus
+    that self term.
     """
 
     state = WORKER_STATE
@@ -595,7 +606,6 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     coherent_partition_mode = state["coherent_partition_mode"]
     coherent_group_site_indices = state["coherent_group_site_indices"]
     principal_group_index = state["principal_group_index"]
-    group_coherent_weights = state["group_coherent_weights"]
 
     # Sample index = Q shell * n_dirs + direction; each direction has weight
     # 1/n_dirs in the powder average.
@@ -663,9 +673,8 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
             axis=1,
         )                                                            # (M,G,B)
         total_w, diagonal_w, interference_w = (
-            principal_weighted_coherent_partition(
-                group_amplitudes, principal_group_index,
-                group_coherent_weights,
+            principal_share_coherent_partition(
+                group_amplitudes, principal_group_index, frequencies,
             )
         )
 

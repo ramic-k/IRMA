@@ -17,11 +17,14 @@ Outputs that change, and what to regenerate:
   and release, and the default header lines). MF7 changes only in the cases
   listed under *ENDF evaluations*. Regenerate a tape to get the new header.
 - Modes 1 and 2: the MT4 effective temperature, by about 3e-5 relative.
+- Mode-2 tapes and NCrystal packs of materials with more than one species:
+  the coherent one-phonon part of each species' table, which now adds up to
+  the material's exact total. Regenerate them.
 - ENDFTSL packs: reconvert them. The graphite inelastic cross section drops
   4.2% at 25 meV, and packs grow by up to 19 times.
 - NCrystal exports: the NCMAT Debye temperatures rise (graphite 827 K to
-  923 K at 296 K), and with them the Bragg planes the plugin uses. The
-  packs are unchanged. Re-export to update them.
+  923 K at 296 K), and with them the Bragg planes the plugin uses.
+  Single-species packs are unchanged. Re-export to update them.
 - MLIP bundles: the DOS is a histogram of the phonon modes. Re-emit inputs
   from existing bundles; rebuild a bundle to refresh its own DOS file.
 - Spectra: the bins near the ends of the energy axis change, and so do the
@@ -58,6 +61,22 @@ Outputs that change, and what to regenerate:
 - `examples/tsl/graphite_mode2.input`, the production mode-2 graphite deck,
   uses `iint=1` (lin-lin) on grids from the automatic generators: 399 α ×
   541 β, was 200 × 426. The tape grows from 2.7 MB to 6.2 MB.
+- Mode 2, materials with more than one species: each species' tape and
+  pack gets the fraction |F_p|² / Σ_g |F_g|² of each mode's coherent
+  one-phonon total |Σ_g F_g|² (`coherent_partition_mode: principal-share`).
+  Both sums run over each set of degenerate modes, so the split does not
+  depend on the eigenvectors the eigensolver returns. The old split gave a
+  species its own |F_p|² plus a share of each interference term
+  2 Re(F_p F_o*) in proportion to the coherent cross sections. That share
+  can be negative, the writers set negative cells to zero, and the summed
+  material law came out too high. On the BeO fixture at 296 K, 0.9% of the
+  Be cells and 5.2% of the O cells were negative, and the per-Q zeroth
+  moment of the sum was 1–4% high between 0.3 and 1.5 Å⁻¹. The new shares
+  add up to a whole-cell run to 2e-16. Each species' own table changes more
+  than the sum: its per-Q moment moves by −38% to +22% (O) and −17% to +13%
+  (Be) at low Q, while its integral over the whole range moves by 0.2%.
+  Single-species materials such as graphite and Be, modes 0 and 1, MT2 and
+  the spectra model are unchanged.
 - Modes 1 and 2: the per-atom DOS behind the MT4 effective temperature is a
   histogram of the mesh modes, each weighted by |e|², instead of a Gaussian
   as wide as two grid steps, which put weight below the lowest mode. The
@@ -191,8 +210,6 @@ Outputs that change, and what to regenerate:
   (NCLatticeUtils.cc:75-78) builds a wrong reciprocal lattice for these
   cells and misplaces every Bragg plane. Use the conventional cell; the
   check can go once NCrystal is fixed.
-- The −1% negative-cell error names the worst cell, says the direction
-  sampling is too coarse, and points to `export.num_directions`.
 - ENDFTSL converter: NCrystal interpolates S linearly in β, so every
   log-linear (INT=4) β interval of a tape is subdivided into
   n = ceil(max|ln(S_{j+1}/S_j)| / sqrt(8·tol)) parts, with tol = 1e-3. On
@@ -324,6 +341,10 @@ Outputs that change, and what to regenerate:
   default one-group-per-species partition. A config that sets it fails
   with "unknown export key".
 - ENDFTSL converter: `coherent_convention` (see above).
+- `coherent_partition_mode: principal-xs-weighted` is now `principal-share`
+  (see *ENDF evaluations*), with no alias; a config that sets the old value
+  is refused. The run metadata loses `group_coherent_weights` and
+  `coherent_interference_pair_weighting`.
 - Python API: `irma.core.engine` re-exports only `run_leapr`,
   `LeaprResult`, `DeckError`, `parse_leapr_input` and `TokenReader`.
   `irma.ncrystal` exports only `NCrystalExportConfig`, `build_packs`,

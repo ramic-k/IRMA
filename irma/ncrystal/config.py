@@ -24,7 +24,7 @@ YAML shape::
       gain_side: scaled_sym        # scaled_sym only (half-table; NCrystal
                                    # rebuilds the gain side by detailed balance)
       elastic: true
-      coherent_partition_mode: principal-xs-weighted
+      coherent_partition_mode: principal-share
       incoherent_elastic_mode: isotropic   # or directional: sample the
                                    # orientation-averaged <exp(-2W_d(Q))>
                                    # per site (the ENDF path cannot
@@ -44,8 +44,8 @@ from irma.spectra.config import (MaterialConfig, Scatterer, SpectraConfigError,
 
 # Coherent one-phonon partition across per-principal packs; kept in sync with
 # irma.core.noncubic_engine ('auto' resolves to exact-total for a single group,
-# principal-xs-weighted otherwise).
-VALID_PARTITION_MODES = ("auto", "exact-total", "principal-xs-weighted")
+# principal-share otherwise).
+VALID_PARTITION_MODES = ("auto", "exact-total", "principal-share")
 # Incoherent-elastic Debye-Waller treatment in the baked pack: 'isotropic'
 # collapses each site tensor to trace/3 (NCrystal's stock ElIncScatter);
 # 'directional' has the plugin sample the orientation-averaged
@@ -82,7 +82,7 @@ class NCrystalExportConfig:
     jobs: Optional[int] = None
     gain_side: str = "scaled_sym"
     elastic: bool = True
-    coherent_partition_mode: str = "principal-xs-weighted"
+    coherent_partition_mode: str = "principal-share"
     incoherent_elastic_mode: str = "isotropic"
     # S(alpha,beta) grid (ENDF dimensionless convention, lat=1 -> 0.0253 eV ref).
     # Two ways to set it, as on the ENDF-evaluation side:

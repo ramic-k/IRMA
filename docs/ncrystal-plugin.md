@@ -126,7 +126,7 @@ Every field, with its default read from `irma/ncrystal/config.py`:
 | `jobs` | `null` | Worker processes; `null`/omitted uses all CPU cores. |
 | `gain_side` | `scaled_sym` | `scaled_sym` (default) stores the downscatter half-table; NCrystal reconstructs the upscatter side by detailed balance. `scaled_sym` is the only accepted value (a full asymmetric table is not implemented). |
 | `elastic` | `true` | Whether to attach the elastic line. When on, the data file carries the full physical elastic (coherent Bragg edges + incoherent Debye-Waller); isolate a component at scatter time with NCrystal's `comp=coh_elas` / `comp=incoh_elas`. With `elastic: false` the data files carry no elastic block, so NCrystal's standard elastic (Bragg and incoherent, from the placeholder Debye `@DYNINFO` and NCrystal's atom data) stays active; load with `;elas=0` for an inelastic-only material. |
-| `coherent_partition_mode` | `principal-xs-weighted` | How the engine splits the total coherent cross section across principal sites for the *inelastic* `S(α,β)` (no double-counting): `principal-xs-weighted`, `exact-total` (single principal group only), or `auto` (`exact-total` for a single group, `principal-xs-weighted` otherwise). |
+| `coherent_partition_mode` | `principal-share` | How the engine splits the total coherent cross section across principal sites for the *inelastic* `S(α,β)` (no double-counting): `principal-share`, `exact-total` (single principal group only), or `auto` (`exact-total` for a single group, `principal-share` otherwise). |
 | `incoherent_elastic_mode` | `isotropic` | Debye-Waller treatment of the data file's incoherent-elastic component. `isotropic` collapses each site tensor to its trace/3 scalar (NCrystal's stock model). `directional` has the plugin sample the powder-averaged anisotropic `⟨exp(-Q² û·U·û)⟩` per site, larger at high Q for anisotropic crystals, and consistent with the directional multiphonon and the per-reflection coherent elastic. The ENDF tape path cannot represent this (its incoherent-elastic record stores a single scalar W′). |
 | `alpha_grid` | `null` | Explicit `α` grid (ENDF dimensionless, `lat=1` → 0.0253 eV reference). Provide together with `beta_grid` for the **explicit** grid mode. |
 | `beta_grid` | `null` | Explicit `β` grid (downscatter, starts at 0). Provide together with `alpha_grid`. |
@@ -337,12 +337,15 @@ the `@CUSTOM_IRMA` section in `beo.ncmat` lists both:
 
 The inelastic side is cleanly per-species: each data file carries its own
 species' mode-2 `S(α,β)`, and summing the files sums the per-species
-inelastic kernels with no ambiguity. The `principal-xs-weighted` coherent
+inelastic kernels with no ambiguity. The `principal-share` coherent
 partition splits the total coherent cross section exactly, with no
-double-counting: each pairwise one-phonon interference term is shared
-between its two participants as `w_p/(w_p+w_o)` (the bound coherent
-cross sections of the principal and the other species), so the per-species partials sum back to the exact total for any
-number of site groups.
+double-counting: for each phonon mode, species `p` gets the fraction
+`|F_p|² / Σ_g |F_g|²` of the exact one-phonon total `|Σ_g F_g|²`, where `F_g`
+is the mode's amplitude summed over the sites of species `g`. Every share is
+non-negative, and the per-species shares sum back to the exact total for any
+number of site groups. For degenerate modes (equal frequency at one q) both
+sums are taken over the whole degenerate set before dividing, so the split
+does not depend on which eigenvectors the eigensolver returns.
 
 The elastic line is different. The coherent Bragg structure factor
 `F(hkl) = Σ_sites b·e^{−W}·e^{iφ}` is a single whole-crystal quantity with
@@ -375,13 +378,11 @@ against an IRMA tape:
   NCrystal's `SABScatter` reproduces the per-atom cross section. When
   comparing a data file with an ENDF tape, divide `bound_xs_barn` by the
   atom fraction to get the σ_b the table is normalized to.
-- **Negative-cell clip.** A species' share of the mode-2 coherent law can be
-  negative where the interference is destructive. ENDF and NCrystal tables
-  cannot hold negative values, so the exporter, like IRMA's ENDF writer, sets
-  those cells to zero; the summed material law is then slightly larger than
-  the exact total. A cell below -1% of the table maximum stops the export: the
-  direction sampling is too coarse for that share, and a larger
-  `export.num_directions` fixes it.
+- **Negative-cell clip.** Rounding can leave cells slightly below zero
+  (about −2×10⁻¹⁷ on the graphite reference export). NCrystal tables cannot
+  hold negative values, so the exporter, like IRMA's ENDF writer, sets those
+  cells to zero and records how many in `meta.negative_sab_clipped_count`. A
+  cell below −1% of the table maximum is not rounding and stops the export.
 - **Cell setting.** NCrystal 4.4.6 builds a wrong reciprocal lattice for a
   cell with cos α − cos β cos γ ≠ 0 (a bug in its general lattice branch,
   `NCLatticeUtils.cc:75-78`), which misplaces every Bragg edge. The exporter
