@@ -291,7 +291,8 @@ irma mlip emit <bundle> --to endf,spectra,ncrystal \
   energy into the mode-1/2 input files, the crystalline spectra
   configuration and the NCrystal configuration, so those paths truncate the
   same modes; the DOS-driven outputs (mode-0 input files and the disordered
-  spectra configuration) do not take it. `--inelastic-mode` picks the physics level (default 2):
+  bundle's input file and spectra configuration) refuse it with an error.
+  `--inelastic-mode` picks the physics level (default 2):
   modes 1/2 emit directional input files (Card 6g
   `10000 1000 1` and a campaign-density phonopy mesh, the
   validation-campaign settings and the GUI form's production

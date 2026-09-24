@@ -495,3 +495,19 @@ def test_min_phonon_energy_reaches_every_emitted_file(al_bundle, tmp_path):
                                   out_path=str(tmp_path / "ncrystal.yaml"),
                                   min_phonon_energy_mev=0.5, progress=QUIET)
     assert yaml.safe_load(Path(ncrystal).read_text())["export"]["min_phonon_energy_meV"] == 0.5
+
+
+def test_min_phonon_energy_refused_where_it_is_not_used(al_bundle, dis_bundle,
+                                                        tmp_path):
+    """--min-phonon-energy reaches only the phonopy-backed targets; the
+    mode-0 deck and the disordered deck and spectra config refuse it instead
+    of dropping it."""
+    kw = dict(temperature_k=296.0, mats={"Al": 45}, out_dir=str(tmp_path),
+              min_phonon_energy_mev=1.0, progress=QUIET)
+    with pytest.raises(ValueError, match="min-phonon-energy"):
+        emit_endf_decks(al_bundle, inelastic_mode=0, **kw)
+    with pytest.raises(ValueError, match="min-phonon-energy"):
+        emit_endf_decks(dis_bundle, **kw)
+    with pytest.raises(ValueError, match="min-phonon-energy"):
+        emit_spectra_yaml(dis_bundle, temperature_k=296.0, min_phonon_energy_mev=1.0,
+                          out_path=str(tmp_path / "s.yaml"), progress=QUIET)
