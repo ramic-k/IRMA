@@ -25,7 +25,7 @@ Classify the request as one of these before doing anything else.
 1. **Deck -> ENDF evaluation** (`python -m irma <deck.input> <out.endf>`).
    Classic LEAPR decks run unchanged; extension cards select the
    generalized treatments (`iel=10` crystals, `inelastic_mode` 0/1/2,
-   extinction, texture, Bragg-edge grouping). Start from
+   extinction, Bragg-edge grouping). Start from
    `examples/tsl/README.md` and the card-by-card
    `docs/input-reference.md`.
 2. **Structure -> everything, via the MLIP front end** (`irma mlip`).
@@ -44,7 +44,7 @@ Classify the request as one of these before doing anything else.
    instrument-resolved INS spectra and 2-D S(Q,E) maps for indirect-
    and direct-geometry spectrometers. `docs/spectra.md`,
    `docs/spectra-mode0.md`, `examples/spectra/README.md`.
-4. **NCrystal export** (`irma ncrystal <config.yaml>`): per-temperature
+4. **NCrystal export** (`irma ncrystal <config.yaml> -o <outdir>`): per-temperature
    material-data files plus a crystal-structure file for the companion
    `ncrystal_plugin_IRMA`, for Monte Carlo transport (McStas, OpenMC,
    ...). `docs/ncrystal-plugin.md`.
@@ -113,7 +113,7 @@ Routing table, concept -> where the physics lives:
 | Classic phonon expansion, multiphonon orders | `irma/core/kernels.py` (`contin`, Poisson weights) | `docs/theory.md` |
 | Translational / diffusion, discrete oscillators, cold H2, Skold | `irma/core/kernels.py` (`trans`, `discre`, `coldh`, `skold_approx`) | `docs/theory.md` |
 | Displacement tensors, anisotropic Debye-Waller | `irma/core/phonopy_io.py` (thermal displacement matrices), `irma/core/crystal.py` | `docs/modes.md`, `docs/validation/methodology.md` |
-| Isotropic vs per-species vs directional elastic DW | `irma/core/elastic_dw.py` (`resolve_species_dw`), `irma/core/crystal.py` (`_compute_per_species_msd`) | `docs/validation/methodology.md` (the Debye-Waller warning box) |
+| Isotropic vs per-species vs directional elastic DW | `irma/core/elastic_dw.py` (`resolve_species_dw`), `irma/core/crystal.py` (`_compute_per_species_msd`) | `docs/validation/methodology.md` (section "The Debye-Waller convention") |
 | Coherent one-phonon term, interference, per-species partition | `irma/core/noncubic_inelastic.py` | `docs/modes.md`, `docs/validation/beryllium-oxide.md` |
 | Bragg edges, structure factors, edge grouping | `irma/core/crystal.py` (`compute_bragg_edges_general`) | `docs/input-reference.md` |
 | SEF vs MEF elastic formats | `irma/core/crystal_cards.py`, `irma/core/endf_writer.py` | `docs/validation/beryllium-oxide.md` |
