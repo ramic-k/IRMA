@@ -2,12 +2,11 @@
 
 IRMA can export a mode-2 calculation (the exact coherent one-phonon
 treatment with directional Debye-Waller factors; see
-[Scattering modes](modes.md)) as per-temperature `.irmapack` files
+[Scattering modes](modes.md); mode 1 is also accepted) as per-temperature `.irmapack` files
 that the **NCrystal IRMA plugin** samples at runtime. NCrystal is the
 thermal neutron scattering library that Monte Carlo codes such as
-McStas and OpenMC use for materials; the plugin gives
-it a powder thermal-scattering model that is better than its stock
-treatment in two concrete ways: an anisotropic-Debye-Waller Bragg-elastic
+McStas and OpenMC use for materials; the plugin adds two things
+NCrystal's standard powder model lacks: an anisotropic-Debye-Waller Bragg-elastic
 line, where NCrystal's core model uses a single scalar mean-squared
 displacement (MSD), and a coherent one-phonon inelastic kernel, where
 NCrystal's built-in inelastic model is its isotropic `vdos2sab`
@@ -51,7 +50,7 @@ The data is exported at one temperature: IRMA computes the full anisotropic
 `S(α,β)` and the anisotropic-DW structure factors at
 `material.temperature_K`, and the C++ plugin only samples them. Re-run the
 exporter at each temperature you need. The per-temperature design is
-deliberate. The mode-2 coherent line re-solves the dynamical matrix at every
+deliberate. The mode-2 coherent one-phonon term re-solves the dynamical matrix at every
 sampled `Q = G + q`, so a C++ path that worked at any temperature would have
 to ship the force constants and port that dispersion re-solve: a large
 effort, and unnecessary for the powder application. The data format is
@@ -121,13 +120,13 @@ Every field, with its default read from `irma/ncrystal/config.py`:
 | `material_id` | — (**required**) | Output set name; data files are `<material_id>__<symbol>.irmapack`. |
 | `inelastic_mode` | `2` | Inelastic engine. `2` = coherent one-phonon + anisotropic DW (the point of the plugin). `1` (directional incoherent) is also accepted. |
 | `num_directions` | `10000` | Powder-average directions for the coherent one-phonon term. |
-| `multiphonon_num_directions` | `1000` | Powder-average directions for the multiphonon Debye-Waller term. |
+| `multiphonon_num_directions` | `1000` | Powder-average directions for the multiphonon orders. |
 | `multiphonon_max_order` | `auto` | Multiphonon order: an integer, or `auto` (the engine starts at 100 and sizes the order up to converge the high-Q Poisson sum, bounded by an internal safety cap of 2000). |
 | `min_phonon_energy_meV` | `0` | Remove every phonon mode with energy at or below this value (meV) from all terms of the pack; 0 keeps the automatic floors. Nothing replaces the removed modes, and the pack's provenance records the value; see the input reference's optional minimum phonon energy card. |
 | `jobs` | `null` | Worker processes; `null`/omitted uses all CPU cores. |
-| `gain_side` | `scaled_sym` | `scaled_sym` (default) stores the downscatter half-table; NCrystal reconstructs the upscatter side by detailed balance. `asym` is reserved for a full asymmetric table. |
-| `elastic` | `true` | Whether to attach the elastic line. When on, the data file carries the full physical elastic (coherent Bragg edges + incoherent Debye-Waller); isolate a component at scatter time with NCrystal's `comp=coh_elas` / `comp=incoh_elas`. |
-| `coherent_partition_mode` | `principal-xs-weighted` | How the engine splits the total coherent cross section across principal sites for the *inelastic* `S(α,β)` (no double-counting). |
+| `gain_side` | `scaled_sym` | `scaled_sym` (default) stores the downscatter half-table; NCrystal reconstructs the upscatter side by detailed balance. `scaled_sym` is the only accepted value (a full asymmetric table is not implemented). |
+| `elastic` | `true` | Whether to attach the elastic line. When on, the data file carries the full physical elastic (coherent Bragg edges + incoherent Debye-Waller); isolate a component at scatter time with NCrystal's `comp=coh_elas` / `comp=incoh_elas`. With `elastic: false` the data files carry no elastic block, so NCrystal's standard elastic (Bragg and incoherent, from the placeholder Debye `@DYNINFO` and NCrystal's atom data) stays active; load with `;elas=0` for an inelastic-only material. |
+| `coherent_partition_mode` | `principal-xs-weighted` | How the engine splits the total coherent cross section across principal sites for the *inelastic* `S(α,β)` (no double-counting): `principal-xs-weighted`, `exact-total` (single principal group only), or `auto` (`exact-total` for a single group, `principal-xs-weighted` otherwise). |
 | `incoherent_elastic_mode` | `isotropic` | Debye-Waller treatment of the data file's incoherent-elastic component. `isotropic` collapses each site tensor to its trace/3 scalar (NCrystal's stock model). `directional` has the plugin sample the powder-averaged anisotropic `⟨exp(-Q² û·U·û)⟩` per site, larger at high Q for anisotropic crystals, and consistent with the directional multiphonon and the per-reflection coherent elastic. The ENDF tape path cannot represent this (its incoherent-elastic record stores a single scalar W′). |
 | `alpha_grid` | `null` | Explicit `α` grid (ENDF dimensionless, `lat=1` → 0.0253 eV reference). Provide together with `beta_grid` for the **explicit** grid mode. |
 | `beta_grid` | `null` | Explicit `β` grid (downscatter, starts at 0). Provide together with `alpha_grid`. |
@@ -150,8 +149,9 @@ the same shared code (`irma.core.grids.generate_beta_grid` /
   the phonon spectrum: a β grid spanning the phonon region up to `freq_max_eV`
   (auto-estimated from the phonopy mesh when omitted), and a linear-in-Q α
   grid (α ∝ Q²) that avoids the low-Q thermal bias of a uniform-α grid. α is
-  per-species (mass-dependent), β is shared. This is not a uniform Q/E grid,
-  which under-integrates the thermal cross section.
+  per-species (mass-dependent), β is shared. This linear-in-Q layout
+  replaces the recoil-mirrored, uniform-α layout, which under-integrates the
+  thermal cross section.
 
 It is all-or-nothing: giving only one of `alpha_grid`/`beta_grid` is an error.
 The automatic-grid knobs (`freq_max_eV`, `n_lower`/`n_phonon`/`n_upper`,
@@ -250,7 +250,7 @@ meta.phonopy_yaml_sha256 = 9364...
 | `backend` | `precomputed_sab`, the data file carries a ready-to-sample table. |
 | `sab_representation` | `scaled_sym_sab`, the scaled-symmetric downscatter half-table (see [Conventions](#conventions-and-provenance)). |
 | `temperature_K` | The export temperature; the entire data file is this one T. |
-| `bound_xs_barn` | Bound scattering cross section σ_b; the table is normalized to it. |
+| `bound_xs_barn` | The per-atom weighted bound cross section, `atom_fraction × σ_b` (`meta.atom_fraction` records the fraction); the table itself stays normalized per principal atom to σ_b. |
 | `element_mass_amu` | Species mass (sets the recoil kinematics / α scaling). |
 | `alpha_grid` | Momentum-transfer grid in NCrystal's mass-scaled α (= IRMA α × AWR), `n_alpha` values. |
 | `beta_grid` | Energy-transfer grid in β (downscatter, β ≥ 0), `n_beta` values. |
@@ -300,9 +300,10 @@ and samples it. The chain:
       per-site U-tensors (paired to the NCMAT atoms by fractional position);
     - **incoherent elastic**: the per-site incoherent Debye-Waller line.
 
-    So `comp=inelas`, `comp=coh_elas`, and `comp=incoh_elas` all resolve to the
-    IRMA physics, while anything the plugin does not provide still comes from
-    NCrystal core.
+    So, for an export with `elastic: true`, `comp=inelas`, `comp=coh_elas`,
+    and `comp=incoh_elas` all resolve to the IRMA physics, while anything the
+    plugin does not provide still comes from NCrystal core. With
+    `elastic: false` only `comp=inelas` is IRMA's.
 5. **Sample.** `SABScatter` evaluates the cross section and samples the final
    `(E′, μ)` from S(α,β). The data stores only the downscatter half, so NCrystal
    reconstructs the energy-gain (up-scatter) side by detailed balance as
@@ -362,12 +363,14 @@ against an IRMA tape:
 - **Scaled-symmetric half-table.** With `gain_side: scaled_sym` the data file
   stores only the downscatter (`β ≥ 0`) side as `S_scaled = S_downscatter ·
   e^{−β/2}`; NCrystal reconstructs the full table (including the energy-gain
-  side) by detailed balance. This halves the table size and matches the
-  validated beryllium cross-section chain.
-- **Bound-XS normalization.** IRMA's internal `S_asym = (4π·kT/σ_b)·S` divides
-  the bound cross section out; the exporter rescales the table to the data
-  file's advertised `bound_xs_barn` so NCrystal's `SABScatter` reproduces the
-  intended absolute cross section.
+  side) by detailed balance. This halves the table size.
+- **Bound-XS normalization.** The table (`sab_values`) keeps the engine's
+  normalization per principal atom to `sigma_bound_b`. The per-atom weight of
+  a multi-species material goes only into the advertised `bound_xs_barn =
+  atom_fraction × sigma_bound_b` (`meta.atom_fraction` records it), so
+  NCrystal's `SABScatter` reproduces the per-atom cross section. When
+  comparing a data file with an ENDF tape, divide `bound_xs_barn` by the
+  atom fraction to get the σ_b the table is normalized to.
 - **Negative-cell clip.** A species' share of the mode-2 coherent law can be
   negative where the interference is destructive. ENDF and NCrystal tables
   cannot hold negative values, so the exporter, like IRMA's ENDF writer, sets
@@ -409,7 +412,7 @@ systematically lower: about 7.2% in the 10 μeV–25 meV integral, and about
 table into a cross section: at low incident energy the kinematically allowed
 (α, β) region is a small, sparsely tabulated corner of the table, and
 THERMR's reconstruction agrees with an exact integration of the same table
-to better than 0.1%, so the spread reflects NCrystal's internal
+to about 0.1% (+0.10%), so the spread reflects NCrystal's internal
 interpolation and quadrature rules rather than the stored data.
 
 The spread is a discretization sensitivity, not a fixed disagreement:
