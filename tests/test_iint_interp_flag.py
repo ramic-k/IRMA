@@ -6,8 +6,8 @@ alpha (TAB1) interpolation tables of the inelastic law:
   iint=1             -> INT=2 (lin-lin), which preserves the structural dips of
                         coherent one-phonon laws that log interpolation floors.
 
-These tests pin: the flag flips both tables, the default is byte-identical to
-pre-feature output (absent == explicit 0), and out-of-range is rejected.
+These tests pin: the flag flips both tables, the default (iint absent) tape is
+byte-identical to iint=0, and out-of-range is rejected.
 """
 import os
 import tempfile
