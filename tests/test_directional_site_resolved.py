@@ -88,8 +88,9 @@ def _exact_site_sum(e, G_hat, st, F_sites, b_sqb=(_B,), awr=(_AWR,), kT=_KT):
     return (z.real * z.real + z.imag * z.imag) * pref
 
 
-def _old_averaged(e, G_hat, D_st, F_avg_list, b_sqb=(_B,), awr=(_AWR,), kT=_KT):
-    """The pre-P3 species double sum over the group-AVERAGED tensors."""
+def _species_averaged(e, G_hat, D_st, F_avg_list, b_sqb=(_B,), awr=(_AWR,), kT=_KT):
+    """The species double sum over the group-averaged tensors (the uniform
+    fast path's arithmetic)."""
     nsp = len(F_avg_list)
     delta = 0.0
     for si in range(nsp):
@@ -104,7 +105,7 @@ def _old_averaged(e, G_hat, D_st, F_avg_list, b_sqb=(_B,), awr=(_AWR,), kT=_KT):
 _IN_PHASE = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0)]   # phi = 0, 2pi for (200)
 
 
-# ---- 1+2: scalar-tensor contrast at the (200) edge ---------------------------
+# ---- scalar-tensor contrast at the (200) edge --------------------------------
 def test_two_inphase_sites_scalar_contrast():
     F_sites = np.array([_F_scalar(0.0), _F_scalar(100.0)])
     plane = _plane(_IN_PHASE)
@@ -114,7 +115,7 @@ def test_two_inphase_sites_scalar_contrast():
     assert got == pytest.approx(exact, rel=1e-12)
 
 
-# ---- 3: rotated anisotropic tensors ------------------------------------------
+# ---- rotated anisotropic tensors ---------------------------------------------
 def test_rotated_anisotropic_tensors():
     """Two sites whose tensors are 90-degree rotations of each other:
     diag(a,b,b) and diag(b,a,b). The group average is isotropic in the basal
@@ -131,7 +132,7 @@ def test_rotated_anisotropic_tensors():
     assert got == pytest.approx(exact, rel=1e-12)
 
 
-# ---- 4: anti-phase cancellation ----------------------------------------------
+# ---- anti-phase cancellation -------------------------------------------------
 def test_antiphase_cancellation_activates_with_tensor_contrast():
     """Two same-species sites in exact anti-phase (equal b): equal tensors
     cancel to delta == 0.0 EXACTLY; unequal tensors break the cancellation
@@ -156,11 +157,11 @@ def test_antiphase_cancellation_activates_with_tensor_contrast():
     assert got_ne == pytest.approx(exact, rel=1e-12)
 
 
-# ---- 5: identical-tensor control (byte-pinned uniform fast path) --------------
-def test_identical_tensors_keep_old_path_bit_for_bit():
+# ---- identical-tensor control (byte-pinned uniform fast path) -----------------
+def test_identical_tensors_use_species_fast_path_bit_for_bit():
     """With identical site tensors the uniform flag stays True and the kernel
-    output is IDENTICAL (==, not approx) to the old species double sum -- the
-    graphite/Be/BeO golden tapes ride on this."""
+    output is identical (==, not approx) to the species double sum over the
+    averaged tensors; the graphite/Be/BeO golden tapes depend on this."""
     F = np.diag([0.4, 0.4, 2.5]) * _AWR * _KT
     F_sites = np.array([F, F])
     sdw = _sdw(F_sites, uniform=True)
@@ -171,7 +172,7 @@ def test_identical_tensors_keep_old_path_bit_for_bit():
               _plane(_IN_PHASE, hkl=(4, 0, 0))]
     for e in (0.002, _E200, 0.05):
         got = directional_edge_delta(e, sdw, 0, planes, _KT)
-        ref = sum(_old_averaged(e, p[0], p[1], sdw.F_species_per_temp[0])
+        ref = sum(_species_averaged(e, p[0], p[1], sdw.F_species_per_temp[0])
                   for p in planes)
         assert got == ref                             # exact bit equality
         # and the site-resolved branch agrees to rounding (same physics here)
@@ -226,7 +227,7 @@ def test_driver_flags_uniform_for_identical_tensors():
 def test_driver_flags_uniform_through_eigensolver_bit_noise():
     """Symmetry-equivalent sites carry ~1e-16 noise in symmetry-forbidden
     tensor elements; that must NOT kick the material off the byte-pinned
-    species-averaged fast path (graphite/Be/BeO goldens ride on this)."""
+    species-averaged fast path (the graphite/Be/BeO goldens depend on it)."""
     from irma.core.driver import _store_directional_species_dw
     ci = _driver_crystal_info([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]])
     F = np.diag([1.0, 2.0, 3.0])
@@ -325,11 +326,11 @@ def test_extinction_site_resolved_delta_matches_reference():
               for j in range(2)) / E
     assert sig_ne(E, 0) == pytest.approx(ref, rel=1e-12)
 
-    # uniform state keeps the old (averaged == exact here) arithmetic
+    # the uniform state uses the species-averaged arithmetic (exact here)
     bragg_u, dir_terms_u, sdw_eq = _two_edge_bragg(F_eq, uniform=True)
     sig_eq, _, _ = make_sigma_coh_ext(bragg_u, dir_terms_u, sdw_eq,
                                       _V, _N, 1.0, no_ext, [_T])
-    ref_u = sum(_old_averaged(float(bragg_u[j][0]), dir_terms_u[j][0][0],
+    ref_u = sum(_species_averaged(float(bragg_u[j][0]), dir_terms_u[j][0][0],
                               dir_terms_u[j][0][1],
                               sdw_eq.F_species_per_temp[0])
                 for j in range(2)) / E
@@ -346,7 +347,7 @@ def test_extinction_site_resolved_delta_matches_reference():
         assert 0.0 < s <= k * (1.0 + 1e-12)
 
 
-# ---- review P2: multi-species cancellation must survive the zero-DW prune --
+# ---- multi-species cancellation must survive the zero-DW prune -------------
 
 def test_cross_species_cancellation_retained(tmp_path):
     """A B2-like cell whose (100) cancels at zero attenuation (equal b, two
@@ -365,7 +366,7 @@ def test_cross_species_cancellation_retained(tmp_path):
                AtomSite(b_coh_fm=5.0, positions=[(0.5, 0.5, 0.5)])])
     bragg, nbe, corr, dir_terms = compute_bragg_edges_general(crystal, 0.05)
     has_100 = any(abs(float(bragg[j][0]) - e100) < 1e-9 for j in range(nbe))
-    assert has_100, "(100) cross-species cancellation was pruned (review P2)"
+    assert has_100, "(100) cross-species cancellation was pruned"
 
     # single species, anti-phase: a systematic absence must remain pruned
     crystal1 = CrystalStructure(
