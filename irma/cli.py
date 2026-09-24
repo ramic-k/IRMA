@@ -1,19 +1,23 @@
 """Command-line interface for IRMA.
 
-Four capabilities behind one ``irma`` entry point:
+Every capability behind one ``irma`` entry point:
 
-    irma <deck> <out.endf>          ENDF/TSL evaluation (legacy, unchanged)
+    irma <deck> <out.endf>          ENDF/TSL evaluation (positional form)
     irma evaluate <deck> <out.endf> same, explicit (alias: run)
     irma spectra vision|indirect|direct ...   neutron-scattering forward spectra
     irma spectra run <config> -o out.csv
     irma ncrystal -o <outdir> config.yaml     NCrystal .irmapack export
+    irma mlip build|emit|validate|env ...     MLIP phonon-model front end
     irma --gui | --version
 
 If the first argument is not a subcommand keyword, it is the deck path of
 the 2-positional form ``irma deck out.endf``.
 
 ``main(argv=None)`` returns a process exit code; the console-script and
-``python -m irma`` wrappers both ``sys.exit(main())``.
+``python -m irma`` wrappers both ``sys.exit(main())``. The deck evaluation
+returns 0 on success, 1 for a usage or output-path error, 2 for an input
+deck error and 3 for a runtime failure; the GUI launcher returns 4 when
+tkinter is unavailable.
 """
 
 import os
@@ -42,6 +46,8 @@ def _print_help():
           "Generate IRMA inputs from a bundle")
     print("  irma mlip validate <bundle>                "
           "Check a bundle end to end")
+    print("  irma mlip env create|list|remove ...       "
+          "Per-potential Python environments")
     print("  irma --gui                                 "
           "Launch graphical interface")
     print("  irma --version                             "
@@ -71,7 +77,7 @@ def validate_output_path(path):
         return f"output path is a directory, not a file: {p}"
     if os.path.exists(p) and not os.access(p, os.W_OK):
         # An existing read-only target otherwise fails only at the
-        # post-compute open (review S10).
+        # post-compute open.
         return f"output file exists and is not writable: {p}"
     parent = os.path.dirname(p)
     if not os.path.isdir(parent):
@@ -82,7 +88,7 @@ def validate_output_path(path):
 
 
 def _run_deck(args):
-    """Legacy 2-positional ENDF/TSL evaluation (run_leapr), unchanged."""
+    """ENDF/TSL evaluation of a deck (``run_leapr``): ``irma deck out.endf``."""
     # `irma evaluate --help` / `irma run --help` is the natural discovery
     # command; asking for help must never be answered with an error.
     if args and args[0] in ("-h", "--help"):
@@ -122,8 +128,8 @@ def _run_deck(args):
 
 
 def main(argv=None):
-    """Console entry point: dispatch to help, GUI, spectra, ncrystal, or a
-    deck evaluation depending on the arguments."""
+    """Console entry point: dispatch to help, GUI, spectra, mlip, ncrystal,
+    or a deck evaluation depending on the arguments."""
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if not argv:
@@ -145,8 +151,7 @@ def main(argv=None):
         from irma.mlip.cli import main as mlip_main
         return mlip_main(argv[1:])
     if argv[0] == "ncrystal":
-        # Same code path as `python -m irma.ncrystal` (which keeps working);
-        # surfaced here so all three capabilities live behind one command.
+        # The same code path as `python -m irma.ncrystal`.
         from irma.ncrystal.__main__ import main as ncrystal_main
         return ncrystal_main(argv[1:])
     if argv[0] in ("evaluate", "run"):
