@@ -43,9 +43,8 @@ def test_missing_dependency_names_pip_package(monkeypatch, potential,
     monkeypatch.setitem(sys.modules, module, None)
     with pytest.raises(MlipDependencyError, match=pip_name):
         make_calculator(CalculatorSpec(potential))
-    # the CI condition: torch itself absent must ALSO surface as the
-    # named dependency error, never a raw ModuleNotFoundError('torch')
-    # (regression: the clamp-before-import reorder broke this)
+    # torch itself absent must also surface as the named dependency error,
+    # never a raw ModuleNotFoundError('torch')
     monkeypatch.setitem(sys.modules, "torch", None)
     with pytest.raises(MlipDependencyError, match=pip_name):
         make_calculator(CalculatorSpec(potential))
@@ -114,7 +113,7 @@ def test_mattersim_branch_with_stubs(monkeypatch, tmp_path, fake_torch):
     assert isinstance(calc, StubCalc)
     assert made == {"load_path": str(ckpt), "device": "cpu"}
     assert fake_torch.num_threads == 2
-    assert fake_torch.interop_threads == 1     # clamped BEFORE the import
+    assert fake_torch.interop_threads == 1     # clamped to one thread
     assert fake_torch.default_dtype == "float32"
     assert meta["potential"] == "mattersim"
     assert meta["device"] == "cpu"
@@ -298,7 +297,7 @@ def test_mace_checkpoint_heads(monkeypatch, tmp_path):
     pytest.importorskip("ase")
     model_file = tmp_path / "w.model"
     model_file.write_bytes(b"w")
-    # legacy checkpoints without a heads attribute are single-head...
+    # checkpoints without a heads attribute are single-head...
     _stub_mace(monkeypatch, _FakeMaceModel(heads=None), {})
     _, meta = make_calculator(CalculatorSpec("mace", model=str(model_file)))
     assert meta["checkpoint_heads"] == ["Default"]
@@ -708,8 +707,8 @@ def test_canonicalize_spec_pins_to_a_local_checkpoint(monkeypatch, tmp_path):
 
 
 def test_pet_mad_latest_is_unpinned_never_an_identity(monkeypatch, tmp_path):
-    # review finding: '@latest' must behave exactly like no version -- it
-    # must resolve to a numeric version, never survive into the identity
+    # '@latest' must behave exactly like no version: it resolves to a
+    # numeric version and never survives into the identity
     from irma.mlip.calculators import (
         canonicalize_spec, resolved_checkpoint_identity)
     made = {}
@@ -778,8 +777,8 @@ def test_nequip_zoo_id_normalization_and_cache(monkeypatch, tmp_path):
 
 def test_nequip_canonicalize_dispatches_before_any_torch_use(monkeypatch,
                                                              tmp_path):
-    # review finding: a torch-free host with a registered nequip env must
-    # canonicalize remotely, never resolving artifact mode locally
+    # a torch-free host with a registered nequip env must canonicalize
+    # remotely, never resolving artifact mode locally
     from irma.mlip import calculators, envs
     monkeypatch.setenv("IRMA_MLIP_CACHE", str(tmp_path))
     monkeypatch.setitem(sys.modules, "torch", None)      # torch-free host

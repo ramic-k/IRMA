@@ -147,8 +147,8 @@ def test_check_born_rows_fail_fast(al_model, tmp_path, born_file):
 
 def test_validate_ignores_a_stray_born_in_the_cwd(al_model, tmp_path,
                                                   born_file, monkeypatch):
-    # found live in the ZrO2 campaign: an unrelated ./BORN file next to
-    # where validate runs must not leak NAC into the reload check
+    # an unrelated ./BORN file next to where validate runs must not leak
+    # NAC into the reload check
     b = _write(tmp_path / "clean", al_model)
     workdir = tmp_path / "elsewhere"
     workdir.mkdir()
@@ -238,7 +238,7 @@ def test_gamma_only_dos_drops_the_translations(al_model):
     assert rho[0] == 0.0
 
 
-# ---- SEC-1: validate must not execute code from the bundle -------------------
+# ---- validate must not execute code from the bundle -------------------------
 
 def _rehash_manifest(bundle_path):
     """Make the manifest self-consistent again after editing an artifact

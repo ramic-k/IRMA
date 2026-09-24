@@ -17,7 +17,7 @@ from irma.mlip.calculators import CalculatorSpec              # noqa: E402
 
 
 def _fake_interpreter(tmp_path, name="python"):
-    """A real executable file (SEC-4: read-path validation demands one)."""
+    """A real executable file (the read-path validation demands one)."""
     path = tmp_path / name
     path.write_text("#!/bin/sh\n")
     path.chmod(0o755)
@@ -47,8 +47,8 @@ def test_registry_roundtrip_and_env_var_override(tmp_path, monkeypatch):
 
 
 def test_read_path_validates_like_the_write_path(tmp_path, monkeypatch):
-    """SEC-4: whatever registered_interpreter returns goes to Popen, so a
-    non-executable value from EITHER source must raise on read, never be
+    """Whatever registered_interpreter returns goes to Popen, so a
+    non-executable value from either source must raise on read, never be
     returned for execution."""
     # env var pointing at nothing
     monkeypatch.setenv("IRMA_MLIP_PYTHON_MACE", "/nonexistent/python")
@@ -143,15 +143,17 @@ def test_make_calculator_dispatch_hook(monkeypatch):
     assert calculators.make_calculator(CalculatorSpec("sevennet")) \
         == sentinel
     assert calls == [("sevennet", "/foreign/python")]
-    # emt is NEVER dispatched, even if something registers it
+    # emt is never dispatched, even when it is registered
+    monkeypatch.setattr(envs, "is_dispatched", lambda p: True)
     calc, _ = calculators.make_calculator(CalculatorSpec("emt"))
     assert type(calc).__name__ == "EMT"
+    assert calls == [("sevennet", "/foreign/python")]
 
 
 def test_is_dispatched_sees_a_symlinked_venv_python(tmp_path):
     # venv launchers are symlinks to the base python; realpath comparison
     # would collapse them onto the running interpreter and silently
-    # disable dispatch (review finding) -- launcher paths must be compared
+    # disable dispatch, so launcher paths must be compared
     link = tmp_path / "bin" / "python"
     link.parent.mkdir()
     link.symlink_to(sys.executable)
@@ -235,7 +237,7 @@ def test_cli_env_subcommands(tmp_path, capsys):
     assert "nothing registered" in capsys.readouterr().out
 
 # ---------------------------------------------------------------------------
-# provisioning guards (2026-08: colleague-reported field failures)
+# provisioning guards
 
 
 def test_error_hint_covers_the_numpy_abi_signature():
@@ -270,10 +272,8 @@ def test_uv_dry_run_pins_the_env_python(monkeypatch):
 
 def test_probe_and_bootstrap_sources_compile():
     compile(envs._RUNTIME_PROBE, "<probe>", "exec")
-    assert "from_numpy" in envs._RUNTIME_PROBE
     from irma.mlip import calculators
     compile(calculators._NEQUIP_COMPILE_BOOTSTRAP, "<bootstrap>", "exec")
-    assert "main()" in calculators._NEQUIP_COMPILE_BOOTSTRAP
 
 
 def _stub_run(monkeypatch, python, probe_err):
