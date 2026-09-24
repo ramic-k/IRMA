@@ -3,11 +3,12 @@
 Regenerate with tools/generate_nuclear_data.py (requires periodictable).
 Source: periodictable 2.1.0 (periodictable.nsf: Atominstitut/
 Rauch-Waschkowski table, Neutron Data Booklet 2nd ed. 2003, with Sears
-1992 cross-references; public domain). Cross-check reference: NIST NCNR
-n-lengths page (same compilation). Citations: V.F. Sears, Neutron News 3
+1992 cross-references; public domain). Cross-check reference: the NIST
+NCNR n-lengths page (the Sears 1992 table, which differs for some
+entries). Citations: V.F. Sears, Neutron News 3
 (1992) 26; H. Rauch and W. Waschkowski, Neutron Data Booklet, 2nd ed.
 (2003); periodictable package documentation (nsf module).
-Generator sha256: 7bff181d802dd027c6fb435b43b962c85827e18331ca2d92ab2a0f819b0b1dad
+Generator sha256: dbf0094eb2bbcaf50be6ee76a5041e4fe49622feb4b3ebafd3034c1bbf4bdd8a
 
 sigma_bound_b is derived as 4*pi*b_coh_fm^2/100 + sigma_inc_b, so the
 (b_coh_fm, sigma_inc_b, sigma_bound_b) triple is always mutually
