@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Why low-temperature TSL tapes need ilog=1 (ENDF LLN=1, log storage).
 
-This is a self-contained NUMERICAL demonstration of the storage underflow that
+This is a self-contained numerical demonstration of the storage cutoff that
 silently drops high-energy (e.g. optic) phonon structure from cryogenic
 S(alpha,beta) tapes -- and how log storage fixes it. It runs in a fraction of a
 second and needs only numpy (no engine, no phonopy).
@@ -15,23 +15,24 @@ downscatter (phonon-creation) law by the detailed-balance factor
 
 On read-back you recover S_phys = S_sym * exp(+beta/2).
 
-With linear storage (ilog=0) the tiny S_sym value is written into a fixed-width
-ENDF field. Because beta scales as 1/T, at low temperature S_sym underflows the
-field and is written as 0 -- so S_phys = 0 * exp(+beta/2) = 0 on read-back, and
-the high-energy structure is gone. Log storage (ilog=1 -> LLN=1) writes ln(S_sym)
-instead, which stays representable, so the value survives the round trip.
+With linear storage (ilog=0) every S_sym value below the Card 4 smin cutoff
+(default 1e-75, as in NJOY) is written as 0. Because beta scales as 1/T, at low
+temperature S_sym falls below smin -- so S_phys = 0 * exp(+beta/2) = 0 on
+read-back, and the high-energy structure is gone. Log storage (ilog=1 -> LLN=1)
+writes ln(S_sym) instead, so the value survives the round trip. Lowering smin
+also keeps it with ilog=0, down to THERMR's own floor of about 1e-98.
 
 Run:  python lln_low_temperature_demo.py
 """
 import numpy as np
 
 KB_meV_per_K = 8.617333e-2          # Boltzmann constant
-ENDF_FIELD_FLOOR = 1.0e-90          # ~ smallest value an ENDF field preserves
+SMIN = 1.0e-75                      # Card 4 smin default
 
 
 def endf_linear_store(s_sym):
-    """Linear ENDF storage (ilog=0): values below the field floor become 0."""
-    return np.where(s_sym < ENDF_FIELD_FLOOR, 0.0, s_sym)
+    """Linear ENDF storage (ilog=0): values below smin are written as 0."""
+    return np.where(s_sym < SMIN, 0.0, s_sym)
 
 
 def endf_log_store(s_sym):
@@ -77,8 +78,9 @@ def main():
               f"{r0:9.4f} {tag0:>3} | {r1:9.4f} ok")
 
     print("\nilog=0 (linear) silently zeroes the optic feature once beta is")
-    print("large enough that S_sym underflows the ENDF field (~50-100 K and")
-    print("below). ilog=1 (LLN log storage) preserves it at every temperature.")
+    print("large enough that S_sym falls below the Card 4 smin cutoff (1e-75;")
+    print("below about 6 K for this feature). ilog=1 (LLN log storage) preserves")
+    print("it at every temperature; lowering smin also keeps it with ilog=0.")
     print("\n=> For cryogenic TSL tapes, set ilog=1 on Card 4:  mat za isabt 1 smin")
 
 
