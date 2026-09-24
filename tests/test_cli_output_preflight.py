@@ -1,8 +1,13 @@
-"""Shared output-path preflight (irma.cli.validate_output_path).
+"""Command-line error handling before any compute starts.
 
-Pins the fail-fast guard so a long compute never starts when the output path
-can't be written: an existing-directory target, a missing parent, or a
-read-only parent are all caught up front. Pure stdlib -> runs in the bare gate.
+- The shared output-path preflight (irma.cli.validate_output_path): an
+  existing-directory target, a missing parent, or a read-only parent are
+  caught up front, so a long compute never starts on an unwritable path.
+- The spectra output-path resolvers, which must name the file each writer
+  opens.
+- The NCrystal exporter's routine errors (missing or malformed config, a
+  missing optional dependency) exit with a code and a message, not a
+  traceback.
 """
 import os
 
@@ -55,8 +60,7 @@ def test_output_resolvers_match_the_writers(tmp_path):
     from irma.spectra.cli import (resolve_map_output_path,
                                   resolve_spectrum_output_path)
 
-    # map: unknown/missing suffix appends .npz -- INCLUDING .json, the case
-    # the old mode-blind candidate set missed
+    # map: an unknown or missing suffix gets .npz appended, .json included
     assert resolve_map_output_path(tmp_path / "out") == str(tmp_path / "out.npz")
     assert resolve_map_output_path(tmp_path / "out.json") == str(
         tmp_path / "out.json.npz")
