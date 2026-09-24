@@ -1,7 +1,8 @@
 """NCrystal-plugin panel for the IRMA GUI.
 
 A thin controller for IRMA's third capability: exporting the per-temperature
-NCrystal scattering data (``.irmapack`` files + a ``@CUSTOM_IRMA`` NCMAT snippet)
+NCrystal scattering data (``.irmapack`` files and a complete, loadable
+``.ncmat`` material file whose ``@CUSTOM_IRMA`` section references them)
 that wire an IRMA mode-1 or mode-2 calculation (anisotropic Debye-Waller; mode 2
 adds the coherent one-phonon term) into NCrystal. It collects inputs into an
 :class:`~irma.ncrystal.NCrystalExportConfig` and runs ``irma.ncrystal.write_packs``
@@ -122,7 +123,7 @@ HELP = {
         "symbol and leaving the cell autofills the blank columns from "
         "IRMA's built-in nuclear table (Rauch-Waschkowski/Sears)."),
     "material_id": (
-        "Identifier stamped into the output filenames and the NCMAT snippet "
+        "Identifier stamped into the output filenames and the .ncmat file "
         "(data files are written as '<material_id>__<symbol>.irmapack'). Required."),
     "inelastic_mode": (
         "Physics level of the inelastic export. Inelastic scattering "
