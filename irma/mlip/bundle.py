@@ -1,4 +1,4 @@
-"""The phonon-model bundle: the artifact boundary of the MLIP front end.
+"""The phonon-model bundle: the output of the MLIP front end.
 
 A bundle directory is the complete, self-contained deliverable of
 `irma mlip build`:
@@ -12,10 +12,11 @@ A bundle directory is the complete, self-contained deliverable of
       dos.png                 written only when matplotlib is importable
       scratch/                per-displacement force cache (removable)
 
-The embedded-FC phonopy.yaml is the load-bearing choice: IRMA's resolver
+The force constants are embedded in phonopy.yaml because IRMA's resolver
 prefers embedded force constants over every loose file and never falls back
 to the cwd, so this one file feeds Card 6f (ENDF modes 1/2), the spectra
-config, and the NCrystal exporter with no loose-file hazards.
+config, and the NCrystal exporter, and no separate force-constants file can
+be mixed up with it.
 
 NAC: a BORN file is parsed against the phonopy primitive and assigned to
 nac_params for the duration of the save (then restored), so the yaml
@@ -95,7 +96,7 @@ def _dos_and_census(phonon, mesh):
     from irma.core.phonopy_io import mode_floor_mask, mode_histogram
     phonon.run_mesh(list(mesh))
     # symmetry-reduced mesh: weight each irreducible q-point's modes so the
-    # DOS and the census count modes over the FULL requested mesh
+    # DOS and the census count modes over the full requested mesh
     freqs = np.asarray(phonon.mesh.frequencies, float) * THZ_TO_MEV
     weights = np.asarray(phonon.mesh.weights, int)
     n_branches = freqs.shape[1]
@@ -187,7 +188,7 @@ def check_born_rows(born_path, relaxed_atoms) -> str | None:
 
 
 def preflight_bundle_outdir(outdir, overwrite=False):
-    """Fail fast on a target that write_bundle would reject AFTER the
+    """Fail fast on a target that write_bundle would reject after the
     (potentially long) relax + displacement compute: a path that is a file,
     or a non-empty directory without overwrite. Scratch-only content is
     fine (that is the resume case). Call before any expensive work."""
@@ -209,8 +210,8 @@ def write_bundle(outdir, *, phonon_result, relax_result, calc_meta,
                  progress=print) -> Bundle:
     """Serialize the model + provenance; see module docstring for layout.
 
-    The serialized model is ALWAYS phonon_result.phonon: metrics, the
-    fingerprint, and the saved yaml can never describe different objects.
+    The serialized model is always phonon_result.phonon, so the metrics,
+    the fingerprint and the saved yaml describe the same object.
     The manifest is written last (its presence defines a bundle).
     """
     from ase.io import write as ase_write
@@ -410,7 +411,7 @@ def validate_bundle(path) -> list:
 
         from irma.core.phonopy_io import isolated_phonopy_cwd
 
-        # the reload must see ONLY the bundle: phonopy.load picks up a
+        # the reload must see only the bundle: phonopy.load picks up a
         # stray ./BORN from the working directory
         with isolated_phonopy_cwd():
             ph = phonopy.load(

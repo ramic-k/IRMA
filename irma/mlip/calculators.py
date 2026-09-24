@@ -57,29 +57,28 @@ _DEFAULT_MODELS = {
 
 # DPA checkpoints are multitask: one backbone, one fitting net per training
 # dataset ("head"). The head is part of the physical model identity, so it
-# rides in the model string as MODEL::HEAD and lands in the fingerprint.
+# is written into the model string as MODEL::HEAD and enters the fingerprint.
 # MP_traj_v024_alldata_mixu is the MPtrj PBE(+U) head, the same reference
 # family as the other universal potentials here.
 DPA_DEFAULT_HEAD = "MP_traj_v024_alldata_mixu"
 _DPA_HF_REPO = "deepmodelingcommunity/DPA"
 _DPA_HF_FILES = {"DPA-3.1-3M": "DPA-3.1-3M.pt"}
-# Supply-chain pin for the DPA download (security finding): torch
-# checkpoints are pickle-based, so fetching a repo's MUTABLE default
-# branch means a retagged upstream is code execution on the next cache
-# miss. The revision pins the exact HF commit this alias was vetted at,
-# and the sha256 is verified on every resolve (cached file included, so a
-# tampered cache entry is caught too). Values recorded from
-# huggingface.co/deepmodelingcommunity/DPA at pinning time (2026-07-30;
-# repo last modified 2025-08-06).
+# Pin for the DPA download: torch checkpoints are pickle-based, so
+# fetching a repo's mutable default branch means a retagged upstream runs
+# its code on the next cache miss. The revision pins the exact HF commit
+# this alias was vetted at, and the sha256 is verified on every resolve
+# (cached file included, so a tampered cache entry is caught too). Values
+# recorded from huggingface.co/deepmodelingcommunity/DPA at pinning time
+# (2026-07-30; repo last modified 2025-08-06).
 _DPA_HF_REVISION = "cac67b9c29b05d5dcd81c17e7be49bd433c887e8"
 _DPA_HF_SHA256 = {
     "DPA-3.1-3M.pt":
         "86dd3a804d78ca5d203ebf98747e8f16dff9713ba8950097ceb760b161e19907",
 }
 
-# Best-effort pins for upet checkpoints (security finding): the lab-cosmo/
-# upet repo has NO release tags — version-named files accumulate on the
-# mutable main branch — so the revision cannot be pinned without breaking
+# Best-effort pins for upet checkpoints: the lab-cosmo/upet repo has no
+# release tags (version-named files accumulate on the mutable main
+# branch), so the revision cannot be pinned without breaking
 # every version released after this code shipped. Files whose sha256 was
 # recorded at pinning time (2026-07-30) are verified after download; a
 # version not listed here downloads unverified, and its content sha256 is
@@ -147,7 +146,7 @@ class MlipDependencyError(ImportError):
 
 
 # Set to True by force_server.py after it loads this file standalone in a
-# foreign environment: the server must NEVER re-enter dispatch (infinite
+# foreign environment: the server must never re-enter dispatch (infinite
 # recursion) and must never import the irma package (provisioned envs
 # only carry ase + the potential).
 _DISPATCH_DISABLED = False
@@ -169,8 +168,8 @@ def _clamp_native_threads(threads: int):
     torch.set_num_threads alone does not bound OMP/BLAS pools that libraries
     spin up independently, and irma/__init__ only setdefault()s these
     variables, so an inherited OMP_NUM_THREADS=8 would silently oversubscribe
-    every pool worker (the measured >11x slowdown documented in
-    irma.core.noncubic_workers). Environment variables are forced BEFORE the
+    every pool worker (the >11x slowdown documented in
+    irma.core.noncubic_workers). Environment variables are forced before the
     potential package imports; threadpoolctl additionally clamps pools that
     were already created.
     """
@@ -193,7 +192,7 @@ class CalculatorSpec:
 
     potential: one of POTENTIALS.
     model: checkpoint name or path; None selects the potential's default.
-    threads: native torch threads for force calls made by THIS process
+    threads: native torch threads for force calls made by this process
         (the parallel displacement loop passes 1 per worker; the serial
         path passes the user's --threads).
     """
@@ -245,11 +244,10 @@ def _checkpoint_sha256(model) -> str | None:
 def _split_pet_model(model) -> tuple[str, str | None]:
     """'alias[@version]' -> (alias, version|None). Paths are not split.
 
-    The literal version 'latest' means UNPINNED, exactly like an absent
-    version: it must never survive into a spec, manifest, or fingerprint,
-    where it would silently alias different upstream releases (review
-    finding: a post-release rerun would reuse the older release's force
-    cache under the same identity).
+    The literal version 'latest' means unpinned, like an absent version:
+    it must never reach a spec, manifest, or fingerprint, where one
+    identity would stand for different upstream releases (a rerun after a
+    new release would reuse the older release's force cache).
     """
     text = str(model)
     if os.path.isfile(text):
@@ -321,9 +319,9 @@ def _resolve_dpa_checkpoint(base: str) -> str:
     huggingface blob store strips); an existing cached file is preferred so
     reruns and pool workers stay offline and deterministic. The download
     is pinned to a vetted HF revision and the file's sha256 is verified
-    against the pinned value on EVERY resolve — cached copies included —
-    so neither a mutated upstream branch nor a tampered cache entry can
-    feed deepmd's pickle-based loader (security finding). A user-supplied
+    against the pinned value on every resolve, cached copies included, so
+    neither a changed upstream branch nor a tampered cache entry reaches
+    deepmd's pickle-based loader. A user-supplied
     local path is the user's own trust decision and is not checked.
     """
     if os.path.isfile(base):
@@ -365,9 +363,9 @@ def _download_pet_checkpoint(alias: str, version: str) -> str:
     An already-cached file is returned without touching the network, so
     pinned reruns work offline.
 
-    Trust note (security finding): the upet repo carries no release tags,
-    so this fetch necessarily resolves the MUTABLE main branch — the
-    version pin lives only in the FILENAME. Versions whose sha256 was
+    Trust note: the upet repo carries no release tags, so this fetch
+    resolves the mutable main branch, and the version is fixed only by the
+    filename. Versions whose sha256 was
     recorded in _PET_KNOWN_SHA256 are verified (cached copies included);
     an unlisted version downloads unverified, and its content sha256 is
     recorded in the bundle provenance (calculator.checkpoint_sha256) for
@@ -422,9 +420,8 @@ def _nequip_artifact_path(zoo_id: str, ext: str) -> str:
     # so a short hash of the exact id keeps distinct models distinct.
     # '-st1' marks the single-thread compile profile: AOTInductor bakes
     # the compile-time thread count into the kernels, and an artifact
-    # compiled multi-threaded ran 5x SLOWER per call (measured on ZrO2,
-    # 25.0 s vs 5.1 s) -- profile-less artifacts from older builds must
-    # never be reused
+    # compiled multi-threaded ran 5x slower per call (ZrO2: 25.0 s vs
+    # 5.1 s), so an artifact without the profile tag is never reused
     safe = zoo_id.replace("/", "-").replace(":", "-")
     tag = hashlib.sha256(zoo_id.encode()).hexdigest()[:8]
     return os.path.join(_mlip_cache_dir(), "models",
@@ -432,7 +429,7 @@ def _nequip_artifact_path(zoo_id: str, ext: str) -> str:
 
 
 def _nequip_mode() -> tuple[str, str]:
-    """(compile mode, artifact extension) for the RUNNING torch.
+    """(compile mode, artifact extension) for the running torch.
 
     torch >= 2.10 dropped TorchScript entirely, so .nequip.pth artifacts
     compiled under an older torch are unloadable there and must not be
@@ -539,7 +536,7 @@ def inspect_mace_model(loaded, origin: str) -> dict:
 
 
 def _mace_calculator_from_file(path: str):
-    """(MACECalculator, description) for a checkpoint FILE, read once: the
+    """(MACECalculator, description) for a checkpoint file, read once: the
     recorded sha256 is that of the bytes deserialized. Genuine multi-head
     checkpoints are refused: IRMA has no head selection, and MACE would
     otherwise pick a head silently.
@@ -598,15 +595,17 @@ def _finish_mace(calc):
 def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
     """Pin floating model identities in a spec, before it fans out.
 
-    pet-mad aliases resolve to a LOCAL CHECKPOINT PATH (upet's standard
+    pet-mad aliases resolve to a local checkpoint path (upet's standard
     'name-size-vX.Y.Z.ckpt' naming, so the version stays legible): both
     the version listing and the checkpoint download in upet's alias path
     are network calls that every spawned worker would otherwise repeat,
     and a mid-run upstream release could split the build across versions.
-    dpa3 aliases get their '::head' made explicit and a MACE-family
-    checkpoint FILE its absolute path. The returned spec is what
-    relaxation, every pool worker, and the cache fingerprint all see.
-    Other potentials pass through unchanged.
+    dpa3 aliases get their '::head' made explicit, a MACE-family
+    checkpoint file its absolute path, and a nequip zoo id the path of
+    its compiled artifact in the irma-mlip cache (compiled once, in the
+    potential's registered environment when it has one). The returned
+    spec is what relaxation, every pool worker, and the cache fingerprint
+    all see. Other potentials pass through unchanged.
     """
     if spec.potential in MACE_FAMILY:
         if spec.model and os.path.isfile(str(spec.model)):
@@ -647,9 +646,9 @@ def canonicalize_spec(spec: CalculatorSpec) -> CalculatorSpec:
         if os.path.isfile(str(model)):
             return spec
         zoo_id = _normalize_nequip_zoo_id(model)
-        # dispatch decision comes BEFORE any torch-dependent lookup: the
-        # artifact format follows the EXECUTING environment's torch, and
-        # this environment may not have torch at all (review finding)
+        # the dispatch decision comes before any torch-dependent lookup:
+        # the artifact format follows the torch of the environment that
+        # runs the potential, and this environment may not have torch
         interp = _dispatch_interpreter("nequip")
         if interp:
             from irma.mlip import envs
@@ -728,7 +727,7 @@ def make_calculator(spec: CalculatorSpec):
     _require(spec.potential)
 
     if spec.potential == "emt":
-        # Development/test backend (deliberately NOT in POTENTIALS): lets the
+        # Development/test backend (deliberately not in POTENTIALS): lets the
         # displacement loop and its spawn pool run cross-process without torch
         # or checkpoint downloads. The CLI must validate against POTENTIALS,
         # never against this wider set.
@@ -804,7 +803,7 @@ def make_calculator(spec: CalculatorSpec):
         license_note = (_mace_license_note(model) if spec.potential == "mace"
                         else None if is_file else MACE_OFF_NOTE)
     elif spec.potential == "pet-mad":
-        # non_conservative=False is passed EXPLICITLY on every construction:
+        # non_conservative=False is passed explicitly on every construction:
         # upet's direct-force mode returns forces that are not gradients of
         # the energy, which breaks the finite-displacement force-constant
         # assumption, so this must not float on an upstream default.

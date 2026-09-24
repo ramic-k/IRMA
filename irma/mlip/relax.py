@@ -20,7 +20,7 @@ class RelaxResult:
     fmax_target: float
     fmax_initial: float           # optimizer-target residual before, eV/A
     fmax_achieved: float          # optimizer-target residual after, eV/A
-    fmax_atoms: float             # max ATOMIC force after relaxation, eV/A
+    fmax_atoms: float             # max atomic force after relaxation, eV/A
     steps_taken: int
     nmax: int
     cell_relaxed: bool
@@ -61,14 +61,14 @@ def snap_to_symmetry(atoms, symprec: float = 1e-3) -> float:
     its tighter tolerance and generates the full displacement set (24
     instead of 8 on wurtzite BeO, 72 instead of 18 on baddeleyite), and
     a symmetry-reduced BORN file stops matching. This averages each
-    atom's images over ALL detected symmetry operations in the ORIGINAL
+    atom's images over all detected symmetry operations in the original
     cell setting (no reorientation, unlike spglib standardization), which
     projects the positions onto exact invariance under the detected
     group. Positions are applied through the constraint-aware setter, so
     ASE constraints (FixAtoms etc.) are honored; the returned value is
-    the largest UNCONSTRAINED shift the symmetrization asked for, in
-    Angstrom. Raises MlipRelaxError when the operations cannot be mapped
-    (symprec too loose for the actual distortion).
+    the largest shift the symmetrization asked for before constraints,
+    in Angstrom. Raises MlipRelaxError when the operations cannot be
+    mapped (symprec too loose for the actual distortion).
     """
     import numpy as np
     import spglib
@@ -105,9 +105,8 @@ def snap_to_symmetry(atoms, symprec: float = 1e-3) -> float:
     shift = snapped - scaled
     shift -= np.rint(shift)
     max_shift = float(np.linalg.norm(shift @ cell, axis=1).max())
-    # set_positions, NOT set_scaled_positions: only the former runs
-    # constraint.adjust_positions (FixAtoms etc.), exactly like the
-    # jitter path — a structure read with constraints must keep them
+    # set_positions, not set_scaled_positions: only the former runs
+    # constraint.adjust_positions (FixAtoms etc.), as in the jitter path
     atoms.set_positions((snapped % 1.0) @ cell)
     return max_shift
 
@@ -118,26 +117,22 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
           logfile=None) -> RelaxResult:
     """Relax `atoms` in place with FIRE; return the full report.
 
-    Convergence comes from Optimizer.run()'s return value (INSPIRED ignores
-    it; we do not). fmax is the ASE convention: the largest per-atom force
-    norm, eV/A. With snap_symmetry, the relaxed positions are projected
-    onto the exact orbits of the spacegroup detected at the tolerance
-    ``snap_symmetry`` (see snap_to_symmetry); the reported spacegroup_after
-    and force residuals describe the SNAPPED structure.
+    Convergence comes from Optimizer.run()'s return value. fmax is the
+    ASE convention: the largest per-atom force norm, eV/A. With
+    snap_symmetry, the relaxed positions are projected onto the exact
+    orbits of the spacegroup detected at that tolerance (see
+    snap_to_symmetry); spacegroup_after and the force residuals then
+    describe the snapped structure.
 
-    jitter_cycles (default 0 = exact single-pass behavior): when the
-    plain relaxation ends UNconverged, kick the min(3, natoms)
-    highest-force atoms (Gaussian, 0.05 A std per Cartesian component,
-    constraint-aware, fixed per-call seed) and re-relax, up to this many
-    extra cycles, each with its own `nmax` budget (steps_taken reports
-    the cumulative total). A per-step observer snapshots the
-    lowest-residual frame anywhere along every pass, and that frame is
-    what the call returns; --snap-symmetry applies afterwards to it.
-    This escapes the measured MLIP force-noise stall class, where
-    reported forces stay above the target at the energy minimum (PMMA
-    glass: FIRE stalls at 0.087 eV/A; three cycles reach 0.005-0.010).
-    It cannot fire at a true zero-gradient saddle: FIRE reports those
-    converged.
+    jitter_cycles (default 0, a single pass): when the relaxation ends
+    unconverged, kick the min(3, natoms) highest-force atoms (Gaussian,
+    0.05 A per Cartesian component, fixed seed) and re-relax, up to this
+    many extra cycles of `nmax` steps each (steps_taken is the total).
+    The lowest-residual frame seen during any pass is returned. This
+    helps when MLIP force noise keeps the forces above the target at
+    the energy minimum (a PMMA glass stalls at 0.087 eV/A; three cycles
+    reach 0.005-0.010). It does not act at a zero-gradient saddle, which
+    FIRE reports as converged.
     """
     import numpy as np
     from ase.filters import FrechetCellFilter
@@ -147,18 +142,17 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
     sg_before = _spacegroup(atoms, symprec)
 
     # With a cell filter, ASE's convergence criterion is the max row norm of
-    # the FILTER forces (atomic forces plus cell-gradient rows). Reporting
-    # only the atomic fmax would call a stress-unconverged cell "1e-15
-    # converged" (review finding 6): the reported residuals are those of the
-    # actual optimization target, with the atomic-only number kept alongside.
+    # the filter forces (atomic forces plus cell-gradient rows). The reported
+    # residuals are those of this target, so a cell whose stress is not
+    # converged is not reported as converged; the atomic-only number is kept
+    # alongside.
     target = FrechetCellFilter(atoms) if relax_cell else atoms
     fmax_initial = _max_force(target)
 
-    # the best-frame tracker is a per-step observer, not an endpoint
-    # check: on a noisy surface a pass can dip through its lowest
-    # residual mid-trajectory and end higher (review finding 6). The
-    # forces at observation time are ASE-cached from the step itself,
-    # so observing costs no extra force evaluations.
+    # the best frame is tracked at every step, not only at the end of a
+    # pass: on a noisy surface a pass can reach its lowest residual
+    # mid-trajectory and end higher. The forces are ASE-cached from the
+    # step itself, so observing costs no extra force evaluations.
     best = {"fmax": np.inf, "positions": None, "cell": None}
 
     def _observe():
@@ -183,12 +177,11 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
             kick = atoms.get_positions()
             # stable descending order with index tie-break: symmetry-
             # equivalent sites carry identical forces and plain argsort
-            # would pick implementation-defined atoms (review finding 2)
+            # would pick implementation-defined atoms
             for i in np.argsort(-fmags, kind="stable")[:3]:
                 kick[i] += rng.normal(scale=0.05, size=3)
             # set_positions applies ASE constraints (FixAtoms etc.);
             # writing atoms.positions directly would move fixed atoms
-            # (review finding 1)
             atoms.set_positions(kick)
             dyn = FIRE(target, logfile=logfile)
             dyn.attach(_observe, interval=1)
@@ -197,8 +190,8 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
             _observe()
             if converged:
                 break
-        # always end on the best frame observed (a final kick that landed
-        # worse must never become the reported structure)
+        # end on the best frame observed, not on a final kick that landed
+        # worse
         if best["positions"] is not None and _max_force(target) > best["fmax"]:
             atoms.set_cell(best["cell"], scale_atoms=False)
             atoms.set_positions(best["positions"])
@@ -215,8 +208,8 @@ def relax(atoms, calculator, *, fmax: float = 0.01, nmax: int = 100,
     if snap_symmetry and converged and fmax_achieved > fmax:
         # the snap moved the structure off the optimizer's stationary
         # point: the pre-snap convergence no longer describes the atoms
-        # the force constants will see (review finding -- a snapped
-        # bundle must never be falsely recorded as converged)
+        # the force constants will see, so the bundle is not recorded as
+        # converged
         converged = False
     sg_after = _spacegroup(atoms, symprec)
 

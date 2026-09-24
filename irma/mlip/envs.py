@@ -3,7 +3,7 @@
 The potential packages have mutually unsatisfiable pins (mace-torch needs
 e3nn==0.4.4 while sevenn/mattersim need >=0.5; deepmd-kit's binaries are
 ABI-locked to one torch), so one Python environment cannot host every
-backend. This module lets each potential run under its OWN interpreter:
+backend. This module lets each potential run under its own interpreter:
 
 - a registry (envs.json in the irma-mlip cache, or the
   IRMA_MLIP_PYTHON_<POTENTIAL> environment variable) maps a potential to
@@ -12,7 +12,7 @@ backend. This module lets each potential run under its OWN interpreter:
   force_server.py subprocess running under that interpreter (the foreign
   env needs only ase + the potential package, never irma);
 - create_env() provisions such an environment automatically from a
-  curated (but UNPINNED) requirement set and registers it.
+  curated, unpinned requirement set and registers it.
 
 Dispatch is wired inside irma.mlip.calculators: when a registered
 interpreter differs from the running one, make_calculator/
@@ -35,24 +35,20 @@ _SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 _CALCULATORS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "calculators.py")
 
-# Curated pip requirement sets for auto-provisioned environments. These
-# are deliberately UNPINNED package names, not a vetted lockfile: the
-# resolver installs whatever the configured index currently serves, so
-# what lands is whatever is current, not a vetted set. (Pinning would be
-# false assurance — these stacks move fast, the right pins differ per
-# platform/Python, and each backend package pins its own critical deps,
-# e.g. deepmd-kit[torch] pins the torch its binaries were built against,
-# which is exactly what a dedicated env is for.) The import check below
-# gates registration on the env actually working.
+# Curated pip requirement sets for auto-provisioned environments. The
+# names are unpinned; the resolver installs the current releases. Each
+# backend package pins its own critical dependencies (deepmd-kit[torch]
+# pins the torch its binaries were built against), and the import check
+# below registers an env only when it actually works.
 ENV_REQUIREMENTS = {p: (_PACKAGES[p][0], "ase>=3.23") for p in POTENTIALS}
 ENV_REQUIREMENTS["dpa3"] = ("deepmd-kit[torch]", "mpich", "huggingface_hub", "ase>=3.23")
 
 # potentials that share one package land in one shared env
 _SHARED_ENVS = {"mace": ("mace", "mace-off"), "mace-off": ("mace", "mace-off")}
 
-# provisioning verification imports the CALCULATOR entry point, not just
-# the top-level package: deepmd's mpich/torch-ABI failures and friends
-# fire on the calculator import, and a broken env must not be registered
+# provisioning verification imports the calculator entry point, not just
+# the top-level package: deepmd's mpich and torch-ABI failures appear only
+# on the calculator import, and a broken env must not be registered
 _IMPORT_CHECKS = {
     "mattersim": "from mattersim.forcefield.potential import "
                  "MatterSimCalculator",
@@ -77,7 +73,7 @@ _IMPORT_CHECKS = {
 # different Python versions.
 _ENV_PYTHON = "3.12"
 
-# Functional probe run in the fresh env AFTER the import check. The
+# Functional probe run in the fresh env after the import check. The
 # import check alone is too weak: a torch wheel built against NumPy 1.x
 # imports fine next to NumPy 2.x (the failure is a warning, not an
 # exception) and then dies at force time. The probe turns that warning
@@ -162,12 +158,12 @@ def _env_var(potential: str) -> str:
 def _checked_interpreter(interpreter: str, source: str) -> str:
     """Reject a registry/override value that is not an executable file.
 
-    Applied on WRITE (register_interpreter) and on every READ
-    (registered_interpreter): both the envs.json registry and the
-    IRMA_MLIP_PYTHON_* variables are plain editable state, and whatever
-    string they yield is handed to subprocess.Popen — so an entry that is
-    not an executable file must fail here, with its source named, rather
-    than be executed.
+    Applied on write (register_interpreter) and on every read
+    (registered_interpreter): the envs.json registry and the
+    IRMA_MLIP_PYTHON_* variables are plain editable state, and the string
+    they yield is handed to subprocess.Popen, so an entry that is not an
+    executable file fails here, with its source named, instead of being
+    executed.
     """
     if not (os.path.isfile(interpreter) and os.access(interpreter, os.X_OK)):
         raise MlipEnvError(
@@ -184,11 +180,9 @@ def registered_interpreter(potential: str) -> str | None:
     The IRMA_MLIP_PYTHON_<POTENTIAL> environment variable overrides the
     registry file; an empty value explicitly disables dispatch.
 
-    The returned string is what the dispatch client passes to
-    subprocess.Popen, so it is validated ON READ exactly as
-    register_interpreter validates on write: a value (from either
-    source) that is not an executable file raises MlipEnvError instead
-    of being returned for execution.
+    The returned string is passed to subprocess.Popen, so it is validated
+    here as register_interpreter validates on write: a value from either
+    source that is not an executable file raises MlipEnvError.
     """
     env_var = _env_var(potential)
     override = os.environ.get(env_var)
@@ -219,13 +213,13 @@ def unregister_interpreter(potential: str) -> bool:
 
 
 def is_dispatched(potential: str) -> bool:
-    """True when this potential runs under a DIFFERENT interpreter.
+    """True when this potential runs under a different interpreter.
 
-    Compared by LAUNCHER PATH, deliberately not realpath: venv pythons
-    are symlinks to their base interpreter, so realpath would collapse a
-    provisioned env onto the running one and silently disable dispatch
-    (review finding). Two aliases of the same environment therefore
-    compare as different; the cost is a redundant but correct subprocess.
+    Compared by launcher path, not realpath: venv pythons are symlinks to
+    their base interpreter, so realpath would collapse a provisioned env
+    onto the running one and silently disable dispatch. Two aliases of the
+    same environment therefore compare as different, which costs a
+    redundant but correct subprocess.
     """
     interp = registered_interpreter(potential)
     if not interp:
