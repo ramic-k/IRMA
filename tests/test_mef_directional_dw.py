@@ -1,7 +1,9 @@
-"""MEF (LTHR=3) applies the same directional Debye-Waller as CEF. On a
-synthetic anisotropic crystal the plane-by-plane attenuation
-W_s(Ĝ) = (Ĝ·F_s·Ĝ)/(awr_s·kT) must reproduce a hand-evaluated value, differ
-between c-axis and basal-plane edges, and match the CEF builder exactly.
+"""MEF (LTHR=3) applies the directional Debye-Waller. On a synthetic
+anisotropic crystal the plane-by-plane attenuation
+W_s(Ĝ) = (Ĝ·F_s·Ĝ)/(awr_s·kT) must reproduce a hand-evaluated value and
+differ between c-axis and basal-plane edges. That CEF and MEF share this
+arithmetic is tested in test_elastic_dw.py
+(test_cef_and_mef_edge_arithmetic_differ_only_by_scale).
 """
 import numpy as np
 import pytest
@@ -29,7 +31,7 @@ def _crystal_info(F):
     }
 
 
-def test_mef_directional_attenuation_matches_hand_value_and_cef():
+def test_mef_directional_attenuation_matches_hand_value():
     F = np.diag([0.5, 0.5, 3.0])               # strongly anisotropic
     ci = _crystal_info(F)
     bragg = [(0.002, 1.0), (0.004, 1.0)]
@@ -48,8 +50,8 @@ def test_mef_directional_attenuation_matches_hand_value_and_cef():
     W_a = 0.5 / (11.898 * kT)
     d1_hand = b_sqb * b_sqb * np.exp(-4.0 * W_a * 0.004)
 
-    # S(E) is cumulative over edges: S[0] = d0/E units handled inside the
-    # table builder, so recover increments from the cumulative S grid.
+    # S is cumulative over edges; recover the per-edge increments by
+    # differencing.
     S0 = np.array(mef['S_T0_table']['S'][:2])
     d0, d1 = S0[0], S0[1] - S0[0]
     assert d0 == pytest.approx(d0_hand, rel=1e-6)
