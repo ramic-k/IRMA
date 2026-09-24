@@ -17,16 +17,14 @@ This module is the single source of that arithmetic for
 SEF, and MEF through it with scale 1), so the elastic Debye-Waller treatment
 cannot drift between the classic and generalized paths.
 
-BYTE-IDENTITY CONTRACT: the operation order here reproduces the original
-closures exactly (the ``W_si``/``W_ti`` recompute pattern, the
-``b_s * b_t * dw * D`` multiply order, the ``delta * scale`` placement). The
-trailing ``* scale`` is an exact IEEE no-op when ``scale == 1.0``, so the
-scale-free callers (iel=1-6 and MEF) reuse the scaled kernels without changing a
-single output bit. Pinned by ``tests/test_elastic_dw.py`` and the full byte-
-exact MF7/MT2 suite -- do not reorder operations. The directional kernel's
-site-resolved branch (review finding P3) engages ONLY when the per-site
-tensors differ within a Card 6d group (``dir_tensors_uniform`` false);
-uniform-tensor materials keep the original loop verbatim.
+Byte identity: the output is pinned by ``tests/test_elastic_dw.py`` and the
+byte-exact MF7/MT2 suite, so do not reorder the accumulation (the
+``W_si``/``W_ti`` recompute pattern, the ``b_s * b_t * dw * D`` multiply
+order, the ``delta * scale`` placement). The trailing ``* scale`` is an exact
+IEEE no-op when ``scale == 1.0``, so the scale-free callers (iel=1-6 and MEF)
+share the scaled kernels. The directional kernel's site-resolved branch runs
+only when the per-site tensors differ within a Card 6d group
+(``dir_tensors_uniform`` false).
 """
 from __future__ import annotations
 
@@ -67,12 +65,11 @@ class SpeciesDW:
 def resolve_species_dw(crystal_info, tempr, ntempr):
     """Resolve the per-species/directional DW state, or ``None`` for isotropic.
 
-    Reproduces the detection both iel=10 builders performed inline: directional
-    DW when ``F_species_per_temp`` and ``bragg_dir_terms`` are present (and every
-    per-temperature F-matrix list is non-None), else per-species isotropic when
-    ``species_corr`` is present. ``b_coh`` is converted fm->sqrt(barn) via /10 and
-    ``W_ps`` is the per-temperature ENDF DW integral (1/eV) -- byte-identically to
-    the originals.
+    Directional DW when ``F_species_per_temp`` and ``bragg_dir_terms`` are
+    present (and every per-temperature F-matrix list is non-None), else
+    per-species isotropic when ``species_corr`` is present. ``b_coh`` is
+    converted fm->sqrt(barn) via /10 and ``W_ps`` is the per-temperature ENDF DW
+    integral (1/eV).
     """
     if crystal_info is None:
         return None
@@ -126,14 +123,13 @@ def directional_edge_delta(e, sdw, itemp, dir_terms_j, kT_j, scale=1.0):
     """Plane-by-plane anisotropic edge contribution.
 
     Uniform-tensor fast path (``sdw.dir_tensors_uniform``, i.e. every site of
-    every Card 6d group carries the SAME tensor): the per-species double sum
+    every Card 6d group carries the same tensor): the per-species double sum
     with ``W_s(Ghat) = (Ghat.F_s.Ghat)/(awr_s kT)`` recomputed inside the loops
-    exactly as the originals (``W_ti`` is re-evaluated per (si,ti) pair) so the
-    accumulation order -- and thus the rendered tape -- is bit-for-bit
-    unchanged.
+    (``W_ti`` is re-evaluated per (si,ti) pair); the byte-pinned tapes depend
+    on that accumulation order.
 
-    Site-resolved path (review finding P3): when the tensors differ within a
-    group, averaging them BEFORE exponentiation is wrong physics -- the
+    Site-resolved path: when the tensors differ within a group, averaging
+    them before exponentiation is wrong physics -- the
     correct per-plane form is the DW-attenuated complex amplitude sum
     ``|sum_i b_sp(i) exp(-2 W_i e) exp(i phi_i)|^2 * pref`` with
     ``W_i = (Ghat.F_i.Ghat)/(awr_sp(i) kT)`` and ``pref = d*mult*xsectfact``
