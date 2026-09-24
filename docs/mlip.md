@@ -206,15 +206,13 @@ does not establish that it is safe.
    stopped.
 4. **Force constants**: drift correction, symmetrization, and a
    quick-look DOS/imaginary-mode census on a mesh you can override with
-   `--mesh`. The DOS grid pitch is `min(0.5 meV, span/200)`. Some
-   calculations have numerically dispersionless bands: isolated
-   molecular modes such as an O–H stretch on a small supercell, or
-   every band of a Γ-only mesh (the disordered default). The standard
-   linear-tetrahedron DOS integration would drop those bands entirely,
-   so the DOS (and the emitted species-projected DOS) falls back to
-   1 meV Gaussian smearing automatically, and the manifest census
-   records `dos_smearing_fallback_mev`. `--dos-smearing MEV` forces a smearing
-   width explicitly (the grid refines to resolve it).
+   `--mesh`. The DOS, and the species-projected DOS the emitters
+   write, is a histogram of the mesh modes, the same rule as every IRMA
+   DOS: no smearing, so flat bands (isolated molecular modes such as an
+   O–H stretch on a small supercell, or every band of a Γ-only mesh,
+   the disordered default) count in full. The Γ translations and
+   imaginary modes are left out. The grid runs from 0 to the highest
+   mode with at least 200 points and a pitch of at most 0.5 meV.
 5. **Bundle**: everything lands in one directory: `phonopy.yaml` with
    embedded force constants, the relaxed structure, DOS, and a manifest
    with the full provenance (potential; resolved checkpoint identity,

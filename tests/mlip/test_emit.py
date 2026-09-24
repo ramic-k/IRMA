@@ -335,9 +335,8 @@ def test_emitted_classic_deck_RUNS_and_carries_bound_total_sb(dis_bundle,
 
 
 def test_species_dos_survives_gamma_only_mesh(tmp_path, al_model):
-    """The disordered path defaults to a Gamma-only mesh,
-    where EVERY band has zero tetrahedron width -- _species_dos must
-    fall back to smearing instead of silently emitting an empty DOS."""
+    """The disordered path defaults to a Gamma-only mesh, where every band
+    is flat; the histogram DOS must still count every mode."""
     from irma.mlip.bundle import load_bundle
     from irma.mlip.emit import _species_dos
 
@@ -434,42 +433,6 @@ def test_deck_provenance_survives_mf1_column_mapping(al_bundle, dis_bundle,
                                  progress=QUIET)
     _check_comment_cards(dis_bundle, classic,
                          extra="; disordered classic path")
-
-
-def test_species_dos_honours_recorded_dos_smearing(dis_bundle, monkeypatch):
-    """MLP-3: the --dos-smearing width the bundle records must reach the
-    projected-DOS call feeding Card 11/12, Card 6e, and dos_*.dat."""
-    import copy
-    from irma.mlip import bundle as bundle_mod
-    from irma.mlip.bundle import Bundle
-    from irma.mlip.emit import _species_dos
-
-    recorded = []
-    real = bundle_mod.dos_grid_and_fallback
-
-    def wrapper(phonon, method, dos_sigma_mev=None, **kw):
-        recorded.append(dos_sigma_mev)
-        return real(phonon, method, dos_sigma_mev=dos_sigma_mev, **kw)
-
-    monkeypatch.setattr(bundle_mod, "dos_grid_and_fallback", wrapper)
-
-    doctored = Bundle(path=dis_bundle.path,
-                      phonopy_yaml=dis_bundle.phonopy_yaml,
-                      structure=dis_bundle.structure,
-                      manifest=copy.deepcopy(dis_bundle.manifest))
-    doctored.manifest["input"]["args"]["dos_smearing"] = 4.0
-    species = resolve_species(doctored, progress=QUIET)
-    msgs = []
-    dos = _species_dos(doctored, species, msgs.append)
-    assert recorded[-1] == 4.0
-    assert any("4" in m and "smearing" in m for m in msgs)
-    for sym, (e, rho) in dos.items():
-        assert rho.sum() > 0.0
-
-    # near-miss: without a recorded width the default path is unchanged
-    recorded.clear()
-    _species_dos(dis_bundle, species, QUIET)
-    assert recorded[-1] is None
 
 
 def test_disordered_spectra_dos_paths_are_absolute(dis_bundle, tmp_path,

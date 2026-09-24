@@ -374,9 +374,9 @@ def _uniform_rho(e_mev, rho):
     by a fixed count (review finding 6); rho(0) is pinned to 0.
     """
     import numpy as np
-    de_target_mev = 0.5
-    ni = max(200, int(np.ceil(float(e_mev.max()) / de_target_mev)) + 1)
-    e_uni = np.linspace(0.0, float(e_mev.max()), ni)
+    from irma.mlip.bundle import dos_grid_mev
+    e_uni = dos_grid_mev(e_mev.max())
+    ni = len(e_uni)
     rho_uni = np.interp(e_uni, e_mev, rho)
     rho_uni[0] = 0.0
     delta_ev = float(e_uni[1] - e_uni[0]) * 1e-3
@@ -478,61 +478,23 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
 
 
 def _species_dos(bundle, species, progress):
-    """Species-projected DOS (meV) from the bundle's embedded-FC model."""
-    import numpy as np
-    import phonopy
-    from irma.core.phonopy_io import (isolated_phonopy_cwd,
-                                      phonopy_yaml_embeds_nac,
-                                      pinned_primitive_matrix_kwargs)
-    from irma.mlip.bundle import THZ_TO_MEV
+    """Species-projected DOS (meV) from the bundle's embedded-FC model: the
+    engine's per-atom histogram DOS (``compute_atom_dos``) summed over each
+    species' sites, 3 states per atom as phonopy normalizes it."""
+    from irma.core.phonopy_io import compute_atom_dos, load_phonopy_mesh
+    from irma.mlip.bundle import dos_grid_mev
 
     mesh = _emit_mesh(bundle)
     progress(f"  computing species-projected DOS on the {tuple(mesh)} mesh")
-    # TRUST BOUNDARY (SEC-1): refuse a phonopy.yaml carrying code-executing
-    # YAML tags BEFORE phonopy's unsafe loader parses it. The CLI reaches
-    # here only after validate_bundle (already guarded), but the emit_*
-    # functions are public library entry points and a caller may pass a
-    # Bundle that never went through validation.
-    from irma.core.phonopy_io import reject_unsafe_phonopy_yaml
-    reject_unsafe_phonopy_yaml(bundle.phonopy_yaml)
-    # isolated cwd + explicit NAC state: phonopy.load(is_nac=True) probes the
-    # process cwd for a stray BORN, which must never influence a bundle
-    # (review finding 3; mirrors irma.core.phonopy_io.load_phonopy_mesh)
-    with isolated_phonopy_cwd():
-        ph = phonopy.load(
-            bundle.phonopy_yaml, log_level=0,
-            is_nac=phonopy_yaml_embeds_nac(bundle.phonopy_yaml),
-            **pinned_primitive_matrix_kwargs(bundle.phonopy_yaml))
-    ph.run_mesh(list(mesh), with_eigenvectors=True, is_mesh_symmetry=False)
-    # same flat-band guards as the bundle total DOS (review HIGH): on the
-    # disordered Gamma-only mesh EVERY band has zero tetrahedron width and
-    # the projected DOS would silently come out empty
-    from irma.mlip.bundle import dos_grid_and_fallback
-    # honour the width the bundle records for --dos-smearing (build args in
-    # the manifest), so the emitted Card 11/12 spectrum, the Card 6e
-    # partials, and the spectra dos_*.dat files use the same smearing as
-    # the bundle's own total DOS instead of the 1 meV flat-band fallback
-    build_args = (bundle.manifest.get("input") or {}).get("args") or {}
-    sigma = build_args.get("dos_smearing")
-    if sigma is not None:
-        sigma = float(sigma)
-    fallback = dos_grid_and_fallback(ph, "run_projected_dos",
-                                     dos_sigma_mev=sigma)
-    if sigma is not None:
-        progress(f"  species DOS uses the bundle's recorded {sigma:g} meV "
-                 f"Gaussian smearing (--dos-smearing at build time)")
-    elif fallback is not None:
-        progress(f"  flat bands detected: species DOS uses {fallback} meV "
-                 f"Gaussian smearing (tetrahedron would drop them)")
-    e_mev = np.asarray(ph.projected_dos.frequency_points, float) * THZ_TO_MEV
-    proj = np.asarray(ph.projected_dos.projected_dos, float) / THZ_TO_MEV
-    symbols = [str(s) for s in ph.primitive.symbols]
+    # load_phonopy_mesh refuses code-executing YAML tags, runs phonopy in an
+    # empty directory (no stray BORN) and pins the primitive matrix
+    md = load_phonopy_mesh(bundle.phonopy_yaml, mesh)
+    e_mev = dos_grid_mev(float(md.frequencies_ev.max()) * 1.0e3)
+    g, _ = compute_atom_dos(md, e_mev[-1] * 1.0e-3, len(e_mev))   # 1/eV, 1 per atom
     out = {}
     for sp in species:
-        rows = [i for i, s in enumerate(symbols) if s == sp.symbol]
-        rho = proj[rows].sum(axis=0)
-        keep = e_mev >= 0.0
-        out[sp.symbol] = (e_mev[keep], np.clip(rho[keep], 0.0, None))
+        rows = [i for i, s in enumerate(md.atom_symbols) if s == sp.symbol]
+        out[sp.symbol] = (e_mev, 3.0e-3 * g[rows].sum(axis=0))
     return out
 
 

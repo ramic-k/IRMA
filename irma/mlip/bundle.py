@@ -72,90 +72,39 @@ def _safe_name(name, what) -> str:
     return name
 
 
-def dos_grid_and_fallback(phonon, method, dos_sigma_mev=None,
-                          fallback_sigma_mev=1.0):
-    """Run a phonopy DOS method with a resolving grid + flat-band guards.
-
-    ``method`` is ``"run_total_dos"`` or ``"run_projected_dos"`` (same
-    sigma/freq_pitch API); the mesh must already be run. Returns None
-    when the tetrahedron result stood, else the smearing width (meV)
-    that was applied.
-
-    Grid pitch: min(0.5 meV, span/200) -- never coarser than 0.5 meV on
-    wide (hydrous) spectra, never coarser than phonopy's old 201-point
-    default on narrow ones -- floored at 0.01 meV, and halved below an
-    explicit sigma so the grid always resolves the smearing (a 0.05 meV
-    sigma sampled every 0.5 meV integrates to almost anything).
-
-    Fallback trigger (tetrahedron path only): any band whose spread
-    across the mesh is <= the pitch (numerically flat: zero tetrahedron
-    width; covers Gamma-only meshes, where every band qualifies).
-
-    Known limitation: a flat band buried INSIDE a dispersive continuum
-    re-sorts across band-index columns at each crossing and can evade
-    the per-column spread test. A state-count check was prototyped and
-    rejected: the tetrahedron DOS integral oscillates +-2-3% on
-    quick-look meshes (measured on EMT Al at 6^3-10^3), the same size
-    as a lost small band, so it cannot be thresholded reliably.
-    Physically the corner is remote -- bands are numerically flat
-    because their modes are decoupled (isolated molecular units,
-    Gamma-only meshes), and a mode inside a continuum hybridizes and
-    acquires width.
-    """
+def dos_grid_mev(freq_max_mev):
+    """The uniform DOS grid [meV] from 0 to ``freq_max_mev``: at least 200
+    points and a pitch of at most 0.5 meV. It is also the grid the deck
+    cards take (``emit._uniform_rho``), so the emitted spectra are not
+    resampled."""
     import numpy as np
-    f_mesh = np.asarray(phonon.mesh.frequencies, float) * THZ_TO_MEV
-    span = float(f_mesh.max() - f_mesh.min())
-    pitch_mev = min(0.5, span / 200.0) if span > 0 else 0.5
-    if dos_sigma_mev is not None:
-        pitch_mev = min(pitch_mev, float(dos_sigma_mev) / 2.0)
-    pitch_mev = max(pitch_mev, 0.01)
-    run = getattr(phonon, method)
-    pitch_thz = pitch_mev / THZ_TO_MEV
-    if dos_sigma_mev is not None:
-        run(freq_pitch=pitch_thz, sigma=float(dos_sigma_mev) / THZ_TO_MEV)
-        return None
-    band_spread = f_mesh.max(axis=0) - f_mesh.min(axis=0)
-    if float(band_spread.min()) > pitch_mev:
-        run(freq_pitch=pitch_thz)
-        return None
-    run(freq_pitch=pitch_thz, sigma=fallback_sigma_mev / THZ_TO_MEV)
-    return fallback_sigma_mev
+    top = float(freq_max_mev)
+    return np.linspace(0.0, top, max(200, int(np.ceil(top / 0.5)) + 1))
 
 
-def _dos_and_census(phonon, mesh, dos_sigma_mev=None):
+def _dos_and_census(phonon, mesh):
     """Quick-look mesh: total DOS (meV) + weight-aware imaginary census.
 
-    dos_sigma_mev optionally widens the smearing (phonopy sigma, converted
-    from meV) -- Gamma-only disordered runs need broadening to read as a
-    smooth DOS.
-
-    The linear tetrahedron default has a blind spot found live on
-    scawtite: a numerically dispersionless band (molecular O-H stretch
-    on a small supercell; every band of a Gamma-only mesh) has zero
-    tetrahedron width and drops out of the DOS entirely -- at ANY grid
-    pitch. A per-band mesh-spread guard covers it (see
-    dos_grid_and_fallback, including its documented crossing
-    limitation): any numerically flat band falls the DOS back to 1 meV
-    Gaussian smearing, recorded in the census. The grid
-    pitch is also pinned (phonopy's default 201-point grid is ~2.7 meV
-    on a 500-meV hydrous spectrum, coarse enough to step over narrow
-    bands even where the tetrahedra see them)."""
-    import math as _math
+    The DOS is a histogram of the mesh modes (``irma.core.phonopy_io``'s
+    ``mode_histogram``, the same rule as every IRMA DOS), per meV per cell:
+    it integrates to the number of kept modes per cell. The modes are those
+    ``mode_floor_mask`` keeps, so the Gamma translations and imaginary modes
+    are left out, and flat bands (isolated molecular modes, every band of a
+    Gamma-only mesh) count in full."""
     import numpy as np
-    if dos_sigma_mev is not None and (
-            not _math.isfinite(float(dos_sigma_mev))
-            or float(dos_sigma_mev) <= 0):
-        raise ValueError(f"dos_sigma_mev must be positive and finite, "
-                         f"got {dos_sigma_mev!r}")
+    from irma.core.phonopy_io import mode_floor_mask, mode_histogram
     phonon.run_mesh(list(mesh))
-    fallback = dos_grid_and_fallback(phonon, "run_total_dos", dos_sigma_mev)
-    e_mev = np.asarray(phonon.total_dos.frequency_points, float) * THZ_TO_MEV
-    rho = np.asarray(phonon.total_dos.dos, float) / THZ_TO_MEV   # per meV
     # symmetry-reduced mesh: weight each irreducible q-point's modes so the
-    # census counts modes over the FULL requested mesh (review finding 7)
+    # DOS and the census count modes over the FULL requested mesh
     freqs = np.asarray(phonon.mesh.frequencies, float) * THZ_TO_MEV
     weights = np.asarray(phonon.mesh.weights, int)
-    n_modes = int(weights.sum()) * freqs.shape[1]
+    n_branches = freqs.shape[1]
+    keep = mode_floor_mask(freqs.reshape(-1), phonon.mesh.qpoints, n_branches)
+    e_mev = dos_grid_mev(freqs.max())
+    rho = mode_histogram(freqs.reshape(-1)[keep],
+                         np.repeat(weights, n_branches)[keep].astype(float),
+                         e_mev) / (weights.sum() * (e_mev[1] - e_mev[0]))
+    n_modes = int(weights.sum()) * n_branches
     n_imag = int((weights[:, None] * (freqs < IMAGINARY_FLOOR_MEV)).sum())
     census = {
         "mesh": [int(n) for n in mesh],
@@ -165,8 +114,6 @@ def _dos_and_census(phonon, mesh, dos_sigma_mev=None):
         "n_modes_irreducible": int(freqs.size),
         "n_imaginary": n_imag,
     }
-    if fallback is not None:
-        census["dos_smearing_fallback_mev"] = fallback
     if n_imag:
         census["advice"] = _ADVICE
     return e_mev, rho, census
@@ -258,7 +205,7 @@ def preflight_bundle_outdir(outdir, overwrite=False):
 
 def write_bundle(outdir, *, phonon_result, relax_result, calc_meta,
                  args_used, mesh, input_structure_path=None, born_path=None,
-                 disordered=False, dos_sigma_mev=None, overwrite=False,
+                 disordered=False, overwrite=False,
                  progress=print) -> Bundle:
     """Serialize the model + provenance; see module docstring for layout.
 
@@ -284,8 +231,7 @@ def write_bundle(outdir, *, phonon_result, relax_result, calc_meta,
             phonon.nac_params = _parse_born(phonon, born_path)
         phonon.save(yaml_path, settings={"force_constants": True})
         # the DOS and census describe the saved model (NAC applied)
-        e_mev, rho, census = _dos_and_census(phonon, mesh,
-                                             dos_sigma_mev=dos_sigma_mev)
+        e_mev, rho, census = _dos_and_census(phonon, mesh)
     finally:
         phonon.nac_params = prior_nac      # NAC never leaks into a later bundle
     nac_embedded = phonopy_yaml_embeds_nac(yaml_path)
