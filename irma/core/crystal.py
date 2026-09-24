@@ -83,8 +83,8 @@ def lattice_to_cell_params(lattice_ang):
     Rows are the a, b, c cell vectors; the returned angles are in degrees
     (alpha = b^c, beta = a^c, gamma = a^b). The direction cosine is clamped to
     [-1, 1] so floating-point round-off on a near-degenerate cell cannot push
-    arccos out of its domain. Shared home for the lattice→cell-params math (the
-    NCrystal NCMAT writer and the spectra elastic model both use this).
+    arccos out of its domain. The NCrystal NCMAT writer and the spectra
+    elastic model use it.
     """
     L = np.asarray(lattice_ang, float).reshape(3, 3)
     a, b, c = (float(np.linalg.norm(L[i])) for i in range(3))
@@ -447,12 +447,15 @@ def _order_site_groups_by_card6d_positions(atom_types, site_groups,
 
 
 # Relative tolerance under which a species group's per-site Debye-Waller
-# tensors count as UNIFORM (keeping the byte-pinned species-averaged elastic
-# fast path). Symmetry-EQUIVALENT sites produce tensors identical up to
-# eigensolver bit noise (~1e-15 relative, living in the symmetry-forbidden
-# near-zero elements); crystallographically INEQUIVALENT sites differ at
-# >~1e-4 relative (graphite's alpha/beta sublattices: ~1e-3). The ~6 orders
-# of magnitude between those scales make the threshold robust.
+# tensors count as uniform, which keeps the byte-pinned species-averaged
+# elastic fast path. That path needs every site of the group to carry the same
+# Cartesian tensor. Equivalent sites whose symmetry operations commute with
+# the tensor (uniaxial sites, as in graphite, Be and BeO) agree to eigensolver
+# bit noise (~1e-15 relative); crystallographically inequivalent sites differ
+# at >~1e-4 relative (graphite's alpha/beta sublattices: ~1e-3). Equivalent
+# sites related by a rotation that does not commute with the tensor (rutile O,
+# quartz Si) carry rotated tensors R U R^T and take the site-resolved path,
+# which is exact for any group.
 _TENSOR_UNIFORM_RTOL = 1e-9
 
 
