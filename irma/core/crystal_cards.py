@@ -18,14 +18,14 @@ from irma.core.noncubic_inelastic import NoncubicInelasticControls
 
 
 def _parse_extinction_card(reader, elastic_mode):
-    """Parse the OPTIONAL crystalline-extinction card (off by default).
+    """Parse the optional crystalline-extinction card (off by default).
 
         extinction <model> l=<Å> g=<rad⁻¹> L=<Å> [dist=<...>] [rec=cls|std] [rmse_tol=<frac>]
 
     Placed at the end of the iel=10 elastic block (after Cards 6d/6e, or 6g for
     inelastic_mode=1/2), before Card 7. Returns the ``coherent_extinction`` config
-    dict consumed by the ENDF writer, or ``None`` if the card is absent (so every
-    existing deck is unchanged). Extinction is a *sample* property — l (crystallite
+    dict consumed by the ENDF writer, or ``None`` if the card is absent.
+    Extinction is a *sample* property — l (crystallite
     size), g (mosaic), L (grain) come from a fit-to-transmission or microstructure.
     See ``irma/core/extinction.py`` for the model definitions and references.
     """
@@ -155,14 +155,14 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
     """Parse the generalized-elastic card block (iel=10): Cards 6b-6g.
 
     Reads the elastic/inelastic mode controls, lattice, atom types and
-    positions, any legacy partial spectra, and — for inelastic_mode=1/2 —
+    positions, the Card 6e partial spectra (mode 0), and — for inelastic_mode=1/2 —
     the phonopy mesh controls (loading the mesh once for all
     temperatures). Returns the populated crystal_info dict.
     """
     # Card 6b: elastic_mode nat nspec inelastic_mode [bins_per_decade threshold_eV]
     reader.card("Card 6b (elastic_mode nat nspec inelastic_mode [grouping])")
     fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
-    elastic_mode = reader.to_int(fvals[0], "elastic_mode")   # 1=CEF/SEF, 2=MEF
+    elastic_mode = reader.to_int(fvals[0], "elastic_mode")   # 1=SEF, 2=MEF
     nat = reader.to_int(fvals[1], "nat")            # number of distinct atom types
     nspec = reader.to_int(fvals[2], "nspec")          # number of partial phonon spectra (Card 6e blocks)
     inelastic_mode = reader.to_int(fvals[3], "inelastic_mode")   # 0=isotropic, 1/2=in-process noncubic SAB
@@ -380,8 +380,9 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
           f"{principal_atom_idx+1}: Z={za_Z}, A={za_A}, "
           f"fraction={atom_types[principal_atom_idx]['fraction']:.4f}")
 
-    # DC atom selection for CEF (Eq 26); a single-type cell has no channel
-    # competition (f_i=1 would divide by zero).
+    # Designated-coherent (DC) atom for SEF (Eq. 26 of Ramic et al., NIM-A 1027
+    # (2022) 166227); a single-type cell has no channel competition (f_i=1
+    # would divide by zero).
     dc_atom_idx = None
     if elastic_mode == 1 and len(atom_types) > 1:
         min_inc_criterion = float('inf')
@@ -398,9 +399,9 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
               f"f_DC={dc_at['fraction']:.4f}")
 
         if principal_atom_idx == dc_atom_idx:
-            print("  -> Principal scatterer IS the DC atom -> LTHR=1 (coherent elastic)")
+            print("  -> Principal scatterer is the DC atom -> LTHR=1 (coherent elastic)")
         else:
-            print("  -> Principal scatterer is NOT the DC atom -> LTHR=2 (incoherent elastic)")
+            print("  -> Principal scatterer is not the DC atom -> LTHR=2 (incoherent elastic)")
 
     # Match each Card 6e spectrum to exactly one Card 6d atom type by (Z, A).
     reader.card("Card 6e (partial spectrum atom matching)")

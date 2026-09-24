@@ -413,7 +413,7 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
             if phonopy_mt4:
                 if itemp == 0:
                     print("    Inelastic mode 1/2: using noncubic in-process MT4 path; "
-                          "legacy continuous DOS and temperature-detail cards are not read")
+                          "the temperature-detail cards (Cards 11-19) are not read")
             elif itemp == 0 or temp >= 0.0:
                 (
                     delta1, np1, p1, twt, c_diff, tbeta,
