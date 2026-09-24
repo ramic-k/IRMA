@@ -9,9 +9,9 @@ module:
 
 Data source: periodictable.nsf (public domain), which reproduces the
 Atominstitut/Rauch-Waschkowski neutron scattering-length table (Neutron Data
-Booklet, 2nd ed., 2003) with Sears (1992) cross-references. The NCNR
-n-lengths web page presents the same compilation and serves as a cross-check,
-not the direct source.
+Booklet, 2nd ed., 2003) with Sears (1992) cross-references. The NIST NCNR
+n-lengths web page is the Sears (1992) table, which differs for some entries
+(for example H, He, Li-7, Ti, V, Fe-56); it is a cross-check, not the source.
 
 Extracted per nuclide (natural elements carry A=0):
 - b_coh_fm: real part of the bound coherent scattering length
@@ -136,8 +136,9 @@ def main() -> None:
     w("Regenerate with tools/generate_nuclear_data.py (requires periodictable).")
     w(f"Source: periodictable {pt.__version__} (periodictable.nsf: Atominstitut/")
     w("Rauch-Waschkowski table, Neutron Data Booklet 2nd ed. 2003, with Sears")
-    w("1992 cross-references; public domain). Cross-check reference: NIST NCNR")
-    w("n-lengths page (same compilation). Citations: V.F. Sears, Neutron News 3")
+    w("1992 cross-references; public domain). Cross-check reference: the NIST")
+    w("NCNR n-lengths page (the Sears 1992 table, which differs for some")
+    w("entries). Citations: V.F. Sears, Neutron News 3")
     w("(1992) 26; H. Rauch and W. Waschkowski, Neutron Data Booklet, 2nd ed.")
     w("(2003); periodictable package documentation (nsf module).")
     w(f"Generator sha256: {script_sha}")
