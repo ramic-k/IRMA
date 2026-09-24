@@ -183,38 +183,25 @@
 -1200.0/
 -1600.0/
 -2000.0/
-' Graphite  LEIP LAB   EVAL-SEP17 A.I. Hawari, Y. Zhu, J.L. Wormald'/
-'                      DIST-                                       '/
-'----ENDF/B-VIII       MATERIAL 31                                 '/
-'-----THERMAL NEUTRON SCATTERING DATA                              '/
-'------ENDF-6 FORMAT                                               '/
+' graphite  IRMA       EVAL-SEP26 IRMA example (not an evaluation) '/
 '                                                                  '/
-' Temperatures = 296 400 500 600 700 800 1000 1200 1600 2000 K.    '/
 '                                                                  '/
-' Background                                                       '/
-' ----------                                                       '/
 '                                                                  '/
-' This library was produced by the Low Energy Interaction Physics  '/
-' (LEIP) group at North Carolina State University. The thermal     '/
-' scattering law data for graphite (perfect single crystal) were   '/
-' developed using the ab initio lattice dynamics (AILD) method     '/
-' [1,2]. The coherent elastic cross sections were calculated based '/
-' on the lattice constant obtained for AILD graphite. Ten          '/
-' temperatures are available in this library. The LEAPR module from'/
-' the NJOY code system was used to produce File 7 MT = 2, 4 data   '/
-' for graphite. The coherent elastic data were prepared using the  '/
-' cubic approximation in LEAPR/NJOY. By convention, MAT=31 and     '/
-' ZA=131 are used for graphite.                                    '/
 '                                                                  '/
+' IRMA example input: graphite with the iel=10 generalized coherent'/
+' elastic (Card 6b elastic_mode=1, SEF) computed from the hexagonal'/
+' cell and atom positions on Cards 6c-6d, and the classic LEAPR    '/
+' continuous-DOS inelastic (inelastic_mode=0).                     '/
+'                                                                  '/
+' The alpha and beta grids, the temperatures and the phonon DOS are'/
+' those of the ENDF/B-VIII.0 graphite evaluation (NCSU LEIP;       '/
+' A.I. Hawari, Y. Zhu, J.L. Wormald), references [1,2].            '/
 '                                                                  '/
 ' References                                                       '/
 ' ----------                                                       '/
-'                                                                  '/
 ' 1. A.I. Hawari, "Modern Techniques in Inelastic Thermal Neutron  '/
 '    Scattering Analysis," Nuclear Data Sheets 118 (2014) 172.     '/
 ' 2. J.L. Wormald, A.I. Hawari "Thermal neutron scattering law     '/
 '    calculations using ab initio molecular dynamics", EPJ Web of  '/
 '    conferences 146, 13002 (2017)                                 '/
-'                                                                  '/
-' -----------------------------------------------------------------'/
 /

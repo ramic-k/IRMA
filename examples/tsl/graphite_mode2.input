@@ -202,8 +202,14 @@
 1.615410e+02 1.681884e+02 1.751094e+02 1.823152e+02 1.898175e+02
 1.976285e+02 /
 296.0000 /
-' IRMA phonopy-backed noncubic mode-2 production example.              '/
-' Exact coherent+incoherent one-phonon S(a,b) plus the auto-sized      '/
-' incoherent multiphonon background from the vendored graphite phonopy '/
-' model (40x40x40 mesh, 10000/1000 powder directions, 296 K).          '/
+' graphite  IRMA       EVAL-SEP26 IRMA example (not an evaluation) '/
+'                                                                  '/
+'                                                                  '/
+'                                                                  '/
+'                                                                  '/
+' IRMA phonopy-backed noncubic mode-2 production example.          '/
+' Exact coherent+incoherent one-phonon S(a,b) plus the auto-sized  '/
+' incoherent multiphonon background from the vendored graphite     '/
+' phonopy model (40x40x40 mesh, 10000/1000 powder directions,      '/
+' 296 K).                                                          '/
 /
