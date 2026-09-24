@@ -2,8 +2,8 @@
 
 Pure-physics checks, no engine/phonopy. Pins the per-species incoherent-approx
 phonon expansion + the validated asym_downscatter SAB convention: a single
-species reproduces a direct contin()+_law_to_sqe build; multi-species is an
-exact cross-section/multiplicity-weighted sum; one-phonon follows the DOS.
+species reproduces a direct contin()+_law_to_sqe build; multi-species is the
+atom-weighted average of the single-species laws; one-phonon follows the DOS.
 """
 import numpy as np
 import pytest

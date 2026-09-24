@@ -1,8 +1,7 @@
 """phonopy.yaml -> per-species partial DOS bridge for mode 0
 (irma.spectra.dos_from_phonopy + the dos_source='phonopy' config path).
 
-Uses the local graphite fixture and a coarse mesh; skipped when phonopy or the
-fixture is unavailable (this fixture lives in the not-CI mode-2 harness dir).
+Uses the committed graphite fixture and a coarse mesh; skipped without phonopy.
 """
 import os
 
@@ -13,8 +12,6 @@ pytest.importorskip("phonopy")
 
 _YAML = os.path.join(os.path.dirname(__file__),
                      "mode2_euphonic_n1_validation", "graphite", "phonopy.yaml")
-pytestmark = pytest.mark.skipif(not os.path.exists(_YAML),
-                                reason="graphite phonopy fixture not present")
 
 MESH = (6, 6, 6)
 
