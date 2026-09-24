@@ -428,10 +428,10 @@ HELP = {
         "Euphonic-style arch, the region the instrument's detectors can reach) "
         "rather than the full computed S(Q,E) surface with the envelope drawn "
         "over it.\n\n"
-        "Changing the resolution model sets it: on for a real instrument, off "
-        "(full map) for the 'width polynomial' model; a fresh panel starts "
-        "with it on. The Plot tab also has a live toggle to flip the view "
-        "after a run."),
+        "The resolution model sets it: on for a real instrument, off (full "
+        "map) for the 'width polynomial' model, which a fresh panel starts "
+        "with. The Plot tab also has a live toggle to flip the view after a "
+        "run."),
     "resolution_shape": (
         "Instrument energy-resolution line shape (the blurring the instrument "
         "applies to every peak), applied by convolving the spectrum with a "
@@ -1000,7 +1000,8 @@ class NSPanel(RunPanel):
             self._mapcfg_frame, "detector coverage 2θ (deg):", default="",
             width=18, help_text=HELP["map_coverage"])
         self.map_coverage.pack(fill=tk.X, pady=2)
-        self.dir_map_mask = tk.BooleanVar(value=True)
+        # off, as for the default 'width polynomial' model (_on_res_model_change)
+        self.dir_map_mask = tk.BooleanVar(value=False)
         check_with_help(self._mapcfg_frame, "mask map to detector coverage",
                               self.dir_map_mask, HELP["map_mask"])
         ttk.Label(self._mapcfg_frame,
