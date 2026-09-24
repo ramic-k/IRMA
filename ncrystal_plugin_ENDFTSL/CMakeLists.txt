@@ -25,7 +25,7 @@ cmake_minimum_required(VERSION 3.20...3.31)
 file( STRINGS "${CMAKE_CURRENT_LIST_DIR}/ncplugin_name.txt" NCPlugin_NAME LIMIT_COUNT 1)
 string(STRIP "${NCPlugin_NAME}" NCPlugin_NAME)
 
-project( "NCPlugin_${NCPlugin_NAME}" VERSION 0.2.0 LANGUAGES CXX)
+project( "NCPlugin_${NCPlugin_NAME}" VERSION 0.3.0 LANGUAGES CXX)
 
 set( ncplugin_data_file_pattern "data/*" )
 

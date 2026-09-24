@@ -223,9 +223,10 @@ Outputs that change, and what to regenerate:
   does not). macOS then killed any process that loaded the plugin, with
   exit 137 at the first `createScatter`; a pip build with CMake 4.4 on
   arm64 did this. Rebuild a plugin that fails this way.
-- Plugin versions: `ncrystal_plugin_ENDFTSL` is 0.2.0 in `__version__`,
-  in CMake and in the pack's converter stamp (they said 0.0.1, while
-  pyproject.toml said 0.2.0), and a test checks that they agree. The CMake
+- Plugin versions: `ncrystal_plugin_ENDFTSL` is 0.3.0, for the converter
+  changes above. Its `__version__`, its CMake project and the pack's
+  converter stamp had said 0.0.1 while pyproject.toml said 0.2.0; all of
+  them now carry one version, and a test checks that they agree. The CMake
   project of `ncrystal_plugin_IRMA` is 0.6.0, as in its pyproject.toml.
 
 ### MLIP front end
