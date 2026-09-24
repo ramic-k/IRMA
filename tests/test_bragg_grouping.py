@@ -87,8 +87,8 @@ def test_multi_temperature_structure(dense_bragg):
 def test_allzero_underflow_bins_merge_not_ungroup():
     """Edges whose increments underflowed to exactly 0.0 at EVERY temperature
     carry no cross section: they must merge into one zero step per log bin,
-    not ungroup into one redundant point per raw edge (the pre-0.18.1 path
-    produced a ~100x larger tape in the extreme-Debye-Waller regime)."""
+    not ungroup into one redundant point per raw edge (in the
+    extreme-Debye-Waller regime that makes the tape about 100 times larger)."""
     n_zero = 600
     E_sub = np.array([0.5, 0.8])                    # kept individually
     E_zero = np.geomspace(1.5, 4.5, n_zero)        # all-zero above threshold
@@ -109,13 +109,14 @@ def test_allzero_underflow_bins_merge_not_ungroup():
     assert En[-1] == sigfig(5.0, 7, 0)
     # the zero tail adds nothing: cumulative S stays at the sub-threshold sum
     assert Sn[-1] == sigfig(0.2, 7, 0)
-    assert np.all(Sn == Sn[-1]) or Sn[0] <= Sn[-1]  # monotone, flat tail
+    assert np.all(np.diff(Sn) >= 0)                 # monotone
+    assert np.all(Sn[1:] == Sn[-1])                 # flat after the sub-threshold edges
 
 
 def test_cancellation_bin_with_nonzero_increments_still_ungroups():
-    """The original guard's purpose is untouched: a bin whose increments are
-    NONZERO but sum to <= 0 (negative interference / roundoff) must still
-    ungroup so every emitted step stays physical."""
+    """A bin whose increments are nonzero but sum to <= 0 (negative
+    interference or roundoff) ungroups, so every emitted step stays
+    physical."""
     E_sub = np.array([0.5])
     E_pair = np.array([2.0, 2.05])                  # same log bin at 20/decade
     E = np.concatenate([E_sub, E_pair, [5.0]])
