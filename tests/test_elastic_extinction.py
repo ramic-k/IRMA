@@ -255,8 +255,8 @@ def _weak_edges_plus_strong(n_weak=25, planes_per_weak=21, fsq_weak=1e-12,
 
 def test_late_strong_reflection_is_not_spliced_kinematically():
     """A strong reflection after 25 weak edges must stay inside E_active and
-    keep its extinction correction (the old consecutive-below stop returned it
-    as uncorrected kinematic; the tail bound must prevent that)."""
+    keep its extinction correction: a stop after a run of weak edges would
+    return it uncorrected, and the tail bound must prevent that."""
     sdw = _synthetic_species_dw()
     bragg, dir_terms = _weak_edges_plus_strong()
     cfg = _cfg(model="BC_pure", l=1.0e7, g=0.0, L=0.0)
