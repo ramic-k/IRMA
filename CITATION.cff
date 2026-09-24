@@ -18,8 +18,8 @@ authors:
     email: ramick@ornl.gov
     affiliation: "Oak Ridge National Laboratory"
     orcid: "https://orcid.org/0000-0002-3495-9821"
-version: "1.0.3"
-date-released: "2026-09-16"
+version: "1.1.0"
+date-released: "2026-09-24"
 license:
   - BSD-3-Clause
   - Apache-2.0

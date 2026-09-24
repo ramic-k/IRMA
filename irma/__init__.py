@@ -21,7 +21,7 @@ Supports:
     machine-learned potential, and starting inputs for the other paths
 """
 
-__version__ = "1.0.3"
+__version__ = "1.1.0"
 __author__ = "IRMA developers"
 
 # Pin native BLAS/OMP thread pools to 1 at package import, before numpy can be

@@ -3,7 +3,7 @@
 Notable changes to IRMA. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] — 2026-09-24
 
 This release comes out of a full review of the code. Most of the changes
 are internal and leave every output as it was: the `irma` package is about
