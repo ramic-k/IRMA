@@ -1,14 +1,8 @@
-"""irma.gui NCrystalPanel -- widget <-> NCrystalExportConfig assembly.
+"""irma.gui NCrystalPanel -- widget <-> NCrystalExportConfig assembly, input
+errors, the export argv (runner monkeypatched) and Open Config.
 
 Requires tkinter (skips without it). Uses a withdrawn root, so no display is
-shown. Pins: (1) the panel constructs headlessly; (2) build_config() turns the
-populated fields into a valid NCrystalExportConfig (gain_side / multiphonon
-order / mode mappings included); (3) invalid input surfaces a clear error; (4)
-"Export NCrystal data" drives the runner with the right argv WITHOUT running the
-engine (the runner call is monkeypatched); (5) "Open Config..." reads a config
-back through the exporter's OWN loader, round-tripping both grid modes, and a
-file it rejects mutates nothing. The third top-level tab is asserted in
-test_gui_ns_panel.test_app_top_tabs_and_endf_parts.
+shown.
 """
 import pytest
 
@@ -65,8 +59,8 @@ def _declare(panel, symbol="C"):
 # ---- construction ----------------------------------------------------------
 def test_fresh_panel_ships_no_material_identity(panel):
     """A fresh panel asserts nothing about the user's material: the scatterer
-    row is empty (the old prefilled natural-carbon row let another material's
-    constants ride into a pack unnoticed)."""
+    row is empty (a prefilled row would let another material's constants
+    ride into a pack unnoticed)."""
     row = panel.element_table.get_rows()[0]
     assert all(row[k] == "" for k in
                ("symbol", "sigma_bound_b", "awr", "b_coh_fm", "sigma_inc_b"))
@@ -162,9 +156,9 @@ def test_populated_fields_map_onto_config(panel):
 
 def test_blank_elastic_constants_rejected(panel):
     """Blank b_coh_fm / sigma_inc_b fail loudly at build time: the GUI export
-    always bakes the elastic block (the control was deliberately removed), and
-    the old silent None -> 0.0 substitution deleted the coherent-Bragg /
-    incoherent-elastic channel from the pack (pre-release review S2)."""
+    always bakes the elastic block (it has no control to turn it off), and
+    substituting 0.0 for a blank would delete the coherent-Bragg /
+    incoherent-elastic channel from the pack."""
     panel.material_id.set("x")
     panel.phonopy_yaml.set("x.yaml")  # required by the export config
     panel.element_table.set_rows([{"symbol": "C", "sigma_bound_b": "5.551",

@@ -277,8 +277,8 @@ def test_iel10_phonopy_mode_ncold_rejected(tmp_path):
 # ---------------- Card 4 checked conversion --------------------------
 
 def test_card4_flags_use_checked_conversion(tmp_path):
-    """A non-integral iint=1.9 used to import as the valid lin-lin flag 1
-    (silent int() truncation) although the engine rejects the deck."""
+    """A non-integral iint=1.9 must not import as the valid lin-lin flag 1
+    (int() truncation); the engine rejects the deck."""
     with pytest.raises(ValueError, match="iint must be an integer"):
         _stage(_iel10_deck(card4="31 6012. 0 0 1e-75 1.9"), tmp_path)
 

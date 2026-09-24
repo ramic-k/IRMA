@@ -49,16 +49,15 @@ def test_beta_grid_no_tails():
 
 
 def test_beta_grid_dropped_tail_warns_but_grid_is_unchanged():
-    """beta_max_eV at or below the linear region's end: the grid stays
-    byte-identical to the historical output (the cap is NOT enforced — the
-    linear phonon region is never truncated) but the silent drop now warns,
-    naming the cap and the linear-region end."""
+    """beta_max_eV at or below the linear region's end: the grid keeps the
+    whole linear phonon region (the cap is not enforced there) and the
+    dropped tail warns, naming the cap and the linear-region end."""
     import warnings
 
     kT = KB * 296.0
     with pytest.warns(UserWarning, match="upper log tail dropped"):
         beta = generate_beta_grid(0.45, 296.0, beta_max_eV=0.2)
-    # identical to the historical silent result: ends at freq_max*(1-1/n_phonon)
+    # ends at freq_max*(1-1/n_phonon)
     assert beta[-1] == pytest.approx(0.45 * 299 / 300 / kT, rel=1e-9)
     assert len(beta) == 1 + 50 + 299
     # n_upper=0 is an explicit no-tail request: stays silent
@@ -351,7 +350,7 @@ def test_describe_beta_grid_reports_what_was_built():
 def test_linlin_grid_survives_the_deck_precision_round_trip():
     """A seam node within deck precision of the phonon-region end would be
     written as a duplicate value and rejected by the engine; the generator
-    drops it. Constructed case from the 2026-09-15 review (AWR 238)."""
+    drops it. The case below (AWR 238) produces such a node."""
     from irma.core.grids import grid_reference_temperature_K, _drop_nodes_indistinct_in_a_deck
     t_ref = grid_reference_temperature_K(1, 296.0)
     beta = generate_beta_grid(0.40507000876176497, t_ref, iint=1, awr=238.0,

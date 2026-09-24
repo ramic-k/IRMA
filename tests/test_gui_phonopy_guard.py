@@ -1,4 +1,4 @@
-"""SEC-1, GUI file-picker path: the ENDF form's freq_max detection worker
+"""GUI file-picker path: the ENDF form's freq_max detection worker
 hands a user-picked phonopy.yaml to phonopy.load, whose unsafe YAML loader
 executes ``!!python/`` tags at parse time. The file is untrusted by
 construction (it comes from a file dialog), so reject_unsafe_phonopy_yaml

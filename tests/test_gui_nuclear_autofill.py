@@ -1,15 +1,8 @@
-"""GUI nuclear-data autofill -- ElementTable symbol autofill.
+"""Element tables fill scattering constants from irma.core.nuclear_data:
+symbol autofill (user values win; energy-dependent and unknown symbols are
+never prefilled) and new rows from a phonopy.yaml.
 
-Pins the two ways the element tables pull scattering constants from
-irma.core.nuclear_data instead of hardcoded literals:
-
-  1. ElementTable.autofill_row -- leaving the symbol cell fills the still-empty
-     nuclear columns; user-typed values always win; energy-dependent nuclides
-     (B, Cd, Gd, ...) and unknown symbols are never prefilled.
-  2. Panel auto-fill from phonopy.yaml -- new rows take the table's constants.
-     (The panels ship ONE BLANK row: the scatterer list is material identity.)
-
-Uses a withdrawn root (no display shown); skips cleanly without tkinter.
+Uses a withdrawn root (no display shown); skips without tkinter.
 """
 import pytest
 
