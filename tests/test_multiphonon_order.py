@@ -1,16 +1,22 @@
-"""Regression tests for derive_required_multiphonon_order — the policy that sizes
-the multiphonon Poisson(2W) sum from the anisotropic Debye-Waller tensor:
+"""derive_required_multiphonon_order, the policy that sizes the multiphonon
+Poisson(2W) sum from the anisotropic Debye-Waller tensor:
 
     2W_max = Q_max^2 * U_max          (U_max = largest thermal-displacement eigenvalue)
     required = ceil(2W_max + 6*sqrt(2W_max)) + 2
-    effective = max(requested, min(required, hard_cap))
+    effective = min(max(requested, required), hard_cap)
+
+and the two checks built on it: the energy-reach guard
+(multiphonon_energy_reach), and the check that a computed law is not cut off
+before the needed reach (standalone_sab._truncation_warning).
 """
 import math
 
 import numpy as np
 import pytest
 
+from irma.core.constants import AMASSN, HBAR2_OVER_2MN_MEV_A2
 from irma.core.noncubic_engine import derive_required_multiphonon_order
+from irma.core.noncubic_helpers import KB_MEV_PER_K, multiphonon_energy_reach
 
 
 def _iso(u):
@@ -47,11 +53,7 @@ def test_required_order(q, U, u_max, requested, cap, want_eff, want_req):
 
 
 # --- energy-reach guard (multiphonon_energy_reach) --------------------------
-from irma.core.constants import AMASSN, HBAR2_OVER_2MN_MEV_A2    # noqa: E402
-from irma.core.noncubic_helpers import (                         # noqa: E402
-    KB_MEV_PER_K, multiphonon_energy_reach)
-
-# The 2 meV-cutoff vanadium evaluation that raised the old grid-top warning:
+# A 2 meV-cutoff vanadium evaluation whose law ends well below its grid top:
 # 293.6 K, a 5 eV energy grid, Q_max = 98.2 1/Angstrom, highest phonon
 # energy 31.686 meV, auto order 138.
 _V = dict(max_mode_energy_mev=31.686, max_q_ang_inv=98.2, temperature_k=293.6,
@@ -96,10 +98,10 @@ def test_reach_guard_never_fires_at_the_required_order():
         assert not reach.short, (trial, reach)
 
 
-def test_vanadium_auto_order_passes_where_the_grid_top_check_fired():
+def test_vanadium_auto_order_reaches_the_needed_energy():
     reach = multiphonon_energy_reach(138, masses_amu=[50.9415], **_V)
     assert not reach.short
-    assert reach.reach_mev < _V["grid_top_mev"]   # the old comparison fired here
+    assert reach.reach_mev < _V["grid_top_mev"]   # short of the grid top, not of the need
     # recoil ridge hbar^2 Q^2 / 2M and width sqrt(2 E_R kT_eff), with
     # kT_eff bounded by (x/2) coth(x/2) kT, x = E_max / kT, written out
     ridge = 2.0721248551 * 98.2 ** 2 * 1.00866491595 / 50.9415
@@ -120,7 +122,7 @@ def test_order_below_the_requirement_falls_short():
 
 def test_lightest_atom_sets_the_need_and_the_grid_top_caps_it():
     """Hydrogen's ridge at Q_max = 98.2 1/Angstrom is near 20 eV, above a
-    5 eV grid, so the need becomes the grid top: the old behaviour."""
+    5 eV grid, so the need is capped at the grid top."""
     reach = multiphonon_energy_reach(10, masses_amu=[50.9415, 1.00794], **_V)
     assert reach.atom_index == 1 and reach.capped
     assert reach.needed_mev == _V["grid_top_mev"]
