@@ -170,12 +170,12 @@ noisy, confirm the direction count before suspecting the physics.
 
 ### Tape-byte regression gates
 
-The classic-kernel reproductions are protected by byte-level regression
-gates: the generated tape must match a frozen reference exactly (or to the
-documented ≤ 7×10⁻⁵ tolerance). These gates are intentionally unforgiving so
-that any change to the classic kernels, even a harmless-looking refactor, is
-caught before it ships. The checks live in the LEAPR and Euphonic harnesses
-under `tests/`.
+The fresh-NJOY reproductions are pinned byte for byte in CI by the minitape
+tests (`tests/test_*_minitape.py`, `tests/test_writer_flag_tapes.py`): each
+small input file's MF7 must match an unmodified-NJOY2016.78 tape exactly, so
+any change to the classic kernels, even a harmless-looking refactor, is
+caught before it ships. The comparisons with the published tapes (≤ 7×10⁻⁵)
+run in the manual harness under `tests/native_LEAPR_NJOY_ENDF_validation/`.
 
 ## The Debye-Waller convention
 
