@@ -92,6 +92,11 @@ irma mlip emit bundle_orb --to spectra
 irma spectra run bundle_orb/spectra.yaml -o pe_vision.csv
 ```
 
+`irma mlip emit` writes its own production-density phonon mesh into
+`spectra.yaml` (`int(98/a)+1` points per lattice axis, about 14×21×39 for
+this cell), not the build's `--mesh`, which sets only the bundle's
+quick-look DOS.
+
 For the comparison below, the emitted spectra configuration was edited
 to the measurement conditions; the keys changed were:
 
