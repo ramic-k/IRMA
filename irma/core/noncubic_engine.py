@@ -8,18 +8,25 @@ run_noncubic_sab_inprocess; parse_args/main are a diagnostic CLI
 One-phonon terms (exact harmonic):
 
 - coherent n=1, the (UV) term of Squires Sec. 3.7: atom amplitudes are summed
-  before squaring; the diagonal (self) and interference pieces are kept too;
+  before squaring; the diagonal (self) and interference pieces are kept too.
+  With coherent_partition_mode='exact-total' the diagonal piece is the
+  per-site sum of |A_d|^2; in the default principal-xs-weighted mode it is the
+  principal group's self term |F_p|^2, which includes the interference
+  between sites of that group, and the interference piece is its weighted
+  share of the cross-group terms;
 - incoherent n=1, the (UV0) term of Squires Sec. 3.9;
 - the incoherent-approximation n=1 term: the same self kernel scaled with
   sigma_total instead of sigma_inc (mode 1, and the n=1 partner of the
   multiphonon tail).
 
 Multiphonon tail (orders n >= 2, incoherent approximation, Squires Sec. 3.10):
-a per-atom signed-energy self kernel normalized so its unit-Q integral equals
-u_hat . U_d . u_hat, the recursion T_n = (T_1 * T_{n-1}) / n, then the
-Debye-Waller and cross-section factors, with the powder average taken after
-the fixed-direction convolution. Exact coherent multiphonon scattering is not
-implemented.
+per direction u_hat, a per-atom signed-energy self kernel whose unit-Q
+integral is u_hat . U_d . u_hat (so 2W = Q^2 u_hat . U_d . u_hat), the
+unit-area shapes T_n = T_1 * T_{n-1} of the higher orders, and the Poisson
+weights exp(-2W) (2W)^n / n!, times the cross-section factors. The powder
+average over an equal-weight golden-spiral direction set, whose size is a
+convergence parameter, is taken after the fixed-direction convolution.
+Exact coherent multiphonon scattering is not implemented.
 
 Units and conventions: the sqe_* arrays are (sigma / 4 pi) S(Q,E) in
 barn / sr / meV, without the k_f/k_i factor (irma.spectra applies it). The
@@ -56,7 +63,7 @@ from irma.core.constants import (
     HBAR2_OVER_2MN_MEV_A2,
     AMASSN as NEUTRON_MASS_AMU,
 )
-from irma.core.noncubic_helpers import (  # re-exported for back-compat
+from irma.core.noncubic_helpers import (
     ANG2_TO_BARN,
     KB_MEV_PER_K,
     _FALLBACK_C_SCATTERING_LENGTHS_ANGSTROM,
@@ -73,7 +80,7 @@ from irma.core.noncubic_helpers import (  # re-exported for back-compat
     multiphonon_energy_reach,
     MULTIPHONON_MARGIN_SIGMAS,
 )
-from irma.core.noncubic_numerics import (  # re-exported for back-compat
+from irma.core.noncubic_numerics import (
     UNIFORM_GRID_RTOL,
     MAX_MULTIPHONON_WORK_BINS,
     HARD_WORK_BIN_LIMIT,
@@ -97,10 +104,8 @@ THz = 1000000000000.0
 # The ProcessPoolExecutor kernels (accumulate_*_block), the WORKER_STATE
 # global + set_worker_state, the shared-memory staging/attach helpers, the
 # thread-limiting pool initializer, and the projection / q-sampling /
-# precompute helpers live in noncubic_workers so this module
-# stays navigable. Re-imported here so compute_from_args and existing
-# ``from irma.core.noncubic_engine import ...`` callers keep working
-# unchanged. WORKER_STATE itself is intentionally NOT re-exported:
+# precompute helpers live in noncubic_workers; compute_from_args uses them
+# through these imports. WORKER_STATE itself is intentionally not imported:
 # set_worker_state (called from compute_from_args) rebinds it in
 # noncubic_workers, run_blocks stages THAT dict into shared memory for the
 # spawned workers, and the serial path's kernels read it there — a copy bound
@@ -210,8 +215,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Additionally compute the DIRECT energy-gain side S(Q, E<0) with "
             "explicit Bose annihilation factors (no detailed-balance mirror) and "
-            "surface it as sqe_*_gain_barn_per_meV. NS-bridge-only: the ENDF/SAB "
-            "tape outputs are unaffected. Off by default."
+            "surface it as sqe_*_gain_barn_per_meV. Used only by the instrument "
+            "forward model (irma.spectra); the ENDF/SAB outputs are unaffected. "
+            "Off by default."
         ),
     )
     parser.add_argument("--output-prefix", default="noncubic_sqe_with_multiphonon")
@@ -424,7 +430,9 @@ def compute_from_args(
         if order < required_order:
             print(f"WARNING: multiphonon order {order} is below the ~{required_order} needed "
                   f"at Q_max = {max_q_for_order:.1f} 1/A; the high-Q law is truncated. "
-                  "Raise Card 3 nphon or set Card 6g auto_order = 1.", flush=True)
+                  "Raise the multiphonon order or let the engine size it (deck: Card 3 "
+                  "nphon or Card 6g auto_order = 1; spectra: max_phonon_order: auto; "
+                  "NCrystal export: multiphonon_max_order: auto).", flush=True)
         # The sum must also reach the recoil ridge at the largest Q plus a few
         # thermal widths; any order that meets the Poisson rule does.
         energy_reach = multiphonon_energy_reach(
@@ -485,6 +493,9 @@ def compute_from_args(
         )
 
         # --- Coherent one-phonon S(Q,E) over the direction quadrature.
+        # meV per THz: times mev_to_joule in the prefactor it is h * 1 THz, the
+        # hbar that phonopy's DSF unit factor 1/(AMU (2 pi THz)^2) leaves out, so
+        # a line weighs b^2 |Q.e|^2 hbar (n+1) / (2 M omega).
         one_phonon_energy_jacobian_mev_per_thz = THzToEv * 1000.0
         one_phonon_principal_site_normalization = 1.0 / float(represented_principal_site_count)
         one_phonon_creation_scale = (
@@ -602,11 +613,6 @@ def compute_from_args(
                 # worker's result forever. Ordered map keeps the accumulation in
                 # fixed block order, so the floating-point sum (and therefore
                 # the tape) stays bitwise-reproducible from run to run.
-                #
-                # Import BrokenProcessPool by name: referencing it through
-                # ``cf.process`` would rely on accessing ``cf.ProcessPoolExecutor``
-                # first to trigger the submodule import as a side effect, which is
-                # fragile if this block is ever reordered.
                 import concurrent.futures as cf
                 from concurrent.futures.process import BrokenProcessPool
                 from functools import partial as _partial
@@ -1218,7 +1224,7 @@ def run_noncubic_sab_inprocess(
     and then reduced to the per-principal-scatterer law IRMA writes in MF7.
 
     ``precomputed_thermal_mats``: the (n_atoms, 3, 3) U_ij array [Angstrom^2]
-    for THIS temperature from the engine's
+    for this temperature from the engine's
     ``compute_thermal_displacement_matrices`` (same full mesh, same mode
     floor); when given, the compute phase reuses it instead of recomputing it.
     """
@@ -1287,6 +1293,8 @@ def run_noncubic_sab_inprocess(
         result["npz_path"] = npz_path
         result["json_path"] = json_path
     return result
+
+
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point: parse arguments, compute, write the result files."""
     args = parse_args(argv)

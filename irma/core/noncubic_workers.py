@@ -610,9 +610,10 @@ def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     debye_waller_block = np.exp(-0.5 * (q_mags_block[:, None] ** 2) * projected_u2_block)
     phase_block = np.exp(2j * np.pi * (g_vectors @ positions_t))
     qpoints_num_bands = eigvecs.shape[2]
-    # unit_conversion * mev_to_joule matches the Phonopy DSF-style THz-based
-    # prefactor. one_phonon_creation_scale supplies the separate THz->meV
-    # Jacobian and per-principal-site MT4 normalization.
+    # unit_conversion is phonopy's DSF unit factor 1/(AMU (2 pi THz)^2);
+    # one_phonon_creation_scale carries meV per THz, which with mev_to_joule
+    # gives h * 1 THz (the hbar that factor leaves out), and the
+    # per-principal-site MT4 normalization.
     creation_prefactor_scale = (
         unit_conversion * mev_to_joule * BARN_PER_M2 * one_phonon_creation_scale
     )
