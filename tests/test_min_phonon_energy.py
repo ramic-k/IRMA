@@ -111,8 +111,16 @@ def test_spectra_and_ncrystal_configs_carry_and_validate_the_cutoff(tmp_path):
                               num_directions=10, multiphonon_num_directions=5,
                               multiphonon_max_order="auto", min_phonon_energy_meV=0.5)
     assert meta["min_phonon_energy_meV"] == "0.5"
-    physics = sc.PhysicsConfig()
-    assert physics.min_phonon_energy_meV == 0.0
+    assert sc.PhysicsConfig().min_phonon_energy_meV == 0.0
+    spectra_material = {"phonopy_yaml": "model/phonopy.yaml", "mesh": [4, 4, 4],
+                        "temperature_K": 296.0}
+    spectra = sc.SpectraConfig.from_dict(
+        {"material": spectra_material, "physics": {"min_phonon_energy_meV": 0.5}})
+    assert spectra.physics.min_phonon_energy_meV == 0.5
+    for bad in (-1.0, float("nan")):
+        with pytest.raises(SpectraConfigError, match="min_phonon_energy_meV"):
+            sc.SpectraConfig.from_dict(
+                {"material": spectra_material, "physics": {"min_phonon_energy_meV": bad}})
 
 
 def test_spectra_mode1_cutoff_removes_the_low_energy_one_phonon_intensity():
