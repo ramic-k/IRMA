@@ -4,13 +4,13 @@
     irma mlip emit <bundle> --to endf,spectra,ncrystal [...]
     irma mlip validate <bundle>
 
-Exit codes: 0 success, 2 usage/validation error, 3 unconverged relaxation,
-4 missing potential dependency.
+Exit codes: 0 success, 2 usage, validation or execution error,
+3 unconverged relaxation, 4 missing potential dependency, 130 interrupted.
 
-`irma mlip validate` is the documented first action on a RECEIVED bundle,
-so it treats the bundle as UNTRUSTED: phonopy's YAML parser executes
-`!!python/` tags at parse time, and validate_bundle scans and rejects
-such files before any phonopy parse (see irma.mlip.bundle and
+`irma mlip validate` is the documented first action on a bundle received
+from someone else, so it treats the bundle as untrusted: phonopy's YAML
+parser executes `!!python/` tags at parse time, and validate_bundle scans
+and rejects such files before any phonopy parse (see irma.mlip.bundle and
 irma.core.phonopy_io.reject_unsafe_phonopy_yaml).
 
 The public potentials are exactly irma.mlip.calculators.POTENTIALS. The
@@ -211,7 +211,8 @@ def _build_parser():
                    help="BORN file; NAC is embedded in the bundle "
                         "(never read from the working directory)")
     b.add_argument("--mesh", default=None, metavar="'NX NY NZ'",
-                   help="quick-look/emit mesh [qden rule; 1 1 1 disordered]")
+                   help="quick-look DOS/census mesh [qden rule; 1 1 1 "
+                        "disordered]; emitted inputs use int(98/a)+1 per axis")
     b.add_argument("--disordered", action="store_true",
                    help="disordered/amorphous material: box = its own "
                         "supercell, Gamma mesh, DOS-driven emission")
@@ -232,8 +233,10 @@ def _build_parser():
                    help="output directory [the bundle directory]")
     e.add_argument("--min-phonon-energy", type=float, default=0.0, metavar="MEV",
                    help="remove every phonon mode with energy at or below this "
-                        "value (meV) from all terms, in every emitted file; "
-                        "0 = the automatic floors only (default: 0)")
+                        "value (meV) from all terms; written into the mode-1/2 "
+                        "ENDF decks and the crystalline spectra and NCrystal "
+                        "configs (mode-0 decks and disordered bundles do not "
+                        "use it); 0 = the automatic floors only (default: 0)")
     e.add_argument("--overwrite", action="store_true",
                    help="replace existing emitted files")
     _add_emit_options(e)
@@ -323,9 +326,9 @@ def _cmd_build(args) -> int:
     if not os.path.isfile(args.structure):
         return _err(f"structure file not found: {args.structure}")
 
-    # ALL numeric/option validation runs BEFORE any expensive work (checkpoint
-    # load, relaxation), and the output target is preflighted first of all so
-    # a doomed run fails in milliseconds, not minutes (review findings 1, 4).
+    # Check the numeric options and the output directory before any
+    # expensive work (checkpoint load, relaxation), so a bad command fails
+    # at once.
     if args.threads is not None and args.threads < 1:
         return _err(f"--threads must be >= 1, got {args.threads}")
     if args.jobs < 1:
@@ -372,21 +375,19 @@ def _cmd_build(args) -> int:
             pass
 
     # the parent process (relaxation + serial force path) always gets the
-    # full thread width; parallel workers re-clamp themselves to 1 (review
-    # finding 3)
+    # full thread width; parallel workers re-clamp themselves to 1
     threads = args.threads if args.threads is not None \
         else (os.cpu_count() or 1)
-    # clamp native pools BEFORE anything imports torch (canonicalization
-    # may): OpenMP runtimes size their pools at initialization, and a
-    # pool born unclamped ignores later env changes -- the ZrO2 probe
-    # measured the resulting stray threads spinning at >10 cores of sys
-    # time for zero speedup
+    # clamp native pools before anything imports torch (canonicalization
+    # may): OpenMP runtimes size their pools at initialization and ignore
+    # later environment changes, and an unclamped pool spins extra threads
+    # for no speedup
     from irma.mlip.calculators import _clamp_native_threads
     _clamp_native_threads(threads)
     spec = CalculatorSpec(args.potential, model=args.model, threads=threads)
     try:
         # pin floating model identities (pet-mad @version, dpa3 ::head)
-        # BEFORE the spec fans out to workers and the cache fingerprint
+        # before the spec reaches the workers and the cache fingerprint
         spec = canonicalize_spec(spec)
         calculator, calc_meta = make_calculator(spec)
     except MlipDependencyError as exc:
@@ -451,11 +452,10 @@ def _cmd_build(args) -> int:
         calculator.close()
 
     if args.born:
-        # fail BEFORE the force loop: a BORN file written for the
-        # input symmetry stops matching when relaxation drifts the
-        # positions off the exact Wyckoff sites (found live: the
-        # error otherwise surfaces only after every displacement
-        # was computed)
+        # fail before the force loop: a BORN file written for the
+        # input symmetry stops matching when relaxation moves the
+        # positions off the exact Wyckoff sites, and the error would
+        # otherwise surface only after every displacement was computed
         from irma.mlip.bundle import check_born_rows
         problem = check_born_rows(args.born, rr.atoms)
         if problem:

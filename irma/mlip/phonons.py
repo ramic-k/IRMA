@@ -3,18 +3,18 @@ optionally parallel force loop.
 
 The phonopy model is constructed directly with an identity primitive matrix
 (the INSPIRED convention; irma.core.phonopy_io's pinned kwargs are a
-phonopy.load policy and apply only when RELOADING a bundle). The displacement
-force loop is the entire cost center: it runs serially in-process by default,
+phonopy.load policy and apply only when reloading a bundle). The displacement
+force loop takes nearly all the time: it runs serially in-process by default,
 or across a spawn-context process pool where each worker builds its own
-calculator from the pickled CalculatorSpec with ONE native thread (the
-measured-oversubscription convention shared with irma.core.noncubic_workers).
+calculator from the pickled CalculatorSpec with one native thread, which
+avoids oversubscribing the cores (as in irma.core.noncubic_workers).
 
 Per-displacement forces are persisted to a scratch directory as they
 complete, keyed by a versioned fingerprint over everything that affects them
 (structure, displacement dataset, supercell/primitive matrices, delta,
 potential identity). A rerun with a matching fingerprint reuses cached
-forces; ANY mismatch wipes the scratch with a printed reason -- stale-force
-reuse is the exact artifact-hazard class this front end exists to eliminate.
+forces; any mismatch discards the cached forces, with a printed reason, so
+forces from a different model or structure are never reused.
 
 All heavy imports are function-level (core-clean module).
 """
@@ -71,7 +71,7 @@ def _build_phonopy(atoms, supercell):
     from phonopy.structure.atoms import PhonopyAtoms
     # masses passed explicitly: PhonopyAtoms otherwise installs periodic-table
     # defaults, silently discarding isotopic/custom masses the fingerprint
-    # already accounts for (review finding 3).
+    # already accounts for.
     unitcell = PhonopyAtoms(
         symbols=list(atoms.get_chemical_symbols()),
         cell=atoms.get_cell().array,
@@ -252,9 +252,9 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
     elif todo:
         from concurrent.futures import ProcessPoolExecutor, as_completed
         from multiprocessing import get_context
-        # 1 native thread per worker by default (the measured-safe
-        # convention); --worker-threads widens each worker for machines
-        # where jobs x threads < cores has headroom
+        # 1 native thread per worker by default, which avoids
+        # oversubscription; --worker-threads widens each worker when
+        # jobs x threads stays below the core count
         pool = ProcessPoolExecutor(
             max_workers=jobs, mp_context=get_context("spawn"),
             initializer=_worker_init,
@@ -272,10 +272,10 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
                 _save_force(scratch_dir, i, f)
                 progress(f"  displacement {k}/{len(todo)} done")
         except BaseException:
-            # Cancel everything still queued -- without this, a worker error
-            # or Ctrl-C waits out thousands of pending displacements before
-            # surfacing (review finding 4). Completed forces are already on
-            # disk, so the fingerprinted resume picks up exactly here.
+            # Cancel everything still queued; without this, a worker error
+            # or Ctrl-C waits out every pending displacement before
+            # surfacing. Completed forces are already on disk, so the
+            # fingerprinted resume continues from here.
             pool.shutdown(wait=False, cancel_futures=True)
             raise
         else:
@@ -285,9 +285,9 @@ def compute_force_constants(atoms_relaxed, spec: CalculatorSpec, *,
     phonon.produce_force_constants()
 
     # Raw-FC drift via phonopy's own diagnostic (both the translational and
-    # the permutation/net-force components; a hand-rolled fc.sum() picks one
-    # axis convention and misses the other -- review finding 7), then explicit
-    # symmetrization (produce_force_constants alone does not symmetrize).
+    # the permutation/net-force components; an fc.sum() over one axis checks
+    # only one of them), then explicit symmetrization
+    # (produce_force_constants alone does not symmetrize).
     from phonopy.harmonic.force_constants import get_drift_force_constants
     d1, d2, _, _ = get_drift_force_constants(phonon.force_constants,
                                              primitive=phonon.primitive)

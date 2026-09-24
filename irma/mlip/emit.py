@@ -4,21 +4,17 @@ From a phonon-model bundle plus the nuclear-data table, generate starting
 inputs for IRMA's three consumers:
 
 - ENDF decks (one per principal scatterer). Crystalline materials get an
-  iel=10 deck at the selected physics level (``inelastic_mode`` 0, 1, or 2;
-  default 2) in the selected elastic convention (``elastic_format``: mef,
-  the default, or sef). Modes 1/2 are the phonopy-backed directional decks
-  (full Card 6 stream, generated explicit auto grids, Card 6g
-  10000/1000/auto, use_born=0 -- NAC, when present, is embedded in the
-  bundle's phonopy.yaml); mode 2 writes lin-lin iint=1, modes 0/1 write
-  log-lin iint=0. Mode 0 is the classic isotropic layout driven by the
-  bundle's species-projected DOS: the principal's spectrum on the classic
-  Card 11-14 cards plus one Card 6e partial spectrum per non-principal
-  species. Disordered materials get the
-  classic continuous-spectrum deck instead: the species-projected DOS drives
-  contin, and the elastic term is incoherent-format with
-  SB = sigma_bound_total (the incoherent approximation applied to elastic;
-  Card 5 spr carries the free-atom equivalent so the writer's
-  SB = sb*npr lands on the bound total).
+  iel=10 deck with ``inelastic_mode`` 0, 1 or 2 (default 2) and
+  ``elastic_format`` mef (default) or sef. Modes 1/2 read the bundle's
+  phonopy.yaml (use_born=0: NAC, when present, is embedded in it), with
+  explicit automatic grids and Card 6g 10000/1000/auto; mode 2 writes
+  lin-lin iint=1, modes 0/1 log-lin iint=0. Mode 0 uses the bundle's
+  species-projected DOS: the principal's spectrum on Cards 11-14 and one
+  Card 6e partial spectrum per non-principal species. Disordered materials
+  get the classic continuous-spectrum deck: the species DOS drives contin,
+  and the elastic term is incoherent with SB = sigma_bound_total (the
+  incoherent approximation applied to elastic; Card 5 spr is the free-atom
+  value, so the writer's SB = sb*npr is the bound total).
 - A spectra YAML (scatterers in the bundle's resolved species order; the
   forward model has no principal scatterer).
 - An NCrystal exporter YAML (crystalline only).
@@ -30,7 +26,7 @@ Nuclide identity: a phonopy model names elements, not isotopes, so the
 default identity is the natural element (ENDF codes it A = 0) and the
 constants are that element's natural-abundance values. Identity and
 constants therefore always come from the same table entry. Explicit
---nuclide mappings select an isotope and take BOTH from it. Nuclides the
+--nuclide mappings select an isotope and take both from it. Nuclides the
 source table marks energy-dependent are refused as silent prefills.
 
 All heavy imports are function-level (core-clean module).
@@ -61,12 +57,12 @@ def _emit_ncpu():
 def _emit_mesh(bundle):
     """Mesh prefilled into every emitted input: production density.
 
-    int(MESH_QDEN_PROD/a_i)+1 per axis reproduces the validation
-    campaign's 40x40x40 graphite mesh (a = 2.461 A) as a uniform
-    reciprocal-space density. The bundle's own coarser quick-look mesh
-    feeds only its DOS plot; prefill quality is the emitted files'
-    contract. Disordered bundles keep their Gamma-only mesh (the
-    classic DOS path never sums over q).
+    int(MESH_QDEN_PROD/a_i)+1 per axis, a uniform reciprocal-space
+    density: on graphite it gives 40 along a and b (a = 2.461 A), the
+    in-plane density of the 40x40x40 validation mesh, and 15 along c
+    (6.71 A). The build's --mesh sets only the bundle's quick-look DOS and
+    census mesh, not this one. Disordered bundles keep their Gamma-only
+    mesh (the classic DOS path never sums over q).
     """
     if bundle.manifest.get("disordered"):
         return [int(n) for n in bundle.manifest["phonons"]["mesh"]]
@@ -136,8 +132,8 @@ def resolve_species(bundle: Bundle, *, nuclides=None, overrides=None,
     species = []
     for symbol in order:
         if symbol in nuclides:
-            # Explicit nuclide: BOTH the ZA identity and the base constants
-            # come from the isotope entry (review finding 1).
+            # Explicit nuclide: both the ZA identity and the base constants
+            # come from the isotope entry.
             base = lookup(nuclides[symbol])
             if base.symbol != symbol:
                 raise ValueError(
@@ -148,31 +144,31 @@ def resolve_species(bundle: Bundle, *, nuclides=None, overrides=None,
             identity = "explicit"
         else:
             # A phonopy model names an element, not an isotope, so the
-            # honest default is the natural element: ENDF codes it A = 0,
-            # and the constants below come from the SAME entry, so the
-            # identity and the physics can never disagree.
+            # default is the natural element: ENDF codes it A = 0, and the
+            # constants below come from the same entry, so the identity and
+            # the constants agree.
             base = lookup(symbol)          # natural-element constants
             z, a = base.Z, 0
             identity = "natural"
             progress(f"  {symbol}: natural element (za={1000 * z}); "
                      f"select an isotope with --nuclide {symbol}=<A>-{symbol} "
-                     f"to take its identity AND its constants")
+                     f"to take its identity and its constants")
 
         ov = overrides.get(symbol, {})
-        # An energy-dependent tabulated length is only unlocked by the user
-        # supplying the scattering constants themselves -- an awr-only or
-        # typo override must not slip flagged values through.
+        # An energy-dependent tabulated length is accepted only when the
+        # user supplies both scattering constants; an awr-only or mistyped
+        # override does not let the flagged values through.
         if base.energy_dependent and not {"b_coh_fm",
                                           "sigma_inc_b"} <= set(ov):
             raise ValueError(
                 f"{symbol}: the tabulated scattering length is marked "
                 f"ENERGY-DEPENDENT (resonance-region value) and is not a "
-                f"safe prefill; supply explicit b_coh_fm AND sigma_inc_b "
+                f"safe prefill; supply explicit b_coh_fm and sigma_inc_b "
                 f"via --species {symbol}:...")
         awr = float(ov.get("awr", base.awr))
         b_coh = float(ov.get("b_coh_fm", base.b_coh_fm))
         sigma_inc = float(ov.get("sigma_inc_b", base.sigma_inc_b))
-        # sigma_bound is ALWAYS derived from (b_coh, sigma_inc): the triple
+        # sigma_bound is always derived from (b_coh, sigma_inc): the triple
         # must stay self-consistent because mode-2 renormalizes from the
         # Card 6d constants (driver.py). A supplied value is only accepted
         # as a cross-check within 0.5%.
@@ -329,17 +325,13 @@ _MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
 def _comment_cards(bundle, symbol, extra=""):
     """MF1/MT451 comment cards for an emitted deck.
 
-    The ENDF writer maps comment card 1 onto the fixed-column structured
-    header (ZSYMAM/ALAB/EDATE/AUTH, truncated at column 66, column 1 blank
-    belonging to ZSYMAM), card 2 onto REF/DDATE/RDATE/ENDATE (with unmapped
-    pad columns that are dropped), cards 3-5 onto HSUB1-3, and cards 6+
-    onto free-text DESCRIPTION records. A single long provenance card would
-    therefore be silently truncated at column 66 with the tail (the bundle
-    path and fingerprint) lost and the surviving text landing in the
-    EDATE/AUTH fields. So: card 1 is a short conventional header laid out
-    on the structured columns, cards 2-5 are left blank for the user to
-    fill in, and the full provenance rides on DESCRIPTION cards, wrapped so
-    no card exceeds 66 columns.
+    The ENDF writer maps card 1 onto the fixed-column header
+    (ZSYMAM/ALAB/EDATE/AUTH, cut at column 66), card 2 onto
+    REF/DDATE/RDATE/ENDATE, cards 3-5 onto HSUB1-3, and later cards onto
+    DESCRIPTION records. A long provenance line on card 1 would be cut at
+    column 66, so card 1 is a short header on those columns, cards 2-5 are
+    left blank for the user, and the provenance (bundle path, fingerprint)
+    goes on DESCRIPTION cards of at most 66 columns.
     """
     import datetime
     import textwrap
@@ -353,7 +345,7 @@ def _comment_cards(bundle, symbol, extra=""):
     provenance = (f"{GENERATED_NOTE}; bundle {bundle.path}; "
                   f"fingerprint {bundle.fingerprint[:16]}{extra}")
     for line in textwrap.wrap(provenance, width=65):
-        # column-1 blank by convention; apostrophes doubled AFTER wrapping
+        # column-1 blank by convention; apostrophes doubled after wrapping
         # (the tokenizer folds '' back to ', so the 66-column budget is the
         # undoubled length)
         cards.append("' " + line.replace("'", "''") + "' /")
@@ -369,9 +361,8 @@ def _write_deck(path, lines, overwrite):
 def _uniform_rho(e_mev, rho):
     """Resample a projected DOS onto the uniform grid the deck cards take.
 
-    Returns ``(delta_ev, ni, rho_uni)``: the point count follows a
-    max-spacing rule so sharp/high-frequency spectra are not undersampled
-    by a fixed count (review finding 6); rho(0) is pinned to 0.
+    Returns ``(delta_ev, ni, rho_uni)`` on bundle.dos_grid_mev, so a
+    species DOS from _species_dos is not resampled; rho(0) is pinned to 0.
     """
     import numpy as np
     from irma.mlip.bundle import dos_grid_mev
@@ -389,7 +380,7 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
                       elastic_format="mef", allow_unstable=False,
                       _preview=False):
     """_preview (tests/smoke only): coarse grids + tiny sampling + low
-    phonon order, so an emitted deck can be RUN through the engine in
+    phonon order, so an emitted deck can be run through the engine in
     seconds. Never a production surface."""
     freq_max_ev = bundle.manifest["phonons"]["freq_max_meV"] * 1e-3
     mesh = _emit_mesh(bundle)
@@ -422,7 +413,7 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
             f"{ef_field} {nat} {len(others)} {inelastic_mode} /",
             " ".join(f"{v:.6f}" for v in cellpar) + " /",
         ]
-        for s in species:            # ALL Card 6d groups on EVERY deck
+        for s in species:            # every Card 6d group on every deck
             lines.append(f"{s.Z} {s.A} {s.awr:.6f} {s.b_coh_fm:.6f} "
                          f"{s.sigma_inc_b:.6f} {len(s.positions)} /")
             coords = "  ".join(
@@ -684,14 +675,14 @@ def emit_ncrystal_yaml(bundle: Bundle, *, temperature_k, material_id=None,
                        progress=print):
     """NCrystal exporter config (real NCrystalExportConfig schema).
 
-    Crystalline materials only in v1: the exporter's coherent-elastic story
-    for disordered matter is the deferred amorphous S(Q) work.
+    Crystalline materials only: IRMA has no coherent-elastic model for
+    amorphous matter.
     """
     if bundle.manifest.get("disordered"):
         raise ValueError(
-            "NCrystal emission is not supported for disordered materials in "
-            "v1: the exporter's coherent-elastic treatment needs the "
-            "deferred amorphous S(Q) work; emit endf/spectra instead")
+            "NCrystal export is not available for disordered materials: it "
+            "needs a coherent-elastic S(Q) model for amorphous matter, which "
+            "IRMA does not provide; emit endf or spectra instead")
     species = resolve_species(bundle, nuclides=nuclides, overrides=overrides,
                               progress=progress)
     cfg = {
