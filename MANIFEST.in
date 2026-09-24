@@ -1,8 +1,5 @@
-# Deliberate sdist contents. Without this file, setuptools' legacy defaults
-# shipped a broken half test-tree (tests/test_*.py without conftest.py or the
-# ~33 MB of reference data they need) and omitted the project meta-docs.
-# The sdist is library-only: the test suite and its reference tapes live in
-# the repository. LICENSE and THIRD_PARTY_NOTICES.md are included via
+# sdist contents. The sdist is library-only: the test suite and its reference
+# data (~33 MB) live in the repository. LICENSE and THIRD_PARTY_NOTICES.md are included via
 # `license-files` in pyproject.toml.
 prune tests
 include LICENSES/Apache-2.0.txt
@@ -18,11 +15,11 @@ graft examples
 # so the examples run from an unpacked sdist, not only from a repo checkout.
 include tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml
 include tests/mode2_euphonic_n1_validation/graphite/FORCE_CONSTANTS
-# The shipped READMEs (README.md "Worked examples" and examples/tsl/README.md)
-# give runnable `python -m irma <deck> <out>` commands that point at these
-# classic reference decks, so ship the decks themselves (~380 KB total). The
-# multi-MB companions (NJOY .leapr job streams, reference .endf tapes) stay
-# repository-only; the READMEs say so. leapr_to_irma_input.py is the converter
-# both READMEs reference for turning an NJOY LEAPR deck into an IRMA deck.
+# README.md ("Example input files") and examples/tsl/README.md give runnable
+# `python -m irma <deck> <out>` commands that point at these classic reference
+# decks, so ship the decks themselves (~380 KB total). The multi-MB companions
+# (NJOY .leapr job streams, reference .endf tapes) stay repository-only; the
+# READMEs say so. README.md also names leapr_to_irma_input.py, the converter
+# from an NJOY LEAPR deck to an IRMA deck.
 include tests/native_LEAPR_NJOY_ENDF_validation/leapr_decks/*.input
 include tests/native_LEAPR_NJOY_ENDF_validation/leapr_to_irma_input.py
