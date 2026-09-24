@@ -6,7 +6,8 @@ libraries in ENDF-6 format using the phonon expansion method.
 Supports:
   - Continuous phonon frequency distributions
   - Generalized coherent elastic (Bragg edges) for arbitrary crystals
-  - Phonopy-backed hybrid inelastic_mode paths for noncubic MT4 generation
+  - Phonopy-backed anisotropic inelastic scattering (inelastic_mode 1/2) for
+    MF7/MT4
   - Free-gas and diffusion translational modes
   - Discrete oscillators
   - Cold hydrogen/deuterium (ortho/para)
@@ -14,6 +15,10 @@ Supports:
   - Neutron-scattering forward model (irma.spectra): powder S(Q,E) ->
     instrument-resolved 1-D spectrum for VISION / indirect / direct geometries,
     with an auto chopper-resolution model for the 8 PyChop direct instruments
+  - NCrystal export (irma.ncrystal): .irmapack data files and NCMAT materials
+    for the ncrystal_plugin_IRMA plugin
+  - MLIP front end (irma.mlip): phonon-model bundles from a structure and a
+    machine-learned potential, and starting inputs for the other paths
 """
 
 __version__ = "1.0.3"
