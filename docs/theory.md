@@ -2,15 +2,15 @@
 
 IRMA evaluates the thermal scattering response of a material as the thermal
 scattering law `S(α,β)`, a tabulated function of momentum and energy transfer,
-and writes it to ENDF-6 File 7. This page collects the physics behind that
-sentence, in just enough depth to read the rest of the manual with confidence.
+and writes it to ENDF-6 File 7. This page summarizes the physics behind that
+sentence.
 IRMA is a Python reimplementation and generalization of the LEAPR module of
-NJOY2016: the classic phonon-expansion kernels are reproduced faithfully
-(validated against published NJOY tapes), and on top of them IRMA adds a
+NJOY2016: the classic phonon-expansion kernels are ported from LEAPR
+(validated against NJOY tapes), and on top of them IRMA adds a
 generalized coherent-elastic (Bragg-edge) treatment for any crystal and an
-exact one-phonon inelastic treatment for noncubic crystals, driven by phonopy
+exact one-phonon inelastic treatment for any crystal, driven by phonopy
 eigenvectors. If you already know LEAPR, the first half of the page is
-familiar ground and the noncubic sections are the new material.
+familiar ground and the generalized-elastic and mode-1/2 sections are the new material.
 
 ## In plain language
 
@@ -60,7 +60,7 @@ symmetric convention obeys detailed balance explicitly (the thermodynamic
 relation that fixes the ratio of up-scatter to down-scatter at a given
 temperature) and is even in `β`. The asymmetric (sometimes "script-S")
 convention folds the `exp(−β/2)` Boltzmann factor in, so the two sides of `β`
-differ. IRMA's noncubic engine builds the physical, energy-loss (down-scatter)
+differ. IRMA's mode-1/2 engine builds the physical, energy-loss (down-scatter)
 side and stores a downscatter-side asymmetric table,
 
 $$
@@ -144,20 +144,20 @@ weight `cfrac` (Card 19). Of the pair-correlation options only Sköld modifies
 the stored table; Vineyard (an alternative pair-correlation prescription)
 is accepted for compatibility but does not alter `S(α,β)`.
 
-These kernels are reproduced, not reinvented. They match published
-ENDF/B-VIII.1 reference tapes to 7e-5, and freshly generated NJOY2016
-tapes exactly for several material families (liquid methane,
-ortho-/para-hydrogen and -deuterium, BeO). A handful of deliberate,
-documented divergences from NJOY exist (noted inline in
-`irma/core/kernels.py`); none affect the validated comparisons. Treat the
-classic kernels as a faithful LEAPR; the
+The classic kernels are ports of NJOY2016 LEAPR. They match published
+ENDF/B-VIII.1 reference tapes to 7e-5, and freshly generated NJOY2016.78
+tapes exactly (liquid methane, ortho-/para-hydrogen, two-pass BeO);
+small-deck minitapes in the fast suite pin cold deuterium and the Sköld
+correction against NJOY. A handful of deliberate, documented divergences
+from NJOY exist (noted inline in `irma/core/kernels.py`); none affect the
+validated comparisons. The
 [validation methodology](validation/methodology.md) page has the details.
 
 ## Generalized coherent elastic (Bragg edges)
 
 For a crystalline solid, coherent elastic scattering produces the familiar
 sawtooth of Bragg edges; below the lowest reflection there is no coherent
-elastic scattering at all. The legacy LEAPR path (`iel = 1–6`) carries this
+elastic scattering at all. The LEAPR path (`iel = 1–6`) carries this
 for a fixed list of built-in materials. IRMA generalizes it (`iel = 10`) to
 any crystal supplied through Cards 6c–6d: the lattice and atom positions are
 enumerated, reciprocal-lattice planes are generated down to a `d`-spacing
@@ -173,7 +173,7 @@ is adapted from NCrystal (Apache-2.0; see `THIRD_PARTY_NOTICES.md`) and
 follows the NCrystal elastic-scattering formalism; the licensing notice is
 retained as required. The formalism is that of T. Kittelmann et al., "Elastic
 neutron scattering models for NCrystal", Computer Physics Communications
-**267** (2021) 108082, and K. Ramic, J. I. Marquez Damian, et al.,
+**267** (2021) 108082, and K. Ramić, J. I. Marquez Damian, et al.,
 "NJOY+NCrystal", NIM-A **1027** (2022) 166227.
 
 ### Elastic format: SEF vs. MEF (Card 6b field 1)
@@ -191,7 +191,7 @@ updated because "current" stopped discriminating once MEF entered the ENDF-6
 standard.
 
 SEF folds the full elastic strength (`σ_coh + σ_inc`) into a single elastic
-component, chosen as follows (Eqs. 24–26 of Ramic et al., *NIM-A* **1027**
+component, chosen as follows (Eqs. 24–26 of Ramić et al., *NIM-A* **1027**
 (2022) 166227). For a single atom type the dominant component carries it: if
 `σ_coh > σ_inc`, the Bragg edges are written (`LTHR=1`) scaled by
 `(σ_coh + σ_inc)/σ_coh` (Eq. 24); otherwise the incoherent Debye-Waller line
@@ -204,19 +204,20 @@ incoherent contribution, carries the coherent elastic (`LTHR=1`, scaled by
 for) that is not the DC atom gets incoherent elastic (`LTHR=2`) with the DC
 atom's incoherent strength redistributed onto it (Eq. 26).
 
-For materials whose high-energy region carries a very dense forest of Bragg
-edges, optional edge grouping (ENDF-102 §7.2.2; Card 6b fields 5–6) merges
-the steps above a threshold energy into `bins_per_decade` log-uniform bins
-with structure-factor-weighted placement. The merge is mass-conserving:
-cumulative `S` and the total cross section are preserved. It is off by
-default.
+For materials with many closely spaced high-energy Bragg edges, optional
+edge grouping (ENDF-102 §7.2.2; Card 6b fields 5–6) merges the steps above
+a threshold energy into `bins_per_decade` log-uniform bins with
+structure-factor-weighted placement. The cumulative `S` stays exact at each
+bin boundary; within a bin the edges become one step, so the pointwise
+cross section changes slightly, and more at temperatures away from the
+first. The run prints the per-temperature error. It is off by default.
 
-## The noncubic inelastic engine
+## The phonopy-backed inelastic engine (modes 1/2)
 
-Cubic crystals have an isotropic Debye-Waller factor, so the legacy
-scalar-DOS expansion (`inelastic_mode = 0`) is adequate. Anisotropic crystals
+Cubic crystals have an isotropic Debye-Waller factor, so the scalar-DOS
+phonon expansion (`inelastic_mode = 0`) is adequate. Anisotropic crystals
 do not: the mean-square displacement is a tensor, and treating it as a scalar
-mis-suppresses high-`Q` scattering. IRMA's noncubic engine
+mis-suppresses high-`Q` scattering. IRMA's mode-1/2 engine
 (`irma/core/noncubic_engine.py`, `inelastic_mode = 1/2`) builds the inelastic
 `S(α,β)` directly from phonopy eigenvectors and frequencies and keeps the
 directional information throughout.
@@ -241,7 +242,7 @@ The mode definitions follow from which of these are combined:
 
 | `inelastic_mode` | One-phonon term | Multiphonon |
 |------------------|-----------------|-------------|
-| 0 | (legacy cubic, scalar DOS, isotropic Debye-Waller) | classic LEAPR expansion |
+| 0 | (phonon expansion from a scalar DOS, isotropic Debye-Waller) | classic LEAPR expansion |
 | 1 | incoherent-approximation self term (`σ_tot`) | incoherent-approximation |
 | 2 | **exact** coherent + incoherent (`σ_coh` + `σ_inc`) | incoherent-approximation |
 
@@ -257,8 +258,8 @@ A polycrystalline sample averages over all crystal orientations, so the
 fixed-`Q` terms must be powder-averaged over the sphere. IRMA samples
 directions with a golden-spiral (Fibonacci) quadrature, a set of points that
 covers the sphere with equal solid angle per point, one radius per `Q` bin.
-This is the rigorous continuous-direction spherical average, equivalent to
-Euphonic's `golden` powder method. The direction count is Card 6g `ndir`
+This quadrature converges to the spherical average as the direction count
+grows, and matches Euphonic's `golden` powder method. The direction count is Card 6g `ndir`
 (production default `10000`, the validation-campaign sampling). The coherent
 one-phonon term is validated against Euphonic, coherent component against
 coherent component: the integrals, compared in the symmetric convention,
@@ -270,12 +271,13 @@ agree to ratios of 1.00001 (graphite), 1.0002 (beryllium), and 0.9998
 Exact coherent multiphonon scattering is not attempted. Instead a smooth
 higher-order background is built in the incoherent approximation, in the
 style of Squires §3.10: a per-atom self kernel is normalized to the
-directional mean-square displacement, and higher orders are generated by the
-harmonic recursion `T_n = (T_1 * T_{n−1}) / n` (self-convolution), with
-Debye-Waller and cross-section factors applied after the convolution. The
-orders are weighted by a bounded Poisson factor in `2W = Q²a`, where `a` is
-the directional mean-square displacement, rather than by the overflow-prone
-`(Q²)^n/n!` split.
+directional mean-square displacement, and higher orders are unit-area
+self-convolutions `T_n = T_1 * T_{n−1}`, with Debye-Waller and
+cross-section factors applied after the convolution. Order `n` is weighted
+by the Poisson factor `e^{−2W}(2W)^n/n!` with `2W = Q²a`, where `a` is the
+directional mean-square displacement. (The textbook split into
+`(T_1 * T_{n−1})/n` shapes and `(Q²)^n` weights is equivalent but
+overflows.)
 
 Which modes exist at all is decided once, by one mask, for every term.
 Imaginary modes (negative frequencies) and numerical noise near zero energy
@@ -283,7 +285,7 @@ fall under two fixed floors, 1 µeV in general and 0.1 meV at Γ, so a mesh
 with acoustic-sum-rule noise at Γ still evaluates. An optional user minimum
 phonon energy raises that floor for every term at once, the coherent
 one-phonon term included; the removed modes are not replaced by a Debye or
-any other continuation and the remaining spectrum is not renormalised, so a
+any other continuation and the remaining spectrum is not renormalized, so a
 positive value makes the evaluation a deliberately truncated vibrational
 model. Because the mean-square displacement weights modes as 1/E², the
 Debye-Waller factors respond to such a cutoff far more strongly than the
@@ -292,12 +294,12 @@ the modes and 29% of the displacement), which is why the run reports both.
 
 Self-convolution needs a uniform signed-energy work grid. A uniform output
 grid is used directly. A non-uniform (for example log-tailed) output grid
-would blow the work grid up to billions of bins on its finest spacing, so the
-engine works on a uniform grid at the output grid's own phonon-region step
-(the spacing that repeats across the linear phonon region, so the deck's
-phonon subdivision sets the multiphonon resolution and the number of tail
-points cannot change it) and rebins the smooth result back in an
-integral-conserving way. The multiphonon direction count is
+would need billions of bins at its finest spacing, so the engine instead
+works on a uniform grid at the output grid's phonon-region step, the spacing
+that repeats across the linear phonon region. The input file's phonon
+subdivision therefore sets the multiphonon resolution, and the number of
+tail points cannot change it. The smooth result is rebinned back to the
+output grid in an integral-conserving way. The multiphonon direction count is
 Card 6g `mpdir` (converges by ~50–100; 1000 recommended, cost linear).
 Transfers beyond the tabulated grid are covered downstream by THERMR's
 short-collision-time extension.
@@ -313,23 +315,24 @@ $$
 
 the directional mean-square displacement, evaluated per powder direction
 before averaging, *not* the orientation-averaged scalar `\mathrm{Tr}(U_d)/3`.
-This distinction is the whole point of the noncubic modes.
+Modes 1 and 2 exist to keep this directional factor.
 
 Replacing the tensor with its trace-averaged
 scalar applies one suppression to every direction, and for a strongly
 anisotropic crystal the exact directional factor and the isotropic one
 diverge at high `Q`. In graphite (`W_c/W_ab ≈ 6.6`, the ratio of
-out-of-plane to in-plane Debye-Waller exponents) the isotropically averaged
-one-phonon `S` is suppressed by a factor of about 2 at `Q = 20 1/Å` and about
-4×10⁶ at `Q = 50 1/Å` relative to IRMA's exact directional powder average,
-for the constant-energy cut at E ≈ 2 meV (the figure below). This is not a
-numerical artifact: IRMA's own `inelastic_mode = 0` (isotropic Debye-Waller)
-reproduces the isotropic roll-off; the Debye-Waller treatment is the only
-difference between the two runs. Use
-`inelastic_mode = 2` for anisotropic crystals.
+out-of-plane to in-plane Debye-Waller exponents), the released OCLIMAX,
+which uses a first-order approximation for the anisotropic Debye-Waller
+factor, is suppressed relative to IRMA's exact directional powder average
+by a factor of about 2 at `Q = 20 1/Å` and about 4×10⁶ at `Q = 50 1/Å`,
+for the constant-energy cut at E ≈ 2 meV (the figure below). IRMA's own
+`inelastic_mode = 0` (isotropic Debye-Waller) shows the same qualitative
+roll-off at a different magnitude; mode 0 also differs from mode 2 in the
+one-phonon term itself, which it builds in the incoherent approximation
+from a scalar DOS. Use `inelastic_mode = 2` for anisotropic crystals.
 
 ![Directional vs isotropic Debye-Waller attenuation in the graphite one-phonon
-S at E ≈ 2 meV: the computed curves on top, isotropic-to-directional ratios below](assets/validation/graphite/fig_graphite_dw_directional.png)
+S at E ≈ 2 meV: the computed curves on top, each curve divided by IRMA mode 2 below](assets/validation/graphite/fig_graphite_dw_directional.png)
 
 ## References
 
@@ -341,7 +344,7 @@ S at E ≈ 2 meV: the computed curves on top, isotropic-to-directional ratios be
   Procedures for the Evaluated Nuclear Data Files*, §7.2.2 (thermal coherent
   elastic, edge grouping).
 - **Generalized elastic algorithm**: T. Kittelmann et al., *Comput. Phys.
-  Commun.* **267** (2021) 108082; K. Ramic et al., *NIM-A* **1027** (2022)
+  Commun.* **267** (2021) 108082; K. Ramić et al., *NIM-A* **1027** (2022)
   166227.
 - **Phonopy**: A. Togo, "First-principles Phonon Calculations with
   Phonopy and Phono3py", *J. Phys. Soc. Jpn.* **92** (2023) 012001.
