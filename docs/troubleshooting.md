@@ -224,16 +224,18 @@ With the default `ilog=0` (Card 4), the symmetric S(α,β) is stored linearly
 as `S·exp(−β/2)`. Because `β = E/kT` scales as `1/T`, at low temperature the
 exponential becomes astronomically small: a 200 meV transfer has `β ≈ 8` at
 296 K (`exp(−β/2) ≈ 0.02`, fine) but `β ≈ 460` at 5 K (`exp(−β/2) ≈ 1e−100`).
-Those values fall below what the ENDF field can represent and are written as
-**0**, and the structure is silently lost: read-back recovers
-`S = S_sym·exp(+β/2)`, so a stored zero stays zero.
+Those values fall below the Card 4 `smin` cutoff (default 1e-75), which
+writes them as **0**, or below THERMR's ~1e-98 floor, and the structure is
+silently lost: read-back recovers `S = S_sym·exp(+β/2)`, so a stored zero
+stays zero.
 
 IRMA warns when this happens:
 
 ```
 WARNING: at T=5 K, N S(alpha,beta) points with significant scattering (up to
-250 meV transfer) underflow the linear ilog=0 storage and are written as 0;
-set ilog=1 on Card 4.
+250 meV transfer) underflow the linear ilog=0 storage (below the Card 4 smin
+cutoff, default 1e-75, or THERMR's ~1e-98 floor) and are lost; set ilog=1 on
+Card 4.
 ```
 
 **Fix: set `ilog=1`** (ENDF `LLN=1`, log storage) on Card 4: add the `ilog`
@@ -245,9 +247,8 @@ and `smin` fields after `isabt`:
 
 With `LLN=1` the file stores `ln(S)` (for example `ln(1e−100) = −230`,
 perfectly representable), so the full dynamic range survives. Any reader
-must understand `LLN=1`; THERMR does, and so do IRMA's own readers
-(`valplot.load_sym_sab`, the validation harness, the neutron-scattering
-forward model). It is harmless at room temperature, where `ilog=0` stays
+must understand `LLN=1`; THERMR does, and so do IRMA's own readers (the
+validation harness and the neutron-scattering forward model). It is harmless at room temperature, where `ilog=0` stays
 NJOY-byte-faithful.
 
 As a rule of thumb, set `ilog=1` for any tape below ~50–100 K. The GUI's
@@ -301,17 +302,20 @@ a few behaviors worth knowing.
   the inelastic S(α,β) from the force constants.
 - **Importing an input file populates every field.** *File ▸ Import Input File*
   reads an existing `.input` or `.leapr` input file and fills the GUI; conditional
-  groups update to match the imported selectors. Configurations can also be
-  saved and loaded as JSON via the File menu.
+  groups update to match the imported selectors.
 
 ## Performance expectations and `ncpu`
 
 | Path | Rough cost (validation hardware, 2026-07) |
 |---|---|
 | Classic / mode-0 runs | seconds |
-| Mode-2 graphite, 399×400 auto grid, 4000 directions, auto order, 8 cores | ~18 s wall |
-| Mode-2 graphite, 399×400 auto grid, 10000 directions, auto order 217, 14 cores | ~20 s wall |
+| Mode-2 graphite, 399×400 grid, 4000 directions, auto order, 8 cores | ~18 s wall |
+| Mode-2 graphite, 399×400 grid, 10000 directions, auto order 217, 14 cores | ~20 s wall |
 | 2000-column reference grids | around a minute |
+
+The two mode-2 rows were measured on the 2026-07 automatic grid (399×400).
+The current lin-lin automatic grid for mode 2 is 399×541, about a third
+more β columns.
 
 Modes 1 and 2 parallelize over a worker pool sized by **Card 6f
 `ncpu`** (14 was used in validation). The pool uses the spawn start method
@@ -325,7 +329,7 @@ for tuning experiments. Set `ncpu` to the number of cores you want to
 dedicate; multiphonon cost grows linearly with the Card 6g `mpdir`
 direction count (converged by ~50–100; the production default of 1000 is
 the validation-campaign sampling). Soft-mode materials auto-size the
-multiphonon order into the hundreds (beta-quartz: 1084), but orders
+multiphonon order into the hundreds or thousands (beta-quartz: 1084), but orders
 whose Poisson weights underflow to zero cost nothing, so the deep
 orders are cheap: each (direction, atom) combination pays only for the
 orders it actually reaches.
