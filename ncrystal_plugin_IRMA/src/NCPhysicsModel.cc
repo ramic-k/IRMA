@@ -198,8 +198,7 @@ namespace {
     }
 
     {
-      // schema_version 2 is the current and only supported schema. (v1 was a
-      // pre-release scaffold layout that IRMA never shipped a real pack for.)
+      // schema_version 2 is the only supported schema.
       // Use find(), not operator[], so a missing key gives a clear "missing
       // field" error instead of silently inserting an empty string.
       auto svIt = fields.find("schema_version");
@@ -429,11 +428,10 @@ namespace {
     return packs;
   }
 
-  // Setup-cost cache (review CPP-8): for one material creation NCrystal runs
-  // query() (providesIncoherentElastic + providesCoherentElastic) and then
-  // produce() (the same pair again + createFromInfo), and each of those calls
-  // used to re-read and re-tokenise every referenced pack from scratch --
-  // measured as a 2.7x setup slowdown on PMMA. Parsed packs are therefore
+  // Setup-cost cache: for one material creation NCrystal runs query()
+  // (providesIncoherentElastic + providesCoherentElastic) and then produce()
+  // (the same pair again + createFromInfo), and each call would otherwise read
+  // and tokenise every referenced pack again. Parsed packs are therefore
   // cached here, keyed by the Info instance's UniqueID: NCrystal unique ids
   // come from a process-global monotonic counter and are never reused (the
   // UniqueID holder is move-only for exactly that reason), so a key can never
@@ -660,18 +658,15 @@ namespace {
   // with t sampled from the component-weighted truncated exponentials, so the
   // sampler is exactly consistent with the cross section by construction.
   //
-  // Component selection (review PH-4): the rejection sampler offers two
-  // proposals -- q(i) ~ w_i (t uniform on [0,T]) with envelope mass
-  // T sum w_i, and q(i) ~ w_i/p_i (t ~ Exp(p_i), accept t<=T) with envelope
-  // mass sum w_i/p_i. The branch is chosen by comparing those ACTUAL
-  // envelope masses (the smaller mass = the higher mean acceptance
-  // G(T)/mass). An arithmetic-mean criterion (pbar*T >= 1) used to pick the
-  // wrong branch for wide p-spreads: for p = {1e-7, 0.1} Ang^2 at T = 20 it
-  // chose the w/p proposal with mean acceptance 3e-6, exhausted the attempt
-  // cap for ~75% of events, and silently fell back to a uniform-mu law.
-  // Exhaustion now falls back to an EXACT O(n) scan over the per-component
-  // integrals (never an approximate law), so every accepted tensor state is
-  // sampled from the requested distribution regardless of conditioning.
+  // Component selection: the rejection sampler offers two proposals --
+  // q(i) ~ w_i (t uniform on [0,T]) with envelope mass T sum w_i, and
+  // q(i) ~ w_i/p_i (t ~ Exp(p_i), accept t<=T) with envelope mass
+  // sum w_i/p_i. The branch is chosen by comparing the two envelope masses
+  // (the smaller mass gives the higher mean acceptance G(T)/mass); a test of
+  // the mean pbar*T against 1 picks the wrong branch when the p_i spread
+  // over many decades. If the attempt cap is reached, the component is
+  // chosen by an exact O(n) scan over the per-component integrals, so every
+  // tensor state is sampled from the requested distribution.
   ////////////////////////////////////////////////////////////////////////////
 
   // 24-point Gauss-Legendre nodes/weights on [0,1] -- the SAME 17-digit
@@ -789,12 +784,12 @@ namespace {
   //   - the cross section uses a dense log-T table of G(T) = sum_i b_i(T)
   //     built once in the constructor (relative interpolation error
   //     ~1e-5; exact analytic limits below/above the tabulated range),
-  //   - the component pick uses an EXACT two-proposal rejection sampler:
+  //   - the component pick uses an exact two-proposal rejection sampler:
   //     propose from the fixed cumulative of w_i/p_i (saturated weights,
   //     efficient at large p*T) or of w_i (small-p*T limit), then accept
   //     with (1-exp(-p_i T)) resp. (1-exp(-p_i T))/(p_i T), both in
-  //     (0,1]. Accepted picks follow b_i(T) exactly; acceptance stays
-  //     above ~0.6 with the branch switch at pbar*T = 1.
+  //     (0,1]. Accepted picks follow b_i(T) exactly; the proposal with the
+  //     smaller envelope mass is used (see "Component selection" above).
   class DirectionalElIncScatter final : public NC::ProcImpl::ScatterIsotropicMat {
   public:
     const char * name() const noexcept override
@@ -871,18 +866,15 @@ namespace {
       if ( !(btot > 0.0) )
         return NC::ScatterOutcomeIsotropic::noScat( ekin );
       double p = 0.0;
-      // Branch guard (review CPP-7): NC::RNG::generate() is contractually in
-      // (0,1] and CAN return exactly 1.0. With m_p empty, gOfT()==0 makes
-      // btot == m_w0sum*T exactly, so a `>=` test at rng==1.0 entered this
-      // branch and ran cum.back()/m_p.size()-1 on EMPTY vectors (UB). The
-      // explicit empty() guard removes that path outright, and `>` keeps the
-      // p>0 branch probability at gp/btot for rng uniform on (0,1] (the
-      // boundary has measure zero; when m_w0sum==0, rng*btot>0 always holds).
+      // Branch guard: NC::RNG::generate() returns values in (0,1] and can
+      // return exactly 1.0. With m_p empty, gOfT()==0 makes btot == m_w0sum*T
+      // exactly; the empty() guard keeps that case out of the p>0 branch,
+      // which indexes cum and m_p. The `>` keeps the p>0 branch probability
+      // at gp/btot for rng uniform on (0,1] (the boundary has measure zero;
+      // when m_w0sum==0, rng*btot>0 always holds).
       if ( !m_p.empty() && rng.generate() * btot > m_w0sum * T ) {
         // p>0 set: exact rejection with the smaller-envelope proposal
-        // (review PH-4: compare the ACTUAL envelope masses, sum(w/p) vs
-        // T*sum(w) -- an arithmetic pbar*T criterion picked the wrong
-        // branch for wide p-spreads and starved the acceptance).
+        // (compare the envelope masses sum(w/p) and T*sum(w)).
         const bool high = ( m_Wpsum <= m_wpsum * T );
         const NC::VectD& cum = high ? m_cum_W : m_cum_w;
         const double cmax = cum.back();
@@ -904,11 +896,10 @@ namespace {
           }
         }
         if ( !accepted ) {
-          // Exact O(n) fallback (review PH-4): select the component from
-          // the exact per-component integrals b_i = dw_i (1-e^{-p_i T})/p_i.
-          // The old code left p = 0 here, which the truncated-exponential
-          // step below reads as the FLAT law -- a silent wrong-distribution
-          // fallback for poorly conditioned mixtures.
+          // Exact O(n) fallback: select the component from the exact
+          // per-component integrals b_i = dw_i (1-e^{-p_i T})/p_i. Leaving
+          // p = 0 would make the truncated-exponential step below use the
+          // flat law, the wrong distribution.
           double btot_exact = 0.0;
           for ( std::size_t i = 0; i < m_p.size(); ++i ) {
             const double dw = m_cum_w[i] - ( i ? m_cum_w[i-1] : 0.0 );

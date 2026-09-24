@@ -1,6 +1,6 @@
 """Bake the reference expected pack + NCMAT from the current IRMA exporter.
 
-Run in the PRODUCER env (euphonic_env: irma + phonopy). Invoked by
+Run in the producer env (one with irma and phonopy). Invoked by
 regenerate_expected.sh with the repo root as argv[1]. IRMA is the single
 producer/reference: this bakes the graphite mode-2 pack + the material NCMAT that
 the plugin then samples.

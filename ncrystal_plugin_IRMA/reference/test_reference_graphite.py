@@ -9,9 +9,8 @@ the NCMAT wiring fails CI. When IRMA's law changes on purpose, regenerate the
 expected outputs (``regenerate_expected.sh``); the recorded SHA flags a stale
 reference.
 
-Runs only where NCrystal AND the in-repo ``ncrystal_plugin_IRMA`` plugin ``.so``
-are installed (e.g. the ``ncrysta_coherent_plugin`` env / the reference CI job);
-skips cleanly otherwise.
+Runs only where NCrystal and the in-repo ``ncrystal_plugin_IRMA`` plugin ``.so``
+are installed (for example the reference CI job); skips otherwise.
 """
 from __future__ import annotations
 
@@ -100,10 +99,10 @@ def _copy_expected_with_edited_field(dst, field, edit):
 def test_plugin_honors_pack_neutron_data_not_atomdb(tmp_path):
     # The discriminating test: graphite's config b_coh/sigma_inc happen to equal
     # NCrystal's carbon atom DB, so the reference gate alone cannot tell whether the
-    # plugin reads the PACK or the DB. Perturb the pack's per-site neutron data and
-    # assert the cross section follows the PACK -- coherent elastic scales as b_coh^2,
+    # plugin reads the pack or the DB. Perturb the pack's per-site neutron data and
+    # assert the cross section follows the pack -- coherent elastic scales as b_coh^2,
     # incoherent elastic scales linearly with sigma_inc -- which the atom DB (fixed at
-    # carbon) could never reproduce. This is the end-to-end proof of #3.
+    # carbon) could not reproduce.
     expected = json.loads((_EXPECTED / "graphite_reference_xs.json").read_text())
     temp = expected["temperature_K"]
     # energies above the first graphite Bragg edge, so coherent elastic is non-zero.
@@ -177,7 +176,7 @@ def _read_pack_tensor_sites(pack_path):
 def test_directional_incoherent_elastic_matches_python_oracle(tmp_path):
     """The directional mode's C++ mixture-of-exponentials must reproduce the
     closed-form Python reference (irma.core.incoherent_dw) -- the two sides
-    share the branch constants but use INDEPENDENT integration methods, so
+    share the branch constants but use independent integration methods, so
     this genuinely cross-checks the C++ sampler's cross section."""
     np = pytest.importorskip("numpy", exc_type=ModuleNotFoundError)
     incoherent_dw = pytest.importorskip("irma.core.incoherent_dw", exc_type=ModuleNotFoundError)
@@ -213,7 +212,7 @@ def test_directional_incoherent_elastic_matches_python_oracle(tmp_path):
         f"directional incoherent elastic drifted from the Python oracle:\n"
         f"plugin={got}\noracle={list(ref)}")
 
-    # physics sanity: the directional tail must EXCEED the isotropic (trace/3)
+    # physics check: the directional tail must exceed the isotropic (trace/3)
     # result at the same (highest) energy (Jensen inequality).
     iso = _load_xs(_EXPECTED, f"graphite_reference.ncmat;temp={temp}K;comp=incoh_elas",
                    [energies_ev[-1]])

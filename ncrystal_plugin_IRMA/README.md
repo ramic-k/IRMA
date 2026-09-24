@@ -14,8 +14,7 @@ pack format lives in `irma.ncrystal.pack`. The NCMAT activation section is `@CUS
 
 ## Build / install
 
-Use the dedicated plugin conda env (NCrystal ≥ 4.3 + cmake + ninja +
-scikit-build-core; e.g. `ncrysta_coherent_plugin`):
+Use an environment with NCrystal ≥ 4.3, cmake, ninja and scikit-build-core:
 
 ```bash
 cd ncrystal_plugin_IRMA
@@ -37,7 +36,7 @@ When IRMA's mode-2 law changes **on purpose**, regenerate the expected outputs
 from a clean checkout:
 
 ```bash
-ncrystal_plugin_IRMA/reference/regenerate_expected.sh   # bakes (euphonic_env) + records (plugin env)
+ncrystal_plugin_IRMA/reference/regenerate_expected.sh   # bakes (irma env) + records (plugin env)
 ```
 
 Run the gate (plugin env):
