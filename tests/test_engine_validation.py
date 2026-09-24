@@ -14,7 +14,7 @@ from irma.core.engine import run_leapr, DeckError
 
 # A minimal well-formed classic deck (Card 4 carries only `mat za`).
 GOOD = """20 /
-'qa3 engine test'/
+'engine validation deck'/
 1 1 4/
 1 1./
 1.0 20.0 1 0 0/
@@ -33,7 +33,7 @@ GOOD = """20 /
 # An iel=10 inelastic_mode=0 head whose Card 6b (`1 1 0 0/`) and Card 6e
 # atom matching are the validation surfaces below.
 _GEN_HEAD = """20 /
-'qa3 gen validation deck'/
+'gen validation deck'/
 1 1 4/
 1 6012./
 11.9 4.74 1 10 0 0/
@@ -60,7 +60,7 @@ _GEN_TAIL = """3 4 1/
 # An iel=10 inelastic_mode=2 head reaching Card 6f (ncpu) — the phonopy path
 # is bogus on purpose so the run fails at the mesh load AFTER Card 6f parses.
 _MODE2_6F_HEAD = """20 /
-'qa3 card 6f validation deck'/
+'card 6f validation deck'/
 1 1 4/
 1 6012./
 11.9 4.74 1 10 0 0/
@@ -138,8 +138,7 @@ def test_card6b_negative_bins_per_decade_rejected():
 
 
 def test_card6b_negative_threshold_rejected():
-    """A negative threshold used to be silently replaced by the 1 eV default
-    (and the on-screen message even reported 'above 1 eV')."""
+    """A negative threshold is rejected, not replaced by the 1 eV default."""
     deck = _GEN_HEAD.replace("1 1 0 0/", "1 1 0 0 10 -2.0/")
     _expect(deck, "Card 6b", "threshold", ">= 0")
 
@@ -147,9 +146,8 @@ def test_card6b_negative_threshold_rejected():
 # ---------- Card 6e atom-matching cardinality ----------
 
 def test_card6e_unmatched_spectrum_rejected():
-    """A Card 6e spectrum whose Z/A matches no Card 6d atom type used to be
-    parsed, validated, then silently never used (falling back to principal
-    DW). It must fail loudly."""
+    """A Card 6e spectrum whose Z/A matches no Card 6d atom type would never
+    be used (the principal's DW would stand in); it must fail loudly."""
     head = _single_site_head(1)
     # Spectrum for Z=8 A=16 (oxygen), but the only Card 6d atom is Z=6 A=12.
     deck = head + "8 16 0.005 4/\n0.0 0.2 0.5 0.3/\n"
@@ -165,8 +163,8 @@ def test_card6e_matched_spectrum_accepted():
 
 
 def test_card6e_duplicate_spectrum_za_rejected():
-    """Two Card 6e spectra for the same (Z, A) silently overwrote the
-    atom's spectrum_idx; reject the ambiguity."""
+    """Two Card 6e spectra for the same (Z, A) are ambiguous (the second
+    would overwrite the first); reject them."""
     head = _single_site_head(2)
     deck = (head
             + "6 12 0.005 4/\n0.0 0.2 0.5 0.3/\n"
@@ -180,7 +178,7 @@ def test_card6d_duplicate_za_with_spectrum_rejected():
     reject exactly that combination. (Rows of the principal are merged
     into one group before the matching.)"""
     head = """20 /
-'qa3 dup 6d deck'/
+'dup 6d deck'/
 1 1 4/
 1 6012./
 11.9 4.74 1 10 0 0/
@@ -205,7 +203,7 @@ def test_card6d_duplicate_za_without_spectrum_accepted():
     spectrum needs an unambiguous (Z, A) match — it must NOT be rejected
     at the Card 6e matching stage."""
     head = """20 /
-'qa3 dup 6d deck'/
+'dup 6d deck'/
 1 1 4/
 1 6012./
 11.9 4.74 1 10 0 0/
@@ -252,7 +250,7 @@ def test_engine_main_delegates_friendly_deckerror():
     # Card 5 with an invalid iel raises DeckError inside run_leapr.
     with open(inp, "w") as f:
         f.write(GOOD.replace("1.0 20.0 1 0 0/", "1.0 20.0 1 7 0/"))
-    env = dict(os.environ, MPLCONFIGDIR="/tmp", PYTHONPYCACHEPREFIX="/tmp/qa3pyc")
+    env = dict(os.environ, MPLCONFIGDIR="/tmp", PYTHONPYCACHEPREFIX="/tmp/irma_test_pyc")
     proc = subprocess.run(
         [sys.executable, "-m", "irma.core.engine", inp,
          os.path.join(d, "out.endf")],
