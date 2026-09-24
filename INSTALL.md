@@ -18,7 +18,7 @@ From the IRMA source directory, pick the form that covers your workflows:
 
 ```bash
 pip install -e .              # core (classic LEAPR paths, iel=0-6 and iel=10 mode 0)
-pip install -e ".[phonopy]"   # + the noncubic inelastic paths (inelastic_mode=1/2)
+pip install -e ".[phonopy]"   # + the phonopy-backed modes (inelastic_mode=1/2)
 pip install -e ".[spectra]"   # + the neutron scattering forward model (irma spectra)
 pip install -e ".[mlip]"      # + the MLIP phonon front end (irma mlip)
 ```
@@ -34,9 +34,13 @@ What each extra unlocks:
 
 | Extra | Adds | Needed for |
 |-------|------|------------|
-| `[phonopy]` | `phonopy` | `iel=10` with `inelastic_mode=1` or `2` (the phonopy-backed noncubic MT4 paths), and `irma.spectra` inelastic modes 1/2 or `dos_source: phonopy` |
+| `[phonopy]` | `phonopy` | `iel=10` with `inelastic_mode=1` or `2` (the phonopy-backed MT4 modes), and `irma.spectra` inelastic modes 1/2 or `dos_source: phonopy` |
 | `[spectra]` | `scipy`, `PyYAML` | the `irma.spectra` forward model (`irma spectra` CLI and the GUI's **Neutron Scattering Experiments** tab) |
 | `[mlip]` | `ase`, `phonopy`, `PyYAML` | the `irma.mlip` phonon front end (`irma mlip` CLI and the GUI's **MLIP phonon models** tab). The potential packages themselves are not included: their pins conflict with each other, so `irma mlip env create` installs each one into its own dedicated environment |
+
+The NCrystal pack exporter (`irma ncrystal`) needs `[phonopy,spectra]`: it
+exports modes 1/2 and reads a YAML config. The C++ NCrystal plugins are
+built separately (see the manual's installation page).
 
 ### Dependency documentation
 
@@ -48,13 +52,14 @@ If you need help installing or configuring the dependencies:
 | endf-parserpy | [github.com/IAEA-NDS/endf-parserpy](https://github.com/IAEA-NDS/endf-parserpy) |
 | phonopy | [phonopy.github.io/phonopy/install.html](https://phonopy.github.io/phonopy/install.html) |
 
-For the noncubic modes (`iel=10` with `inelastic_mode=1/2`), the input file also
-needs the phonopy control cards (`Card 6f` and `Card 6g`):
+For the phonopy-backed modes (`iel=10` with `inelastic_mode=1/2`), the input
+file also needs the phonopy control cards (`Card 6f` and `Card 6g`):
 
 - use `nspec=0` and omit Card `6e`
 - keep the full crystal in Card `6d`, even for mixed materials
-- keep one principal scatterer per input file; Card `5` chooses which atom gets the
-  exported MT4 law
+- keep one principal scatterer per input file; Card `4`'s ZA selects the
+  principal atom type from Card `6d`, and Card `5` gives that atom's mass
+  ratio and cross section
 - if you need separate mixed-material tapes for different principals
   (for example Be and O in BeO), run IRMA once per principal
 
@@ -112,20 +117,20 @@ irma mlip --help
 | Capability | Linux | macOS | Windows |
 | --- | --- | --- | --- |
 | ENDF/TSL evaluation (the classic kernels, `iel` 0-6/10 with `inelastic_mode=0`) | yes | yes | yes |
-| Noncubic `inelastic_mode=1/2`, spectra forward model, NCrystal export | yes | yes | untested* |
-| GUI | yes | yes | untested** |
-| C++ NCrystal plugins (build) | yes (CI-gated) | yes | untested |
+| `inelastic_mode=1/2`, spectra forward model, NCrystal export | yes | yes | advisory CI* |
+| GUI | yes | yes | advisory CI* |
+| C++ NCrystal plugins (build) | yes | yes | untested |
 
-The noncubic worker pool uses the spawn start method with the compute
-context in shared memory, so `ncpu > 1` (Card 6f) and `jobs > 1` are
-implemented identically on all three platforms — but only Linux (CI) and
-macOS (routine development) are TESTED. \*Windows support is untested
-until a smoke test runs on real Windows hardware; treat `jobs > 1` /
-`ncpu > 1` there as experimental. \**Additionally, cancelling a parallel
-GUI run on Windows currently terminates only the immediate child process:
-spawned workers can keep running until they finish their current work item
-(no tree-aware kill is implemented yet). On Windows, prefer `jobs=1` for
-GUI runs or be prepared to end stray worker processes manually.
+CI runs the test suite on Linux (Python 3.11-3.13) and macOS as required
+jobs, and on Windows as an advisory job; it builds both NCrystal plugins
+on Linux and the IRMA plugin on macOS (advisory). The mode-1/2 worker
+pool uses the
+spawn start method with the compute context in shared memory, so
+`ncpu > 1` (Card 6f) and `jobs > 1` work the same way on all three
+platforms. \*Parallel runs (`ncpu`/`jobs` > 1) and GUI cancellation are
+not verified on Windows: cancelling a parallel GUI run there stops only
+the direct child process, and spawned workers keep running until they
+finish their current work item. On Windows, prefer `jobs=1` for GUI runs.
 One standard spawn requirement applies: a
 script that drives IRMA programmatically must wrap its entry point in
 `if __name__ == "__main__":` — the `irma` CLI and `python -m irma...`
@@ -158,5 +163,7 @@ you are using the same Python environment.
 See the [Tkinter](#tkinter) section above.
 
 **GUI does not appear on macOS**
-If you are using a virtual environment, make sure it was created with
-access to the system tkinter. Try: `python -m venv --system-site-packages myenv`
+A virtual environment uses its base interpreter's tkinter. If
+`python -c 'import tkinter'` fails inside the venv, install Tk for the base
+Python (the python.org build, or `brew install python-tk`) and recreate the
+venv.
