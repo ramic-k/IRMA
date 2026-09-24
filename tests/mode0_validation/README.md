@@ -16,12 +16,13 @@ fail (integral ratio outside [0.9, 1.1] or shape cosine below 0.85 — generous
 by design, see below).
 
 This is a sanity-level consistency check, not a controlled proof. Result
-(committed): both paths are **per represented atom**, so they agree in
-ABSOLUTE scale — the integral ratio mode0/mode1 ≈ **1.02** — and the
-area-normalised shapes track closely (cosine ≈ 0.92). The residual (~2 % integral
-+ the shape difference) is **consistent with** mode 0's isotropic Debye-Waller vs
-mode 1's anisotropic one on this strongly anisotropic crystal (the same isotropic
-approximation OCLIMAX `TASK=0` makes); it is not separately isolated here. A
-quantitative validation (vs OCLIMAX `TASK=0` and measured H-rich INS) is the
-broader campaign's job. The per-atom normalization convention is documented in
+(16³ mesh, 300 K, with the histogram phonon DOS): both paths are normalized
+per represented atom, so they agree in absolute scale, with an integral ratio
+mode0/mode1 of **0.998**, and the area-normalized shapes track closely (cosine
+0.970; both peak at 1 meV). The remaining shape difference is consistent with
+mode 0's isotropic Debye-Waller factor against mode 1's anisotropic one on
+this strongly anisotropic crystal (the same isotropic approximation OCLIMAX
+`TASK=0` makes); it is not separately isolated here. A quantitative
+comparison against OCLIMAX `TASK=0` and measured hydrogen-rich spectra has
+not been done. The per-atom normalization convention is documented in
 `docs/spectra-mode0.md`.
