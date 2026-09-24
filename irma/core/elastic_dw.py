@@ -142,7 +142,7 @@ def directional_edge_delta(e, sdw, itemp, dir_terms_j, kT_j, scale=1.0):
     """
     nsp, b_sqb, awr_sp = sdw.nsp, sdw.b_sqb, sdw.awr_sp
     F_itemp = sdw.F_species_per_temp[itemp]
-    if getattr(sdw, "dir_tensors_uniform", True):
+    if sdw.dir_tensors_uniform:
         delta = 0.0
         for plane in dir_terms_j:
             G_hat, D_st_plane = plane[0], plane[1]

@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from irma.core.constants import BK, WL2EKIN
-from irma.core.elastic_dw import directional_edge_delta
+from irma.core.elastic_dw import SpeciesDW, directional_edge_delta
 from irma.core.elastic_extinction import make_sigma_coh_ext
 
 
@@ -64,11 +64,11 @@ def _sdw(F_sites, uniform):
     """nsp=1 directional-DW state with two sites. The species-averaged tensor
     mirrors driver._store_directional_species_dw (np.mean over the group)."""
     F_sites = np.asarray(F_sites, dtype=float)
-    return types.SimpleNamespace(
+    return SpeciesDW(
         use_dir_dw=True, use_ps=False, nsp=1, b_sqb=[_B], awr_sp=[_AWR],
-        F_species_per_temp=[[F_sites.mean(axis=0)]],
-        F_sites_per_temp=[F_sites],
-        dir_tensors_uniform=uniform, W_ps=None, bragg_dir_terms=None)
+        sc=None, W_ps=None, F_species_per_temp=[[F_sites.mean(axis=0)]],
+        bragg_dir_terms=None, atom_types=[], F_sites_per_temp=[F_sites],
+        dir_tensors_uniform=uniform)
 
 
 def _F_scalar(W_inv_eV):
