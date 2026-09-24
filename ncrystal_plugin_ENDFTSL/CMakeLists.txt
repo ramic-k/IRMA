@@ -71,6 +71,10 @@ ncrystal_srcfileglob( plugin_srcfiles "${PROJECT_SOURCE_DIR}/src/*.cc" )
 ncrystal_srcfileglob( plugin_hdrfiles  "${PROJECT_SOURCE_DIR}/src/*.hh" )
 set( pluglib "NCPlugin_${NCPlugin_NAME}" )
 add_library( ${pluglib} MODULE ${plugin_srcfiles} )
+# Link with the install-tree RPATH (none) so installing copies the library
+# unchanged. Rewriting it at install time invalidates the linker's code
+# signature on macOS, and macOS then kills any process that loads the plugin.
+set_target_properties( ${pluglib} PROPERTIES BUILD_WITH_INSTALL_RPATH ON )
 set_source_files_properties( ${plugin_srcfiles} PROPERTIES OBJECT_DEPENDS "${plugin_hdrfiles}" )
 target_compile_definitions( ${pluglib} PRIVATE "NCPLUGIN_NAME=${NCPlugin_NAME}" "NCRYSTAL_NO_CMATH_CONSTANTS" )
 target_link_libraries( ${pluglib} PRIVATE NCrystal::NCrystal )
