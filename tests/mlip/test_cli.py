@@ -2,6 +2,7 @@
 backend (IRMA_MLIP_DEV_BACKENDS=1), plus exit codes and parsing errors."""
 import json
 import os
+import shlex
 
 import pytest
 
@@ -74,7 +75,9 @@ def test_build_validate_emit_end_to_end(al_poscar, tmp_path, capsys):
     assert rec["elastic_format"] == "mef"          # the omitted-flag default
     m = json.load(open(os.path.join(outdir, "manifest.json")))
     assert m["calculator"]["dev_backend"] is True
-    assert m["input"]["args"]["argv"].startswith(f"irma mlip build {al_poscar} -o ")
+    # shlex quotes the path where it needs it (backslashes on Windows)
+    assert m["input"]["args"]["argv"].startswith(
+        f"irma mlip build {shlex.quote(str(al_poscar))} -o ")
     assert "emitted inputs use the phonon mesh" in out
 
     assert main(["emit", outdir, "--to", "oclimax"]) == 2
