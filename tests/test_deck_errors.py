@@ -3,8 +3,8 @@
 Malformed input decks must fail with a message naming the offending card,
 what was expected, what was found, and the input line — never with cryptic
 downstream numerics (ZeroDivisionError, NaN conversions) and never by running
-to completion on garbage (a non-monotonic grid used to produce silent wrong
-output). Each case here was a real observed failure mode.
+to completion on garbage (a non-monotonic grid, for example, would give
+silently wrong output). Each case here was a real observed failure mode.
 """
 import os
 import tempfile
@@ -194,8 +194,8 @@ _SPLIT_PRINCIPAL_DECK = """20 /
 
 
 def test_principal_split_across_atom_types_is_merged_in_phonopy_modes():
-    """QA4 F3 (full fix): with inelastic_mode=1/2 a principal (Z,A) spread
-    over several Card 6d atom types is MERGED into one group (the MT4 law
+    """With inelastic_mode=1/2 a principal (Z,A) spread over several Card 6d
+    atom types is merged into one group (the MT4 law
     accumulates over every represented site), so the deck must get PAST the
     principal bookkeeping and only fail later on the nonexistent phonopy
     model."""
@@ -235,7 +235,7 @@ _BE_SEF_DECK = """20 /
 
 def test_mode0_sef_split_principal_writes_the_same_comb():
     """A principal split over two Card 6d rows is merged in mode 0 too, so
-    the SEF coherent comb matches the one-row deck (it used to double)."""
+    the SEF coherent comb matches the one-row deck instead of doubling."""
     one = _BE_SEF_DECK.format(nat=1, rows="4 9 8.93478 7.79 0.0018 2/\n"
                               "0.33333333 0.66666667 0.75  0.66666667 0.33333333 0.25/")
     split = _BE_SEF_DECK.format(nat=2, rows="4 9 8.93478 7.79 0.0018 1/\n"
@@ -293,7 +293,7 @@ def test_nonzero_nspec_rejected_in_phonopy_modes():
     _expect(deck, "Card 6b", "nspec must be 0", "inelastic_mode=1")
 
 
-# ENG-1: the generalized (iel=10) MF7/MT2 builder reads only the last-computed
+# The generalized (iel=10) MF7/MT2 builder reads only the last-computed
 # Debye-Waller array, which the bound (b7=0) two-pass merge leaves holding the
 # SECONDARY scatterer's data. The combination must die at Card 6b, not write a
 # tape whose whole elastic section comes from the wrong species. An analytic
@@ -332,8 +332,8 @@ def test_five_field_card_6g_rejected():
     _expect(deck, "Card 6g", "2 values plus an optional 3rd value")
 
 
-def test_new_card_6g_parses_then_fails_at_phonopy_load():
-    """The new 2-field Card 6g passes parsing; with a bogus phonopy path the
+def test_two_field_card_6g_parses_then_fails_at_phonopy_load():
+    """A 2-field Card 6g passes parsing; with a bogus phonopy path the
     deck then fails at the mesh load, proving 6g itself was accepted."""
     deck = _MODE1_HEAD + "100 100 /\n"
     with pytest.raises(RuntimeError, match="phonopy mesh"):
@@ -341,15 +341,16 @@ def test_new_card_6g_parses_then_fails_at_phonopy_load():
 
 
 def test_stray_empty_card_before_array_is_deck_error():
-    """A '/' on its own line where an array should start used to be silently
-    skipped, reading the array from the NEXT card and misaligning every card
-    after it."""
+    """A '/' on its own line where an array should start is an error:
+    skipping it would read the array from the next card and misalign every
+    card after it."""
     deck = GOOD.replace("0.005 6/", "0.005 6/\n/")
     _expect(deck, "empty '/' card", "stray terminator")
 
 
 def test_zero_oscillator_energy_is_deck_error():
-    """A zero oscillator energy used to flow into discre and divide by zero."""
+    """A zero oscillator energy is refused at parse time (discre divides by
+    it)."""
     deck = GOOD.replace("0/\n/", "2/\n0.0 0.2/\n0.3 0.2/\n/")
     _expect(deck, "oscillator energies", "> 0")
 
@@ -388,7 +389,7 @@ def test_nbeta_one_rejected_at_card7():
 
 
 def test_integer_field_rejects_non_integral_float():
-    """1.9 on an integer-coded field is a malformed deck, not a 1."""
+    """4.9 on an integer-coded field is a malformed deck, not a 4."""
     deck = GOOD.replace("3 4 1/", "3 4.9 1/")
     _expect(deck, "expected an integer", "4.9")
 
@@ -399,7 +400,7 @@ def test_integer_field_accepts_exactly_integral_float():
 
 
 def test_card6c_nonpositive_lattice_length_rejected():
-    """CX2-10: a non-positive lattice edge silently collapses the unit-cell
+    """A non-positive lattice edge silently collapses the unit-cell
     volume downstream; reject it at parse time with Card 6c context."""
     deck = _GEN_HEAD.replace("2.46 2.46 6.7 90. 90. 120./",
                              "0.0 2.46 6.7 90. 90. 120./")
@@ -552,10 +553,9 @@ phonopy.yaml/
 
 
 def test_bare_filename_with_glued_terminator_not_rejected():
-    # `phonopy.yaml/` is a valid bare filename + the legal glued '/' terminator,
-    # NOT a truncated path -- it must reach the mesh loader (and fail there on
-    # the missing file), not be rejected by the truncation guard.
-    try:
+    # `phonopy.yaml/` is a valid bare filename plus the legal glued '/'
+    # terminator, not a truncated path: the path card is accepted and parsing
+    # goes on to Card 6f-2, where this deck ends.
+    with pytest.raises(DeckError, match="Card 6f-2") as exc:
         _run(_BARE_FILENAME_PATH_DECK)
-    except Exception as e:  # noqa: BLE001 - any non-truncation failure is fine
-        assert "truncated at" not in str(e), f"bare filename wrongly rejected: {e}"
+    assert "truncated at" not in str(exc.value)
