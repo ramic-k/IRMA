@@ -21,12 +21,6 @@
 
 [project]
 name = "ncrystal-plugin-IRMA"
-# Versioning: minor for behavior changes (scattering model, loader/validation,
-# sampling), patch for packaging/doc-only -- see RELEASING.md "Plugin
-# subprojects". 0.1-0.5 stand in for the five scattering-model revisions that
-# shipped while the field was frozen at 0.0.1; 0.6.0 is the first correctly
-# versioned state (loader finiteness/NaN validation, sampler UB fix,
-# pack-parse caching).
 version = "0.6.0"
 description = "NCrystal plugin that samples IRMA's mode-2 powder thermal-scattering law from per-temperature baked .irmapack files (@CUSTOM_IRMA NCMAT sections)"
 readme = "README.md"
