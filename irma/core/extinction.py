@@ -12,11 +12,11 @@ The extinction factor ``y(x, theta)`` in (0, 1] multiplies each Bragg plane's
 kinematic intensity to account for primary (multiple scattering within one
 crystallite) and secondary (crystallite-to-crystallite beam depletion) dynamical
 diffraction. It always reduces the coherent-elastic cross section and raises
-transmission. Extinction is SAMPLE-SPECIFIC -- the crystallite size ``l``, mosaic
+transmission. Extinction is sample-specific -- the crystallite size ``l``, mosaic
 spread ``g`` and grain size ``L`` are properties of the sample, not the material,
 and must be supplied by the user.
 
-References (please read these to understand the physics):
+References:
   - T. Kittelmann, D. D. DiJulio, S. Xu & J. I. Marquez Damian, "Revisiting
     Becker-Coppens (1974): updated recipes for estimating extinction factors in
     spherical crystallites", Acta Cryst. (2026) A82, 163-178.
@@ -151,12 +151,12 @@ def _y_bc1974_primary(x, cos_2theta):
 
 def _y_bc1974_secondary(x, cos_2theta, tilt_dist, force_212=False):
     """Becker-Coppens (1974) analytic secondary-extinction factor."""
-    # The linear-term prefactor on x differs by Becker-Coppens variant in CrysXT,
-    # which we reproduce verbatim (NCPhysicsModel.cc): the PURE secondary type-II
-    # path uses 2.12 unconditionally (line 337), whereas the MIXED and MODIFIED
-    # paths apply 2.12 only for the Gaussian tilt and 2.0 otherwise (lines 414,
-    # 485 -- "the factor 2.12 is only applied in the case of Gaussian"). force_212
-    # selects the pure-path (unconditional) behaviour.
+    # The linear-term prefactor on x differs by Becker-Coppens variant in CrysXT
+    # (NCPhysicsModel.cc), reproduced here: BC_pure_extn_mdl (secondary type II)
+    # uses 2.12 unconditionally, whereas BC_mix_extn_mdl and BC_mod_extn_mdl
+    # apply 2.12 only for the Gaussian tilt and 2.0 otherwise ("the factor 2.12
+    # is only applied in the case of Gaussian"). force_212 selects the pure-path
+    # (unconditional) behaviour.
     a, b = calc_AB_theta(cos_2theta, tilt_dist)
     t = 2.12 if (force_212 or tilt_dist == 1) else 2.0
     return 1.0 / math.sqrt(1.0 + t * x + a * x * x / (1.0 + b * x))
@@ -255,7 +255,7 @@ def _sabine_corr(Nc, wl, F, l, d, g, L):
 #  Becker-Coppens model (pure / mixed / modified)                             #
 # --------------------------------------------------------------------------- #
 def _bc_pure(Nc, wl, F, l, d, g, L, tilt_dist, recipe):
-    """Becker-Coppens factor for a PURE case: exactly one of primary
+    """Becker-Coppens factor for a pure case: exactly one of primary
     (l set) or secondary type-I/II (g, L set) is active."""
     sin_t = 0.5 * wl / d
     if sin_t > 1.0:
@@ -285,7 +285,7 @@ def _bc_secondary_x(q, wl, l, L, g, sin_2t, tilt_dist):
 
 
 def _bc_mix(Nc, wl, F, l, d, g, L, tilt_dist, recipe, primary):
-    """Becker-Coppens factor for the MIXED case (primary and secondary
+    """Becker-Coppens factor for the mixed case (primary and secondary
     both active); ``primary`` selects which factor of the product to return."""
     sin_t = 0.5 * wl / d
     if sin_t > 1.0:
