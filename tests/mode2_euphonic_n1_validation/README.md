@@ -92,7 +92,7 @@ The ~1–2% global ratio is the absolute-scale check: the unit chain
 (Euphonic mb/sr → unitless S(Q,E) via σ_coh → SS(α,β) = kT·S) contains no
 adjustable factors. The graphite Q=20/30 cuts are sampling-noise limited
 (strongly anisotropic Debye-Waller concentrates the powder average in few
-directions); isotropic-DW beryllium stays at ~5% there. Expected console
+directions); nearly isotropic beryllium stays at ~5% there. Expected console
 warning from IRMA: the one-phonon law is identically zero above
 β = ω_max/kT while the deck grid extends further — that is the physics of
 n=1, not an error.

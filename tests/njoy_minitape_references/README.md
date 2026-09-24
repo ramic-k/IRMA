@@ -1,7 +1,7 @@
 # NJOY mini reference tapes
 
 Tiny NJOY2016.78 LEAPR output tapes used by `tests/test_writer_flag_tapes.py`
-to pin the previously untested Card 4 output options byte-for-byte:
+to pin the Card 4 output options byte-for-byte:
 
 * `isabt.endf.gz` — isabt=1: the asymmetric S-tilde form (LASYM raised by 2).
 * `ilog.endf.gz`  — ilog=1: ln(S) storage (ENDF LLN=1).
@@ -10,9 +10,10 @@ The generating decks live inline in the test file (a 3-alpha x 4-beta,
 2-temperature toy spectrum — the same deck as the writer round-trip tests,
 with the respective Card 4 flag set). The references were produced by running
 unmodified NJOY2016.78 on those decks; IRMA's MF7 output is required to be
-BYTE-IDENTICAL to them (MF1 is excluded from the comparison: IRMA
+byte-identical to them (MF1 is excluded from the comparison: IRMA
 deliberately writes a consistent NWD and exact directory record counts where
-NJOY does not — see CHANGELOG).
+NJOY does not; see `_patch_mf1_directory_counts` in
+`irma/core/endf_writer.py`).
 
 * `coldh_skold.endf.gz` — a miniature ortho-hydrogen deck (6 alpha x 10
   beta, 14 K, diffusion translation + one discrete oscillator + a 12-point
