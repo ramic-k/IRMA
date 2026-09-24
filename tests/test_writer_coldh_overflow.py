@@ -21,10 +21,10 @@ _REF = os.path.join(os.path.dirname(__file__), "data",
                     "coldh_20K_nearmiss.endf.gz")
 
 # Miniature ortho-H deck at 20 K, lat=1, ilog=0. beta_max=100 card units
-# -> be = 100*THERM/(k*20) = 1468, be/2 = 734 > ln(DBL_MAX) = 709.78: the
-# writer's +beta half used to raise a bare OverflowError after the kernel
-# run. The 20 K kernel stores exact zeros on the beta=100 row, so the fixed
-# writer must fail with the layer-2 DeckError instead.
+# -> be = 100*THERM/(k*20) = 1468, be/2 = 734 > ln(DBL_MAX) = 709.78, so a
+# direct exp(be/2) in the writer's +beta half would overflow. The 20 K kernel
+# stores exact zeros on the beta=100 row, so the writer must fail with the
+# layer-2 DeckError, not a bare OverflowError.
 _DECK_OVERFLOW = """20 /
 'mini ortho-H 20 K overflow deck'/
 1 1 20/
@@ -48,9 +48,9 @@ _DECK_OVERFLOW = """20 /
 """
 
 # Near-miss variant: beta_max=95 -> be = 1394.6, be/2 = 697.3, ~12 below
-# the ceiling. Every point takes the pre-fix direct path; the tape must be
-# byte-identical to the vendored pre-fix reference and the parse-time
-# warning must stay quiet.
+# the ceiling. Every point takes the direct exp(be/2) evaluation; the tape
+# must be byte-identical to the vendored reference made with that
+# evaluation, and the parse-time warning must stay quiet.
 _DECK_NEARMISS = _DECK_OVERFLOW.replace("30.0 100.0/", "30.0 95.0/").replace(
     "overflow deck", "near-miss deck")
 
@@ -71,7 +71,7 @@ def _call(s, be, smin=SMIN):
 
 
 def _original_isym1_value(s_stored, be, smin=SMIN, small=SMALL):
-    """The exact pre-ENG-4 arithmetic for the isym=1 ilog=0 storage form."""
+    """The direct exp(be/2) evaluation for the isym=1 ilog=0 storage form."""
     v = s_stored * math.exp(be / 2.0)
     v = sigfig(v, 7, 0) if v >= small else sigfig(v, 6, 0)
     if v < smin:
@@ -115,8 +115,8 @@ def test_recovered_value_is_analytically_correct():
 @pytest.mark.parametrize("be", [-1468.0, -0.9, 0.0, 0.9, 697.0, 1394.6])
 @pytest.mark.parametrize("s", [0.0, 1e-80, 1e-12, 0.31, 3.7])
 def test_non_overflowing_values_take_the_identical_path(be, s):
-    # For every (be, S) where exp(be/2) does not raise, the fixed writer
-    # must produce bit-for-bit the pre-fix arithmetic -- including the
+    # For every (be, S) where exp(be/2) does not raise, the writer must
+    # produce bit-for-bit the direct evaluation -- including the
     # exact-zero rows next to the ceiling (be=1394.6 is the near-miss
     # regime). An over-eager gate would reroute these through log space
     # (or DeckError on the zeros) and fail here.

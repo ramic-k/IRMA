@@ -174,7 +174,7 @@ def test_auto_grid_is_the_endf_converged_grid_not_uniform():
 
 
 def test_endf_core_never_imports_the_exporter():
-    """NCB-1 scope guard: the exporter's grid treatment must not leak into the
+    """Scope guard: the exporter's grid treatment must not leak into the
     ENDF write path. ENDF tapes are built from irma.core's own grid logic, so
     no irma.core module may import from irma.ncrystal (comment/docstring
     mentions are fine; actual imports are not)."""

@@ -1,4 +1,4 @@
-"""Convention bridge unit tests (SP1): pack_from_irma_sab.
+"""Convention bridge unit tests: pack_from_irma_sab.
 
 Pure/fast. Verifies the documented transforms are the ONLY thing convert does:
   - alpha mapped by AWR

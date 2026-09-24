@@ -1,4 +1,4 @@
-"""Unit tests for the NCMAT writer (SP1). Pure/fast — no engine, no NCrystal."""
+"""Unit tests for the NCMAT writer. Pure/fast — no engine, no NCrystal."""
 from __future__ import annotations
 
 import math
