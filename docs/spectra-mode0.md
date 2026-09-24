@@ -52,8 +52,9 @@ into a single effective spectrum.
   DOS (frequency, intensity). The unit is `meV` (the default), `eV`, `cm-1`,
   or `THz`.
 - **`phonopy`**: the partial DOS (and the per-element atom multiplicity) is
-  derived from `material.phonopy_yaml` plus `mesh`, as the trace of IRMA's
-  anisotropic DOS tensor, normalized to one phonon per atom. You still give
+  derived from `material.phonopy_yaml` plus `mesh`, as a histogram of the
+  mesh modes weighted by each atom's share of the eigenvector (no smearing),
+  normalized to one phonon per atom. You still give
   the scattering data (`awr`, `sigma_bound_b`, …) per element.
 
 ## The elastic line (optional)

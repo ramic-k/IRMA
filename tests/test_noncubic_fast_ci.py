@@ -11,7 +11,7 @@ model with a tiny configuration (mesh 4^3, ndir=40, mpdir=20, nphon=6,
   * determinism (a 2-worker run reproduces the serial tape byte for byte).
 
 The pins guard the assembly end-to-end: phonopy load, FC resolution, site
-matching, DOS tensor, one-phonon and multiphonon accumulation, SAB
+matching, per-atom DOS, one-phonon and multiphonon accumulation, SAB
 conversion, and the writer. Physics-level validation (vs Euphonic and
 OCLIMAX) lives in the dedicated harnesses.
 """
@@ -51,7 +51,7 @@ _DECK = """20 /
 
 # Frozen regression pins; re-bless only for an intended physics change.
 _PINS = {1: 9.098600568286e-01, 2: 2.633836729729e+00}
-_TEFF0 = 707.2952
+_TEFF0 = 707.2741
 
 
 def _run(mode, tag):

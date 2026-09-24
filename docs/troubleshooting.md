@@ -97,7 +97,7 @@ positions must match the phonopy primitive cell.
 An unstable phonon calculation warns; it does not silently pass. If the phonon
 mesh contains imaginary modes (reported as negative frequencies), IRMA
 prints a warning naming the most-negative mode in meV. Those modes are
-excluded from the DOS-tensor grid and the mode sums, but the warning means
+excluded from the DOS and the mode sums, but the warning means
 the phonon calculation itself is unstable and should be reviewed before you
 trust the evaluation.
 

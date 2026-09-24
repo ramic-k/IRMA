@@ -1,14 +1,15 @@
-"""phonopy_io.py — Load phonopy mesh data and compute anisotropic DOS tensors.
+"""phonopy_io.py — Load phonopy mesh data; per-atom DOS and thermal displacements.
 
-The DOS tensor of atom d and Cartesian directions i, j, used by the
-inelastic_mode=1/2 paths:
+The per-atom DOS used by the inelastic_mode=1/2 T_eff record and by the
+mode-0 phonopy bridge is a histogram of the mesh modes:
 
-    ρ_{d,ij}(ε_k) = (1/N_total) Σ_{q,ν} Re[e_{d,i,ν}(q) · conj(e_{d,j,ν}(q))]
-                     × w_{q,ν} × G(ε_k − ε_{q,ν}, σ)
+    g_d(ε_k) ∝ Σ_{q,ν in bin k} w_q |e_{d,ν}(q)|²
 
-with e the unit-norm phonopy eigenvector, w the Brillouin-zone weight,
-N_total = Σ w and G(x, σ) = exp(−x²/2σ²)/(σ√2π). Because Σ_{d,i}|e|² = 1, the
-scalar partial DOS g_d = (1/3)Σ_i ρ_{d,ii} integrates to 1 (LEAPR's tbeta=1).
+with e the unit-norm phonopy eigenvector, w the Brillouin-zone weight, and
+each mode in the bin of its nearest grid energy. It is normalized to 1 per
+atom (LEAPR's tbeta=1). The modes are those ``mode_floor_mask`` keeps, the same
+set as the thermal-displacement (Debye-Waller) sum, so the Debye-Waller lambda
+of this DOS follows the exact one (no smearing width to bias it).
 """
 
 import numpy as np
@@ -577,7 +578,7 @@ def compute_thermal_displacement_matrices(mesh_data, temperature_k):
                                   · Re[e_{d,i,nu}(q) e*_{d,j,nu}(q)]
 
     The eigenvectors are unit-norm, so the 1/M_d factor is explicit. The modes
-    are those of the two-tier ``mode_floor_mask`` used by the DOS tensor and
+    are those of the two-tier ``mode_floor_mask`` used by the DOS and
     the one-phonon sums; on a Gamma-free mesh this matches phonopy's
     thermal-displacement matrices.
     """
@@ -646,84 +647,31 @@ def thermal_displacements_to_f_matrix(thermal_mats_ang2, awr_by_atom, tev):
     return thermal_mats * scale
 
 
-def compute_dos_tensor(mesh_data, freq_max_ev, n_freq, sigma_ev=None,
-                       chunk_size=5000):
-    """The 3×3 partial DOS tensor per atom on a uniform energy grid (see the
-    module docstring).
-
-    Parameters
-    ----------
-    mesh_data : PhonopyMeshData
-    freq_max_ev : float
-        Maximum energy [eV] for the DOS grid.
-    n_freq : int
-        Number of points on the uniform energy grid [0, freq_max_ev].
-    sigma_ev : float or None
-        Gaussian smearing width [eV]. Default: 2 × grid spacing.
-    chunk_size : int
-        Modes processed per batch.
+def compute_atom_dos(mesh_data, freq_max_ev, n_freq):
+    """Per-atom phonon DOS on a uniform energy grid from 0 to ``freq_max_ev``:
+    a histogram of the mesh modes (see the module docstring).
 
     Returns
     -------
-    dos_tensor : ndarray, shape (N_atoms, 3, 3, n_freq), float64
-        DOS tensor in eV⁻¹.
-    energy_grid : ndarray, shape (n_freq,), float64
-        Uniform energy grid in eV from 0 to freq_max_ev.
+    dos : ndarray, shape (N_atoms, n_freq)
+        DOS per atom [1/eV], normalized so that ``dos.sum(axis=1) * spacing``
+        is 1.
+    energy_grid : ndarray, shape (n_freq,)
+        The grid [eV].
     """
-    n_atoms = mesh_data.n_atoms
-    n_q = mesh_data.n_qpoints
-    n_branches = mesh_data.n_branches
-    n_total = float(np.sum(mesh_data.weights))
-
-    delta_ev = freq_max_ev / max(n_freq - 1, 1)
-    if sigma_ev is None or sigma_ev <= 0.0:
-        sigma_ev = 2.0 * delta_ev
-
     energy_grid = np.linspace(0.0, freq_max_ev, n_freq)
-    dos_tensor = np.zeros((n_atoms, 3, 3, n_freq), dtype=np.float64)
-
-    freq_flat = mesh_data.frequencies_ev.flatten()               # (N_modes,)
-    weights_flat = np.repeat(mesh_data.weights, n_branches)      # (N_modes,)
-    eigs_flat = mesh_data.eigenvectors.reshape(
-        n_q * n_branches, n_atoms, 3)                            # (N_modes, N_atoms, 3)
-
-    # Modes above the two-tier floor; imaginary modes are dropped.
-    valid_mask = mode_floor_mask(
-        freq_flat * 1.0e3, mesh_data.qpoints, n_branches,
-        mesh_data.min_phonon_energy_mev)
-    freq_valid = freq_flat[valid_mask]
-    wt_valid = weights_flat[valid_mask].astype(np.float64)
-    eigs_valid = eigs_flat[valid_mask]                           # (N_valid, N_atoms, 3)
-
-    n_valid = int(np.sum(valid_mask))
-    n_skipped = len(freq_flat) - n_valid
-    print(f"  DOS tensor: {n_valid} valid modes, {n_skipped} skipped "
-          f"(below the mode floor or imaginary); "
-          f"σ = {sigma_ev*1000:.2f} meV, Δε = {delta_ev*1000:.2f} meV", flush=True)
-
-    inv_gauss_norm = 1.0 / (sigma_ev * np.sqrt(2.0 * np.pi))
-    two_sig2 = 2.0 * sigma_ev**2
-
-    for start_idx in range(0, n_valid, chunk_size):
-        end_idx = min(start_idx + chunk_size, n_valid)
-
-        freq_c = freq_valid[start_idx:end_idx]   # (C,)
-        wt_c = wt_valid[start_idx:end_idx]        # (C,)
-        eig_c = eigs_valid[start_idx:end_idx]     # (C, N_atoms, 3)
-
-        R = np.real(
-            eig_c[:, :, :, np.newaxis] *
-            np.conj(eig_c[:, :, np.newaxis, :])
-        )  # (C, N_atoms, 3, 3)
-
-        diff = energy_grid[np.newaxis, :] - freq_c[:, np.newaxis]  # (C, n_freq)
-        G = np.exp(-diff**2 / two_sig2) * inv_gauss_norm             # (C, n_freq)
-        G *= wt_c[:, np.newaxis]                                      # weight each mode
-
-        dos_tensor += np.einsum('mdij,mk->dijk', R, G, optimize=True)
-
-    dos_tensor /= n_total
-    # R is exactly symmetric; this is a no-op safeguard.
-    dos_tensor = 0.5 * (dos_tensor + dos_tensor.transpose(0, 2, 1, 3))
-
-    return dos_tensor, energy_grid
+    delta_ev = energy_grid[1] - energy_grid[0]
+    freq = mesh_data.frequencies_ev.reshape(-1)
+    keep = mode_floor_mask(freq * 1.0e3, mesh_data.qpoints, mesh_data.n_branches,
+                           mesh_data.min_phonon_energy_mev)
+    weight = np.repeat(mesh_data.weights, mesh_data.n_branches).astype(float)[keep]
+    e2 = (np.abs(mesh_data.eigenvectors.reshape(freq.size, mesh_data.n_atoms, 3))
+          ** 2).sum(axis=2)[keep]                                # (N_kept, N_atoms)
+    bins = np.clip(np.rint(freq[keep] / delta_ev).astype(int), 0, n_freq - 1)
+    dos = np.stack([np.bincount(bins, weights=weight * e2[:, d], minlength=n_freq)
+                    for d in range(mesh_data.n_atoms)])
+    n_valid = int(np.sum(keep))
+    print(f"  DOS: {n_valid} valid modes, {freq.size - n_valid} skipped "
+          f"(below the mode floor or imaginary); histogram, "
+          f"Δε = {delta_ev*1000:.2f} meV", flush=True)
+    return dos / (dos.sum(axis=1, keepdims=True) * delta_ev), energy_grid

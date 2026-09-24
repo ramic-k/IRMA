@@ -152,7 +152,7 @@ def build_model_context(
     )
     # Two-tier mode floor (see constants.py): the Goldstone guard applies
     # only at Gamma q-points; elsewhere a 1-ueV overflow guard keeps any
-    # genuinely soft physics. Same mode set as the DOS tensor and the
+    # genuinely soft physics. Same mode set as the per-atom DOS and the
     # thermal-displacement matrices.
     from irma.core.phonopy_io import mode_floor_mask
     incoherent_one_phonon_valid_modes = mode_floor_mask(
