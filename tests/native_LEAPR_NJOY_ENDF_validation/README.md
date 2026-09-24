@@ -2,7 +2,9 @@
 
 These are end-to-end validation cases: IRMA is run on a real evaluated
 thermal-scattering deck and its ENDF output (MF7/MT2 elastic, MF7/MT4
-inelastic) is compared against the official native LEAPR/NJOY reference tape.
+inelastic) is compared against a reference tape: the published
+ENDF/B-VIII.1 evaluation, or a freshly generated NJOY2016.78 tape (see
+Reference provenance below).
 
 ## What is here
 
@@ -69,9 +71,9 @@ difference on every S value and Teff)** for all four.
 ## How the IRMA decks were derived
 
 The reference `.leapr` files are NJOY *job streams* (`reconr`/`broadr`/`leapr`/
-`thermr`/`acer`/`plotr` …). IRMA runs only the LEAPR scattering-law step and
-expects a standalone deck whose first card is the output unit. We must NOT feed
-a raw NJOY deck to IRMA; instead `leapr_to_irma_input.py` performs a small,
+`thermr`/`acer`/`plotr` …). IRMA runs only the LEAPR scattering-law step. It
+also accepts the job stream directly (it locates the `leapr … stop` block);
+the converter produces a standalone deck for readability, with a small,
 well-defined translation of the LEAPR block:
 
 1. Take the block following the `leapr` module line, up to the next module
@@ -92,11 +94,11 @@ well-defined translation of the LEAPR block:
 Several decks use the LEAPR shorthand where a **negative temperature** means
 "reuse the previous temperature's scattering-law inputs unchanged and only
 recompute the law at the new |T|" (the deck omits the detail block for those
-temperatures). IRMA now honors this (see
-`tests/test_negative_temperature.py`); previously it reset the spectrum to
-`None` each temperature and crashed on the first negative card. The derived
-decks preserve the negative-temperature cards exactly as the references write
-them (graphite has 9, iron and aluminum 5 each, polyethylene 14).
+temperatures). IRMA honors this convention
+(`tests/test_negative_temperature.py`). The derived decks preserve the
+negative-temperature cards exactly as the references write them (graphite
+has 9, iron and aluminum 5 each, polyethylene 14, BeO 14 over its two
+passes).
 
 ## Running the validation
 
@@ -116,22 +118,20 @@ information but is dominated by a handful of near-zero tail points.
 
 | material        | iel | ref code        | temps | inel. max-rel-d (sig.) | ΣS ratio | elastic |
 |-----------------|-----|-----------------|-------|------------------------|----------|---------|
-| graphite        | 1   | NJOY LEAPR      | 10    | 3.4e-5                 | 1.1e-5   | MT2 coh: 221=221 edges, strength ratio 1.00000 |
-| 026_Fe_056      | 6   | NJOY LEAPR      | 6     | 6.9e-5                 | 1.9e-5   | MT2 coh: 602=602 edges, strength ratio 1.00000 |
-| 013_Al_027      | 4   | NJOY LEAPR      | 6     | 6.2e-5                 | 1.9e-5   | MT2 coh: 568=568 edges, strength ratio 1.00000 |
-| HinCH2          | 0   | NJOY LEAPR      | 15    | 2.0e-5                 | 2.9e-7   | MT2 incoh-elastic (LTHR=2) |
+| graphite        | 1   | published (NJOY LEAPR) | 10 | 3.4e-5              | 1.1e-5   | MT2 coh: 221=221 edges, strength ratio 1.00000 |
+| 026_Fe_056      | 6   | published (code not named) | 6 | 6.9e-5          | 1.9e-5   | MT2 coh: 602=602 edges, strength ratio 1.00000 |
+| 013_Al_027      | 4   | published (code not named) | 6 | 6.2e-5          | 1.9e-5   | MT2 coh: 568=568 edges, strength ratio 1.00000 |
+| HinCH2          | 0   | published (FLASSH) | 15 | 2.0e-5                  | 2.9e-7   | MT2 incoh-elastic (LTHR=2) |
 | l-CH4           | 0   | NJOY2016.78 (local) | 1 | 0.0                    | 0.0      | none |
 | ortho-H         | 0   | NJOY2016.78 (local) | 7 | 0.0                    | 0.0      | none |
 | para-H          | 0   | NJOY2016.78 (local) | 7 | 0.0                    | 0.0      | none |
 | BeO (two-pass)  | 3   | NJOY2016.78 (local) | 8 | 0.0                    | 0.0      | MT2 coh: 236=236 edges, strength ratio 1.00000 |
 
-Every reference was produced with **NJOY LEAPR**, which is exactly what
-IRMA's classic path reimplements. IRMA reproduces the inelastic law to
-**~1e-4** at every temperature (and the freshly generated NJOY2016 references
-**exactly**), the α/β-integrated S to **~1e-5**, and the coherent-elastic
-Bragg structure exactly (same edge count after degenerate-shell merging, same
-total strength to 5 figures). These are true bit-exact reproductions across
-seven distinct code paths: hexagonal (graphite, iel=1), bcc (iron, iel=6) and
+IRMA reproduces the four fresh NJOY2016.78 tapes exactly and the four
+published tapes to at most 7e-5 at significant S (the α/β-integrated S to
+~1e-5), with the coherent-elastic Bragg structure exact (same edge count
+after degenerate-shell merging, same total strength to 5 figures). The set
+covers seven distinct code paths: hexagonal (graphite, iel=1), bcc (iron, iel=6) and
 fcc (aluminum, iel=4) built-in coherent elastic, a hydrogenous molecular
 moderator (polyethylene, iel=0) with a free-gas secondary scatterer and
 incoherent elastic (LTHR=2), liquid methane (`trans` with a diffusive
@@ -148,8 +148,7 @@ kernels `contin`, `trans`, `discre` and `coldh` and both secondary
 conventions (free-gas and two-pass).
 
 The strict all-points "max rel d" (~1e-4) is slightly larger than the
-significant-S figure because of a handful of near-zero tail points; it is still
-~1e-4, i.e. round-off level.
+significant-S figure because of a handful of near-zero tail points.
 
 ### Materials deliberately excluded
 
@@ -174,3 +173,8 @@ depends on:
 * `tests/test_native_leapr_decks.py` — the derived decks parse into the
   expected LEAPR control cards (Card 1 reformatting, title quoting,
   iel/grid/temperature header, no leftover NJOY wrapper lines).
+* The minitape tests (`tests/test_coldd_minitape.py`,
+  `tests/test_coldh_skold_minitape.py`, `tests/test_two_pass_minitape.py`,
+  `tests/test_writer_flag_tapes.py`) — small decks whose MF7 must be byte
+  identical to unmodified-NJOY2016.78 tapes, which guards the NJOY
+  invariant in CI.
