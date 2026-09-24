@@ -160,7 +160,7 @@ What each control card carries, at a glance:
 | 1 | `nout` | Output unit (LEAPR compatibility only). |
 | 2 | `'title'` | Quoted title; becomes the console banner. |
 | 3 | `ntempr iprint nphon` | Temperature count, print level, phonon-expansion order. |
-| 4 | `mat za isabt ilog smin [iint]` | ENDF MAT/ZA, storage flags, and the optional interpolation flag echoed in the log. |
+| 4 | `mat za isabt ilog smin [iint nver lrel]` | ENDF MAT/ZA, storage flags, the optional interpolation flag, and the optional library version and release (default `8 1`, ENDF/B-VIII.1), echoed in the log. |
 | 5 | `awr spr npr iel ncold nsk` | Principal scatterer: mass ratio, free-atom σ, atom count, elastic option, cold-H and pair-correlation options. |
 | 6 | `nss b7 aws sps mss` | Secondary scatterer block (`nss=0` for none). |
 | 7 | `nalpha nbeta lat` | Grid sizes; `lat=1` means grids are at the 0.0253 eV reference temperature. |
