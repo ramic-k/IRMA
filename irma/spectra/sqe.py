@@ -1,30 +1,33 @@
 """Standalone neutron-scattering forward model: powder S(Q,E) -> instrument spectrum.
 
-This module is deliberately INDEPENDENT of the IRMA ENDF package. It consumes a
+This module does not depend on the IRMA ENDF package. It consumes a
 powder-averaged dynamic structure factor S(Q,E) (from the IRMA engine, an
 OCLIMAX map, or any user-supplied (q, E, S) arrays) and produces the
 1-D spectrum a spectrometer measures, by:
 
   1. building the signed-energy S(Q,E): the computed downscatter side plus the
-     energy-gain (anti-Stokes) side reconstructed via detailed balance,
+     energy-gain (anti-Stokes) side, taken from the directly computed gain
+     arrays when the powder carries them and from detailed balance otherwise,
   2. sampling S(Q,E) along a detector's kinematic Q(E) trajectory
      (indirect / direct geometry, or a fitted curve),
   3. optionally adding a resolution-broadened elastic line at E=0,
-  4. convolving a (VISION-style) polynomial Gaussian energy resolution.
+  4. convolving the energy resolution: a width polynomial (VISION-style) or the
+     direct-geometry chopper model, with a Gaussian or Lorentzian line shape.
 
 This mirrors what OCLIMAX does with INSTR=0/1/2, but fed by an arbitrary
 S(Q,E) source.
 
 Sign / unit conventions
 -----------------------
-* E  (energy transfer, meV) > 0  : neutron ENERGY LOSS  (Stokes, downscatter,
-                                   phonon CREATION). This is the side IRMA /
-                                   OCLIMAX compute directly.
-* E < 0                          : neutron ENERGY GAIN  (anti-Stokes, upscatter,
-                                   phonon ANNIHILATION), obtained from the loss
-                                   side by detailed balance  S(Q,-E)=e^{-E/kT} S(Q,+E).
+* E  (energy transfer, meV) > 0  : neutron energy loss  (Stokes, downscatter,
+                                   phonon creation). The loss side is always
+                                   computed.
+* E < 0                          : neutron energy gain  (anti-Stokes, upscatter,
+                                   phonon annihilation): the directly computed
+                                   gain side when attached, else the loss side
+                                   by detailed balance  S(Q,-E)=e^{-E/kT} S(Q,+E).
 * Q in inverse angstrom (1/A); energies in meV.
-* S(Q,E) carried internally as the kf/ki-FREE (sigma/4pi) S(Q,omega) in
+* S(Q,E) carried internally as the kf/ki-free (sigma/4pi) S(Q,omega) in
   barn / sr / meV. The measured double-differential is
   d2sigma/dOmega/dE' = (kf/ki) (sigma/4pi) S(Q,omega); the kf/ki factor is
   applied only on request (see the kf/ki note above instrument_spectrum).
@@ -56,7 +59,7 @@ class PowderSQE:
 
     q     : (nq,)      momentum transfer, 1/A, increasing
     E     : (nE,)      energy transfer (loss, >= 0), meV, increasing, E[0] may be 0
-    S     : (nq, nE)   d2sigma/dOmega/dE' in barn/sr/meV
+    S     : (nq, nE)   kf/ki-free (sigma/4pi) S(Q,E) in barn/sr/meV
     T_K   : float      sample temperature (K)
     sigma_b : float    bound scattering cross section used in the normalization (barn)
     label : str        provenance tag for plots
@@ -68,7 +71,7 @@ class PowderSQE:
     T_K: float
     sigma_b: float
     label: str = ""
-    # optional DIRECTLY-COMPUTED energy-gain side (explicit Bose factors, not
+    # optional directly computed energy-gain side (explicit Bose factors, not
     # mirrored): E_gain is the negative grid -E[E>0][::-1] and S_gain its
     # (nq, nE_gain) intensities. When present, signed_sqe uses these instead of
     # the detailed-balance mirror.
@@ -119,10 +122,10 @@ def from_noncubic_arrays(q, E, S, T_K, sigma_b, label=None,
                          E_gain=None, S_gain=None):
     """Wrap the IRMA noncubic engine's physical ``sqe_*`` map into a PowderSQE.
 
-    The engine's ``sqe_*_barn_per_meV`` arrays ARE the physical double-
-    differential ``d2sigma/dOmega/dE'`` (= ``PowderSQE.S``) already, on the
-    engine's ``(q_ang_inv, e_mev)`` grid -- so this bridge applies NO SAB
-    inversion and NO ``exp(+beta/2)``. (The ``4*pi*kT/sigma_b``-scaled
+    The engine's ``sqe_*_barn_per_meV`` arrays are already the kf/ki-free
+    (sigma/4pi) S(Q,E) that ``PowderSQE.S`` holds, on the engine's
+    ``(q_ang_inv, e_mev)`` grid, so this bridge applies no SAB inversion and
+    no ``exp(+beta/2)``. (The ``4*pi*kT/sigma_b``-scaled
     ``sab_*`` arrays would need them; reading the ``sqe_*`` family avoids that.) This is the canonical engine -> spectra
     bridge used by ``compute_spectrum``. S has shape (nq, nE).
     """
@@ -134,17 +137,17 @@ def from_noncubic_arrays(q, E, S, T_K, sigma_b, label=None,
 
 
 # -----------------------------------------------------------------------------
-# Signed-energy S(Q,E): downscatter + detailed-balance energy-gain side
+# Signed-energy S(Q,E): downscatter + energy-gain side
 # -----------------------------------------------------------------------------
 def signed_sqe(p: PowderSQE, include_gain=True):
     """Return (q, E_signed, S_signed) with the energy-gain side attached.
 
-    When the powder carries a DIRECTLY-COMPUTED gain side (``p.S_gain`` from
+    When the powder carries a directly computed gain side (``p.S_gain`` from
     the explicit-Bose-factor evaluation), that is used verbatim. Otherwise the
     gain side is built by detailed balance, S(Q,-E) = exp(-E/kT) * S(Q,+E) --
     the closed form of the same physics for the equilibrium harmonic model.
 
-    E_signed is sorted increasing; energy LOSS is positive.
+    E_signed is sorted increasing; energy loss is positive.
     """
     E = p.E
     # ensure E[0] == 0 handled: split into zero node + positive nodes
@@ -498,7 +501,7 @@ def instrument_spectrum(p: PowderSQE, Q_of_E, E_out, sigma_coeffs,
     E_out          : output energy-transfer grid (meV); may include negatives
     sigma_coeffs   : resolution width polynomial coeffs (meV); sigma for a
                      Gaussian, HWHM for a Lorentzian
-    include_gain   : add the detailed-balance energy-gain side
+    include_gain   : add the energy-gain side (see :func:`signed_sqe`)
     elastic_area   : if not None, add a broadened elastic line of this area
     kinematic_factor : optional callable Etr->kf/ki (e.g. kf_ki_indirect(Ef)) for
                        a measured count-rate spectrum; None keeps the S(Q,omega)

@@ -1,4 +1,4 @@
-"""Rigorous elastic-line physics tethered to IRMA's own MF7/MT2 data.
+"""Elastic-line physics for the spectra forward model.
 
 The inelastic forward model in :mod:`irma.spectra.sqe` adds an optional elastic
 line at zero energy transfer.  This module supplies that line from real physics
@@ -11,12 +11,10 @@ builds the line tape-free from the noncubic engine's Debye-Waller state; and
 the mode-0 :func:`from_dos_elastic` builds it from a phonon DOS (isotropic
 Debye-Waller).
 
-Why MF7/MT2 and not OCLIMAX?  OCLIMAX can *add* an elastic line, but its exact
-elastic treatment is not documented and may be approximate.  IRMA computes the
-coherent-elastic Bragg structure factors and the incoherent-elastic
-Debye-Waller term as first-class outputs (MF7/MT2), so this module tethers to
-those.  The forms below are taken verbatim from NJOY THERMR (the reference
-processor):
+OCLIMAX can also add an elastic line, but its elastic treatment is not
+documented. IRMA computes the coherent Bragg structure factors and the
+incoherent Debye-Waller term itself; the forms below follow NJOY THERMR (the
+reference processor):
 
 Coherent elastic  (THERMR ``sigcoh``; ENDF-102 LTHR=1)
     The tape stores the cumulative structure factor  S(E) = sum_{E_i<=E} f_i
@@ -39,8 +37,9 @@ Incoherent elastic  (THERMR ``iel``; ENDF-102 LTHR=2)
     whose angle integral is the THERMR result
         sigma_inc(E) = (sigma_b/2) * (1 - exp(-4 E W')) / (2 E W').
 
-Units throughout: energies in meV, Q in 1/A, cross sections in barn (per the
-ENDF scatterer, i.e. per principal atom).
+Units throughout: energies in meV, Q in 1/A, cross sections in barn. The
+normalization follows the source: per principal atom (the ENDF scatterer) for
+:func:`from_endf_mf7mt2`, per atom of the cell for the tape-free builders.
 """
 from __future__ import annotations
 
@@ -90,7 +89,7 @@ def _mf7mt4_npr(path):
     """npr (principal-atom count) from MF7/MT4 B(6) of the same tape.
 
     MF7/MT2 does not carry npr, but every IRMA writer (classic iel<0, SEF/CEF
-    and MEF generalized) stores the MOLECULAR incoherent-elastic
+    and MEF generalized) stores the molecular incoherent-elastic
     ``SB = per-principal sigma x npr`` and records npr in MF7/MT4 B(6)
     (endf_writer: ``mf7mt4['B'][6]``), so the same tape's MT4 is the
     authoritative source. Returns 1.0 when the tape has no MF7/MT4 section or
@@ -153,10 +152,9 @@ class _Cursor:
 # -----------------------------------------------------------------------------
 @dataclasses.dataclass
 class ElasticModel:
-    """Powder elastic cross sections from one ENDF MF7/MT2 section.
-
-    Coherent (Bragg) and/or incoherent (Debye-Waller) channels, whichever the
-    tape contains (LTHR = 1 / 2 / 3).
+    """Powder elastic cross sections: coherent (Bragg) and/or incoherent
+    (Debye-Waller) channels, read from an MF7/MT2 section (LTHR = 1 / 2 / 3) or
+    built tape-free by one of the builders above.
     """
     T_K: float
     # coherent (Bragg peaks)
@@ -174,7 +172,7 @@ class ElasticModel:
     # incoherent methods sum these channels instead of the scalar sigma_b/Wprime
     # (which then carry the total sigma_b and a representative W' for display).
     incoherent_channels: tuple = ()
-    # optional DIRECTIONAL incoherent channels: ((sigma_b_d, (u1,u2,u3)), ...)
+    # optional directional incoherent channels: ((sigma_b_d, (u1,u2,u3)), ...)
     # with per-atom U-tensor eigenvalues [Ang^2], already multiplicity-weighted.
     # When non-empty the incoherent methods use the orientation-averaged
     # <exp(-Q^2 uhat.U.uhat)> (irma.core.incoherent_dw) instead of the
@@ -196,7 +194,7 @@ class ElasticModel:
         amp = self.f_bragg / self.Q_bragg / (2.0 * np.pi * C_E)  # [barn/sr * (1/A)]
         if q_res <= 0.0:
             out = np.zeros_like(Q)
-            # nearest-peak assignment (rarely useful; kept for completeness)
+            # nearest-peak assignment
             for qi, ai in zip(self.Q_bragg, amp):
                 out[np.isclose(Q, qi)] += ai
             return out
@@ -303,7 +301,7 @@ def _parse_incoherent(cur, T_target, npr=1.0):
     """Parse an LTHR=2/3 incoherent-elastic block; return
     (sigma_b [per principal atom], W'(T)[1/meV]).
 
-    The tape SB is MOLECULAR: per-principal sigma x npr (the convention every
+    The tape SB is molecular: per-principal sigma x npr (the convention every
     IRMA writer -- classic iel<0, SEF/CEF, MEF -- uses; NJOY THERMR divides it
     back out the same way). Dividing by ``npr`` converts to this module's
     per-principal-atom convention. CAVEAT: MF7/MT2 alone does not carry npr,
@@ -313,7 +311,7 @@ def _parse_incoherent(cur, T_target, npr=1.0):
 
     W' is linearly interpolated in the tabulated temperatures; a request
     outside the tabulated range is clamped to the nearest endpoint with a
-    warning (silent clamping hid wrong-temperature reads).
+    warning.
     """
     # TAB1: C1=SB, C2=0, L1=0, L2=0, N1=NR, N2=NP, then (T, W') pairs
     SB, _c2, _l1, _l2, NR, NP = cur.head()
@@ -344,13 +342,13 @@ def from_endf_mf7mt2(path, T_K=296.0, label=None):
 
     Handles LTHR = 1 (coherent), 2 (incoherent), 3 (both). Temperature
     handling per channel: the coherent channel selects the tabulated
-    temperature CLOSEST to ``T_K`` (Bragg-edge tables cannot be
+    temperature closest to ``T_K`` (Bragg-edge tables cannot be
     interpolated safely), while the incoherent W'(T) is linearly
     interpolated. Both channels warn when the request is further than
     ``_T_MATCH_TOL_K`` from what the tape can provide, so a 296 K request
     against a 1000 K-only tape is loud instead of silently wrong.
 
-    The returned ``sigma_b`` is PER PRINCIPAL ATOM (the module convention):
+    The returned ``sigma_b`` is per principal atom (the tape convention):
     the tape's molecular ``SB = per-principal sigma x npr`` is divided by the
     npr read from the same tape's MF7/MT4 B(6). A tape with no MF7/MT4
     section is taken as npr=1 (see :func:`_mf7mt4_npr`).
@@ -654,7 +652,7 @@ def from_dos_elastic(crystal, *, awr, sigma_inc_b, f0_lambda, multiplicity, T_K,
     PER-ATOM (per represented atom), matching the mode-0 inelastic and
     inelastic_mode 1/2: the coherent Bragg peaks keep their native per-atom
     normalization (the ``1/N`` in ``compute_bragg_edges_general``'s xsectfact), and
-    the incoherent line is the per-atom average over EVERY species,
+    the incoherent line is the per-atom average over every species,
     ``sum_d (mult_d/N) (sigma_inc_d/4pi) exp(-2 W_d(Q))`` with
     ``N = sum(multiplicity)`` -- summing all species keeps the H line
     (:func:`from_engine_elastic_state` uses the same multi-species channel

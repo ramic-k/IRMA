@@ -4,24 +4,25 @@ The incoherent-approximation phonon expansion straight from a phonon DOS -- no
 phonopy eigenvectors required. This is the lightweight, DOS-only end of IRMA's
 fidelity range (complementary to the phonopy-backed inelastic_mode 1/2): correct
 and efficient for incoherent / hydrogen-rich / disordered materials and for any
-case where you only have a DOS (MD/VACF, experiment, a quick calc). It does NOT
-capture coherent *inelastic* (dispersion).
+case where you only have a DOS (MD/VACF, experiment, a quick calc). It does not
+capture coherent inelastic scattering (dispersion).
 
-MULTI-ATOM: each species scatters by ITS OWN partial DOS, mass (-> alpha) and
-Debye-Waller -- you do NOT collapse to one effective spectrum. The result is the
-cross-section/multiplicity-weighted PER-ATOM average
+Several species: each species scatters by its own partial DOS, mass (-> alpha)
+and Debye-Waller factor; they are not collapsed into one effective spectrum. The
+result is the cross-section/multiplicity-weighted per-atom average of the
+kf/ki-free (sigma/4pi) S(Q,E)
 
-    d2sigma/dOmega/dE'(Q,E) = (1/N) sum_d m_d (sigma_d/4pi) e^{-2W_d(Q)} [expansion of rho_d]
+    S(Q,E) = (1/N) sum_d m_d (sigma_d/4pi) e^{-2W_d(Q)} [expansion of rho_d]
 
 with alpha_d = C_E Q^2 / (awr_d kT) and N = sum_d m_d the atoms per cell. The
-1/N makes the absolute scale PER REPRESENTED ATOM, matching inelastic_mode 1/2
+1/N makes the absolute scale per represented atom, matching inelastic_mode 1/2
 (the engine normalizes per represented atom too) -- so mode-0 and mode-1/2
 spectra are directly comparable. A single species (one entry) is the classic
 LEAPR single-material path -- the right fallback when only a total DOS is known
 (excellent for H-rich solids, where H dominates sigma).
 
-CONVENTION: the LEAPR ``contin()``
-kernel fills its array with the ASYMMETRIC downscatter law S_asym_down (= S_sym *
+Convention: the LEAPR ``contin()``
+kernel fills its array with the asymmetric downscatter law S_asym_down (= S_sym *
 exp(+beta/2)); the physical S(Q,E) is then ``sigma_d/(4 pi kT) * S_asym_down``,
 i.e. ``sqe._law_to_sqe``, with no further exp(+beta/2) factor.
 """
@@ -48,7 +49,7 @@ def _validate_dos(omega_ev, rho, symbol):
         raise ValueError(f"species {symbol!r}: dos omega grid must increase with a "
                          f"positive uniform spacing (got delta={delta1})")
     if not np.allclose(d, delta1, rtol=1e-4, atol=0.0):
-        raise ValueError(f"species {symbol!r}: dos omega grid must be UNIFORMLY "
+        raise ValueError(f"species {symbol!r}: dos omega grid must be uniformly "
                          f"spaced (resample first)")
     # the kernels index the grid as omega = j*delta, so it must start at 0
     if abs(omega[0]) > 1e-6 * delta1:
@@ -103,9 +104,9 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev, nphon=100):
     ----------
     species : list of dict, one per scattering species, each with
         ``symbol`` (label), ``omega_ev`` + ``rho`` (the partial phonon DOS on a
-        UNIFORM omega grid from 0, eV; rho[0] is reconstructed internally), ``awr``
+        uniform omega grid from 0, eV; rho[0] is reconstructed internally), ``awr``
         (mass ratio M_d/m_n -> alpha_d and the Debye-Waller), ``sigma_bound_b``
-        (the TOTAL bound cross section sigma_coh+sigma_inc for the incoherent-
+        (the total bound cross section sigma_coh+sigma_inc for the incoherent-
         approximation inelastic weight) and ``multiplicity`` (number of atoms of
         this species represented; default 1).
     temperature_k : float
@@ -124,7 +125,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev, nphon=100):
     solids only, with no diffusive or free-gas translational channel.
 
     Returns a dict with ``q_ang_inv``, ``e_mev``, ``sqe_barn_per_meV`` (nq, nE)
-    = the PER-ATOM physical d2sigma/dOmega/dE' (the cross-section/multiplicity-
+    = the per-atom kf/ki-free (sigma/4pi) S(Q,E) (the cross-section/multiplicity-
     weighted cell sum divided by the atoms per cell, matching mode 1/2), the
     per-species Debye-Waller and effective-temperature factors, the atom-averaged
     bound cross section, and ``nphon_effective`` / ``nphon_required`` (the order the ladder actually ran
@@ -174,7 +175,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev, nphon=100):
         ssm = np.zeros((nE, nQ))                    # [nbeta, nalpha], filled in place
         f0, tbar, _deltab = contin(ssm, alpha_d, beta, nQ, nE, 0, 1.0, tev,
                                    rho, np1, delta1, 1.0, nphon_eff)
-        # asym_downscatter (the P0-validated convention): S = sigma_d/(4pi kT) * ssm
+        # contin fills ssm with the asymmetric downscatter law: S = sigma_d/(4pi kT) * ssm
         S_d = _law_to_sqe(ssm, T_K, sigma_d)
         S_cell += mult * S_d
         sigma_b_cell += mult * sigma_d
@@ -191,7 +192,7 @@ def compute_mode0_sqe(*, species, temperature_k, q_ang_inv, e_mev, nphon=100):
     return {
         "q_ang_inv": Q,
         "e_mev": E,
-        "sqe_barn_per_meV": S_total,                # (nQ, nE) physical d2sig/dOmega/dE'
+        "sqe_barn_per_meV": S_total,                # (nQ, nE) kf/ki-free (sigma/4pi) S(Q,E)
         "per_species": per_species,
         "sigma_b_total": float(sigma_b_total),      # atom-averaged represented bound xs
         "temperature_k": T_K,
@@ -212,34 +213,33 @@ class GainGridTooLargeError(ValueError):
 
 def compute_mode0_gain_direct(*, species, temperature_k, q_ang_inv, e_gain_mev,
                               nphon="auto", max_nfft=1 << 24):
-    """DIRECT energy-gain S(Q, E<0): explicit Bose factors, no detailed balance.
+    """Direct energy-gain S(Q, E<0): explicit Bose factors, no detailed balance.
 
-    Computes the incoherent-approximation phonon expansion on a SIGNED energy
+    Computes the incoherent-approximation phonon expansion on a signed energy
     grid with the occupation factors written out per process -- ``n(omega)+1``
     for phonon creation (neutron energy loss) and ``n(omega)`` for annihilation
     (energy gain) -- so a p-phonon event mixes creation and annihilation in all
     orderings through signed-grid convolutions. The energy-gain side returned
-    here is COMPUTED, never mirrored from the loss side.
+    here is computed, never mirrored from the loss side.
 
     The ladder is summed in Fourier space. With ``t1`` the unit-mass signed
     one-phonon distribution and ``lam`` its Debye-Waller integral,
 
         S_inel(alpha, beta) = IFFT[ exp(alpha*lam*(FFT(t1) - 1)) - exp(-alpha*lam) ]
 
-    sums EVERY order at once (the discrete-grid analogue of
+    sums every order at once (the discrete-grid analogue of
     ``exp(-2W) sum_p (2W)^p/p! T_p``) and is used when ``nphon='auto'`` (the
     converged-order convention of :func:`compute_mode0_sqe`). An explicit
-    integer ``nphon`` instead sums the ladder to EXACTLY that order via the
+    integer ``nphon`` instead sums the ladder to exactly that order via the
     truncated Fourier partial sum ``exp(-alpha*lam) sum_{p=1}^{nphon}
     (alpha*lam)^p/p! FFT(t1)^p`` -- so the gain side carries the same phonon
     order as the (finite-order) loss side, never more.
 
     For the harmonic model in equilibrium this equals the detailed-balance
-    mirror of the loss side identically; the agreement is pinned in CI as a
-    cross-validation of BOTH paths.
+    mirror of the loss side; a test checks the two paths against each other.
 
     Parameters mirror :func:`compute_mode0_sqe`; ``e_gain_mev`` is the
-    energy-GAIN grid (negative, ascending, e.g. ``-E_loss[::-1]``). ``max_nfft``
+    energy-gain grid (negative, ascending, e.g. ``-E_loss[::-1]``). ``max_nfft``
     caps the signed FFT length; an input whose converged ladder needs a longer
     grid raises :class:`GainGridTooLargeError` (the gain side is negligible
     there and the caller falls back to the mirror). Returns a dict with
@@ -291,7 +291,7 @@ def compute_mode0_gain_direct(*, species, temperature_k, q_ang_inv, e_gain_mev,
         # signed beta reach: the requested gain range, plus the recoil shift +
         # spread of the ladder at the largest alpha. The ladder mean order is
         # the Poisson mean alpha*lam; the support spans ~that many one-phonon
-        # hops (each bounded by the DOS reach b1max). An EXPLICIT nphon caps the
+        # hops (each bounded by the DOS reach b1max). An explicit nphon caps the
         # summed orders, so the grid never needs to hold more than nphon hops.
         b1max = float(w_meV.max() / kT)
         # lam is not known before t1 is built; bound it by the worst case

@@ -1,11 +1,11 @@
 """``irma.spectra`` -- neutron-scattering forward modelling.
 
-Turns a powder ``S(Q,E)`` (computed fresh from a phonon model via the IRMA
-noncubic SAB engine, or loaded from OCLIMAX/ENDF for validation) into the 1-D
-spectrum an instrument records (VISION / generic indirect / generic direct
-geometry), with an optional elastic line.
+Turns a powder ``S(Q,E)`` into the 1-D spectrum or 2-D map an instrument
+records (VISION / generic indirect / generic direct geometry), with an optional
+elastic line. The S(Q,E) comes from the IRMA noncubic SAB engine (a phonopy
+model), from a phonon DOS (mode 0), or from an OCLIMAX map.
 
-This is IRMA's SECOND capability, kept separate from ENDF/TSL evaluation but
+This capability is kept separate from ENDF/TSL evaluation but
 sharing core physics (``irma.core`` constants, the noncubic SAB engine, and the
 coherent/incoherent elastic). ``phonopy`` and ``PyYAML`` are optional and are
 imported lazily by the compute/config layers, so ``import irma.spectra`` works
