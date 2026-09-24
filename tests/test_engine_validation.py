@@ -175,25 +175,28 @@ def test_card6e_duplicate_spectrum_za_rejected():
 
 
 def test_card6d_duplicate_za_with_spectrum_rejected():
-    """Two Card 6d atom types sharing (Z, A) make spectrum matching
-    ambiguous ONLY when a Card 6e spectrum targets that (Z, A); reject
-    exactly that combination."""
+    """Two Card 6d atom types sharing a non-principal (Z, A) make spectrum
+    matching ambiguous ONLY when a Card 6e spectrum targets that (Z, A);
+    reject exactly that combination. (Rows of the principal are merged
+    into one group before the matching.)"""
     head = """20 /
 'qa3 dup 6d deck'/
 1 1 4/
 1 6012./
 11.9 4.74 1 10 0 0/
 0/
-1 2 1 0/
+1 3 1 0/
 2.46 2.46 6.7 90. 90. 120./
 6 12 11.9 6.646 0.001 1/
 0.0 0.0 0.0/
-6 12 11.9 6.646 0.001 1/
+8 16 15.86 5.803 0.0008 1/
 0.5 0.5 0.5/
-6 12 0.005 4/
+8 16 15.86 5.803 0.0008 1/
+0.25 0.25 0.25/
+8 16 0.005 4/
 0.0 0.2 0.5 0.3/
 """
-    _expect(head, "Card 6e", "duplicate Card 6d", "Z=6", "A=12")
+    _expect(head, "Card 6e", "duplicate Card 6d", "Z=8", "A=16")
 
 
 def test_card6d_duplicate_za_without_spectrum_accepted():
