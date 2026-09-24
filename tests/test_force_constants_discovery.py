@@ -1,12 +1,10 @@
 """Force-constants discovery for the phonopy-backed paths (iel=10 modes 1/2).
 
-The MT4 driver used to require a text FORCE_CONSTANTS next to phonopy.yaml
-while the MT2 loader accepted force_constants.hdf5 and FORCE_SETS too, so a
-valid hdf5-based model worked for MT2 but errored in MT4. Both now share
-resolve_force_constants_source: yaml-embedded force constants first (they
-outrank every file inside phonopy.load), then force_constants.hdf5,
-FORCE_CONSTANTS, FORCE_SETS next to the yaml — and a hard error when nothing
-exists, instead of phonopy's fallback of searching the process cwd.
+The MT2 loader and the MT4 driver share resolve_force_constants_source:
+yaml-embedded force constants first (they outrank every file inside
+phonopy.load), then force_constants.hdf5, FORCE_CONSTANTS, FORCE_SETS next to
+the yaml, and a hard error when nothing exists, instead of phonopy's fallback
+of searching the process cwd.
 """
 import numpy as np
 import pytest

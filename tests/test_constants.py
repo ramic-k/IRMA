@@ -1,9 +1,7 @@
 """Physical-constant single-sourcing (CODATA 2018 / SI 2019).
 
-The noncubic/phonopy paths used to carry their own literals: hbar^2/2m_n as
-2.072146 (~10 ppm high) in three modules, phonopy's old Boltzmann
-8.6173383e-5 in the Bose factors, CODATA-1986 e/AMU/hbar, and THzToEv twice.
-Everything now derives from the defining constants in irma.core.constants:
+Every path derives its constants from the defining constants in
+irma.core.constants:
 
   - h = 6.62607015e-34 J s, e = 1.602176634e-19 C, k_B = 1.380649e-23 J/K
     (exact, 2019 SI redefinition);

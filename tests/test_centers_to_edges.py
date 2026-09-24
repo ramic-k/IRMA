@@ -1,6 +1,6 @@
 """irma.core.noncubic_numerics.centers_to_edges -- bin-edge inference.
 
-Pins the QA4 F16 lower-bound clamp: the first edge is clamped to a supplied
+Pins the lower-bound clamp: the first edge is clamped to a supplied
 ``lower_bound`` (a grid starting at 0 keeps a 0 first edge instead of going
 negative), but a genuinely-negative grid is left alone when no bound is given.
 Pure numpy -- runs in the bare-install gate too.
