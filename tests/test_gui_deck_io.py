@@ -549,6 +549,37 @@ def test_comment_apostrophe_and_slash_roundtrip(app, tmp_path):
     _run_engine(text1, tmp_path)              # and the engine accepts it
 
 
+def test_nver_lrel_and_hsub_fields_roundtrip(app, tmp_path):
+    """NVER/LREL go on Card 4 only when they differ from 8/1; the HSUB fields
+    are written as comment cards 3-5 (after the box's first two lines) and
+    come back from there on import."""
+    _reset(app)
+    assert "0 8 1" not in app._generate_input_text()
+    app.nver.set("9")
+    app.lrel.set("0")
+    app.comments_text.append("line one\nline two\ndescription")
+    for e, h in zip(app.hsub, ["----ENDF/B-IX.0     MATERIAL   37",
+                               "-----THERMAL NEUTRON SCATTERING DATA",
+                               "------ENDF-6 FORMAT"]):
+        e.set(h)
+    text1 = app._generate_input_text()
+    card4 = next(ln for ln in text1.splitlines() if ln.endswith(" 0 9 0 /"))
+    assert card4.split()[4] == "1e-75"
+    cards = text1.split("'line one' /\n", 1)[1].splitlines()
+    assert cards[:5] == ["'line two' /", "'----ENDF/B-IX.0     MATERIAL   37' /",
+                         "'-----THERMAL NEUTRON SCATTERING DATA' /",
+                         "'------ENDF-6 FORMAT' /", "'description' /"]
+
+    deck = tmp_path / "hsub.input"
+    deck.write_text(text1)
+    _reset(app)
+    app._import_leapr_from_path(str(deck))
+    assert (app.nver.get(), app.lrel.get()) == ("9", "0")
+    assert app.hsub[2].get() == "------ENDF-6 FORMAT"
+    assert app.comments_text.get_text().strip() == "line one\nline two\ndescription"
+    assert app._generate_input_text() == text1
+
+
 # ---------- Crystalline extinction (iel=10 optional card) ----------
 
 def _repo_example(name):

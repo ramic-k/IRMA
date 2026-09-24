@@ -116,14 +116,16 @@ def parse_deck_to_staging(reader, path):
     st['iprint'] = iprint
     st['nphon'] = nphon
 
-    # Card 4: mat, za, isabt, ilog, smin, [iint]
-    fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 1.0e-75, 0])
+    # Card 4: mat, za, isabt, ilog, smin, [iint nver lrel]
+    fvals = reader.read_floats(8, defaults=[0, 0, 0, 0, 1.0e-75, 0, 8, 1])
     st['mat'] = reader.to_int(fvals[0], "mat")
     st['za'] = fvals[1]
     st['isabt'] = reader.to_int(fvals[2], "isabt")
     st['ilog'] = reader.to_int(fvals[3], "ilog")
     st['smin'] = fvals[4]
     st['iint'] = reader.to_int(fvals[5], "iint")
+    st['nver'] = reader.to_int(fvals[6], "nver")
+    st['lrel'] = reader.to_int(fvals[7], "lrel")
 
     # Card 5: awr, spr, npr, iel, ncold, nsk
     fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])

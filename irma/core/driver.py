@@ -239,8 +239,8 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
     reader.require(nphon >= 1, f"nphon must be >= 1, got {nphon}")
 
     # Card 4: ENDF output control
-    reader.card("Card 4 (mat za isabt ilog smin [iint])")
-    fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 1.0e-75, 0])
+    reader.card("Card 4 (mat za isabt ilog smin [iint nver lrel])")
+    fvals = reader.read_floats(8, defaults=[0, 0, 0, 0, 1.0e-75, 0, 8, 1])
     mat = reader.to_int(fvals[0], "mat")
     za = reader.to_int(fvals[1], "za")
     isabt = reader.to_int(fvals[2], "isabt")
@@ -248,16 +248,22 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
     smin = fvals[4]
     # iint: MF7/MT4 interpolation, 0 = log-lin (INT=4, NJOY default), 1 = lin-lin (INT=2).
     iint = reader.to_int(fvals[5], "iint")
+    # nver, lrel: MF1/MT451 library version and release (ENDF/B-VIII.1 -> 8 1).
+    nver = reader.to_int(fvals[6], "nver")
+    lrel = reader.to_int(fvals[7], "lrel")
     reader.require(mat >= 1, f"mat must be >= 1, got {mat}")
     reader.require(za > 0, f"za must be > 0, got {za}")
     reader.require(isabt in (0, 1), f"isabt must be 0 or 1, got {isabt}")
     reader.require(ilog in (0, 1), f"ilog must be 0 or 1, got {ilog}")
     reader.require(iint in (0, 1), f"iint must be 0 or 1, got {iint}")
+    reader.require(nver >= 1, f"nver must be >= 1, got {nver}")
+    reader.require(lrel >= 0, f"lrel must be >= 0, got {lrel}")
     reader.require(np.isfinite(smin) and smin >= 0.0,
                    f"smin (S cutoff) must be finite and >= 0, got {smin!r}")
 
     print(f"  ntempr={ntempr}, iprint={iprint}, nphon={nphon}")
-    print(f"  mat={mat}, za={za}, isabt={isabt}, ilog={ilog}, iint={iint}")
+    print(f"  mat={mat}, za={za}, isabt={isabt}, ilog={ilog}, iint={iint}, "
+          f"nver={nver}, lrel={lrel}")
 
     # Card 5: principal scatterer control
     reader.card("Card 5 (awr spr npr iel ncold nsk)")
@@ -543,7 +549,8 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
                       alpha, beta, ssm, ssp, tempr_arr, ntempr,
                       dwpix, dwp1, tempf, tempf1,
                       bragg, nedge, isym, ilog, smin,
-                      iint=iint, comments=comments, crystal_info=crystal_info)
+                      iint=iint, comments=comments, crystal_info=crystal_info,
+                      nver=nver, lrel=lrel)
 
     print("  IRMA complete.")
     return LeaprResult(

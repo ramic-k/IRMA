@@ -60,13 +60,30 @@ def _patch_mf1_directory_counts(lines, nwd, sections):
     return lines
 
 
+def default_hsub(mat, nver, lrel):
+    """The three MF1/MT451 HSUB lines of an ENDF/B thermal sub-library for
+    library version ``nver`` and release ``lrel`` (8, 1 -> ENDF/B-VIII.1)."""
+    roman, n = "", int(nver)
+    for value, numeral in ((10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")):
+        while n >= value:
+            roman += numeral
+            n -= value
+    return [f"----ENDF/B-{roman}.{int(lrel)}".ljust(22) + f"MATERIAL {int(mat):4d}",
+            "-----THERMAL NEUTRON SCATTERING DATA",
+            "------ENDF-6 FORMAT"]
+
+
 def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
                       b7, aws, sps, mss, nalpha, nbeta, lat,
                       alpha, beta, ssm, ssp, tempr, ntempr,
                       dwpix, dwp1, tempf, tempf1,
                       bragg, nedge, isym, ilog, smin,
-                      iint=0, comments=None, crystal_info=None):
-    """Write ENDF-6 output file using endf-parserpy."""
+                      iint=0, comments=None, crystal_info=None, nver=8, lrel=1):
+    """Write ENDF-6 output file using endf-parserpy.
+
+    ``nver``/``lrel`` are the MF1/MT451 library version and release (Card 4;
+    ENDF/B-VIII.1 is 8 and 1).
+    """
     # MF7/MT4 interpolation for both the alpha and beta tables: iint 0 ->
     # log-lin (INT=4, NJOY), 1 -> lin-lin (INT=2).
     coh_int = 2 if iint == 1 else 4
@@ -104,10 +121,12 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
     mf1['LISO'] = 0
     mf1['NFOR'] = 6
     mf1['AWI'] = 1.0
-    mf1['EMAX'] = 0.0
-    mf1['LREL'] = 0
+    # the MF7/MT4 B(4) value, the table's upper energy (as NJOY2016.79 writes it)
+    emax_ev = sigfig(THERM * beta[nbeta - 1], 7, 0)
+    mf1['EMAX'] = emax_ev
+    mf1['LREL'] = lrel
     mf1['NSUB'] = 12  # thermal scattering sub-library
-    mf1['NVER'] = 6
+    mf1['NVER'] = nver
     mf1['TEMP'] = 0.0
     mf1['LDRV'] = 0
 
@@ -121,6 +140,9 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
             c = c[1:-1]
         text.append(c.ljust(66)[:66])
     text += [' ' * 66] * (5 - len(text))
+    if not ''.join(text[2:5]).strip():
+        # comment cards 3-5 blank: the standard ENDF/B thermal HSUB lines
+        text[2:5] = [t.ljust(66) for t in default_hsub(mat, nver, lrel)]
     r1, r2 = text[0], text[1]
     if (r2[43:55] + r2[63:66]).strip():
         warnings.warn(
@@ -173,7 +195,7 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
     mf7mt4['B'][1] = npr * spr
     mf7mt4['B'][2] = beta[nbeta - 1]
     mf7mt4['B'][3] = awr
-    mf7mt4['B'][4] = sigfig(THERM * beta[nbeta - 1], 7, 0)
+    mf7mt4['B'][4] = emax_ev
     mf7mt4['B'][5] = 0.0
     mf7mt4['B'][6] = float(npr)
 
