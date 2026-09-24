@@ -10,10 +10,12 @@ the two match by construction and the anisotropic-DW elastic line works.
 
 The plugin takes over the inelastic channel (and the coherent/incoherent elastic
 when the pack owns it), disabling those base channels. The base ``@DYNINFO`` is a
-``vdosdebye`` placeholder that NCrystal needs to construct a valid material. With
-``elastic: true`` it never reaches the cross section; with ``elastic: false``
-NCrystal's own elastic uses it, so its Debye temperature reproduces the engine's
-mean-squared displacement in NCrystal's Debye model.
+``vdosdebye`` placeholder that NCrystal needs to construct a valid material. Its
+Debye temperature reproduces the engine's mean-squared displacement in
+NCrystal's Debye model, because it is used: with ``elastic: false`` by NCrystal's
+own elastic, and with ``elastic: true`` by NCrystal's |F|^2 cutoff, which picks
+the Bragg planes whose structure factors the plugin then computes from the
+pack's tensors.
 """
 from __future__ import annotations
 
@@ -114,9 +116,9 @@ def assemble_material_ncmat(
     ``@CELL`` + ``@ATOMPOSITIONS`` carry the exact phonopy geometry (so the
     pack's DW-tensor positions match the material's atom sites). Each element
     gets a ``@DYNINFO type=vdosdebye`` placeholder whose Debye temperature
-    (:func:`debye_temperature_from_msd`) gives NCrystal a valid MSD source; the
-    plugin overrides it, and the element neutron data come from NCrystal's
-    atom database. ``@CUSTOM_IRMA`` lists one ``pack <path>`` line per
+    (:func:`debye_temperature_from_msd`) gives NCrystal a valid MSD source (see
+    the module docstring for where it still matters), and the element neutron
+    data come from NCrystal's atom database. ``@CUSTOM_IRMA`` lists one ``pack <path>`` line per
     principal pack (the only key the plugin accepts).
 
     v5 has no ``@TEMPERATURE``, so NCrystal defaults to 293.15 K: load with

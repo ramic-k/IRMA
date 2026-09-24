@@ -206,8 +206,12 @@ whose Debye temperature reproduces the phonopy MSD in NCrystal's Debye model)
 lets NCrystal construct the crystal; the plugin overrides the inelastic
 component with the exported `S(α,β)` and, on the coherent-bearing data file,
 the coherent/incoherent elastic with the anisotropic-DW line. With
-`elastic: true` the placeholder never reaches the cross section; with
-`elastic: false` NCrystal's own elastic uses it. The material temperature is set at load via `;temp=...` and
+`elastic: false` NCrystal's own elastic uses the placeholder. With
+`elastic: true` the plugin computes each Bragg plane's |F|² from the
+data file's tensors, but takes the list of planes from NCrystal, which drops
+planes whose |F|² with the placeholder's Debye-Waller factor falls below its
+cutoff; the placeholder therefore still selects the weak high-Q planes, which
+shows in the coherent elastic above about 1 eV (0.4% for graphite). The material temperature is set at load via `;temp=...` and
 must match the export temperature; a mismatch is a hard error (see
 [How NCrystal uses the data](#how-ncrystal-uses-the-data)).
 
