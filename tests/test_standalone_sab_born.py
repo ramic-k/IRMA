@@ -1,11 +1,10 @@
 """BORN/NAC plumbing through the in-process noncubic MT4 driver.
 
-The deck's Card 6f BORN path used to reach only the MT2 directional
-Debye-Waller factors (load_phonopy_mesh); run_noncubic_standalone_sab had no
-born parameter at all, so the MT4 mode sums were silently built without NAC
-and the context cache could not distinguish NAC on/off. These tests pin the
-plumbing without needing phonopy: the context builder and compute driver are
-stubbed, and only the argument/caching behavior is asserted.
+The deck's Card 6f BORN path must reach the MT4 mode sums
+(run_noncubic_standalone_sab) as well as the MT2 directional Debye-Waller
+factors, and the context cache must distinguish NAC on and off. The context
+builder and compute driver are stubbed, so no phonopy is needed; only the
+argument and caching behavior is asserted.
 """
 import numpy as np
 import pytest
@@ -144,7 +143,7 @@ def test_phonopy_yaml_embeds_nac_probe(tmp_path):
     assert phonopy_yaml_embeds_nac(gz)
 
 
-# --- _pick_sab_key mode/order mapping (QA2-028) -----------------------------
+# --- _pick_sab_key mode/order mapping ----------------------------------------
 
 _N1_INCOH = "sab_asym_downscatter_incoherent_approx_n1_term"
 _N1_INCOH_MP = (
