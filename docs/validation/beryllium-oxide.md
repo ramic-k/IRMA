@@ -46,9 +46,13 @@ evaluations matches the directly computed interference to 3.4×10⁻¹⁵.
 
 The quantity being divided is the cross-species interference, which belongs
 to the material rather than to either atom, so its assignment to the
-principal evaluations is purely conventional: the coherent-cross-section
-weights place 64.3% with beryllium and 35.7% with oxygen, and the summed
-material S(α,β) does not depend on this choice. The interference is
+principal evaluations is purely conventional, and the summed material
+S(α,β) does not depend on this choice. The runs on this page gave each pair
+term to the two species in proportion to their coherent cross sections
+(64.3% beryllium, 35.7% oxygen). Since IRMA 1.1.0 each species gets the
+fraction |F_p|² / Σ_g |F_g|² of the total for each mode instead, which keeps
+every share non-negative; the earlier split had cells below zero that the
+tables could not hold. The interference is
 locally significant but integrally small: its magnitude amounts to about
 10% of the coherent one-phonon intensity, yet its positive and negative
 regions nearly cancel: the signed sum over Q ≤ 40 Å⁻¹ and

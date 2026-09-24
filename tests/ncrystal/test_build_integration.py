@@ -74,7 +74,7 @@ def test_graphite_single_pack_engine_equality(tmp_path):
             multiphonon_max_order=2, auto_multiphonon_order=False),
         inelastic_mode=2, represented_principal_site_count=4,
         principal_group_index=0, site_groups=[[0, 1, 2, 3]],
-        coherent_partition_mode="principal-xs-weighted",
+        coherent_partition_mode="principal-share",
         sab_sigma_barn=5.551,
         site_scattering_lengths_angstrom=[6.646e-5] * 4,
         site_incoherent_cross_sections_barn=[0.001] * 4)
@@ -90,7 +90,7 @@ def test_graphite_single_pack_engine_equality(tmp_path):
     for ib in range(nbeta):
         scale = math.exp(-0.5 * beta_ref[ib])
         for ia in range(nalpha):
-            expected = max(sab_ref[ia, ib], 0.0) * scale   # negative fringe -> 0
+            expected = max(sab_ref[ia, ib], 0.0) * scale   # rounding fringe -> 0
             assert pack.sab_values[ib * nalpha + ia] == pytest.approx(
                 expected, rel=1e-9, abs=1e-12)
 

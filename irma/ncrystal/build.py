@@ -254,7 +254,7 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
             f"principal group, but this export resolves to {len(groups)} "
             f"({[g.symbol for g in groups]}): each pack would carry the whole-crystal "
             "coherent one-phonon total and summing them double-counts it. Use "
-            "'principal-xs-weighted' (default) or 'auto'.")
+            "'principal-share' (default) or 'auto'.")
     coh_index = _coherent_bearing_index(groups)
     n_atoms = len(symbols)
 

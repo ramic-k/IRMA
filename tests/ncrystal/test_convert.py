@@ -49,7 +49,7 @@ def test_scaled_sym_storage_and_ordering():
 
 
 def test_negative_fringe_clipped_within_guard():
-    # a tiny negative cancellation bin (<1% of max) is clipped to 0 + counted.
+    # a small negative cell (<1% of max) is clipped to 0 + counted.
     pack = _pack([0.1, 0.2], [0.0, 0.5], [[100.0, -0.5], [50.0, 25.0]])
     assert pack.metadata["negative_sab_clipped_count"] == "1"
     # the clipped cell (ialpha=0, ibeta=1) -> 0 in the beta1 block (index 2)
@@ -57,8 +57,8 @@ def test_negative_fringe_clipped_within_guard():
 
 
 def test_large_negative_rejected():
-    # -50 exceeds the 1%-of-max guard; the message names the remedy
-    with pytest.raises(ValueError, match="num_directions"):
+    # -50 exceeds the 1%-of-max guard
+    with pytest.raises(ValueError, match="below -1% of the table"):
         _pack([0.1, 0.2], [0.0, 0.5], [[100.0, -50.0], [50.0, 25.0]])
 
 

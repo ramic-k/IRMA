@@ -91,7 +91,7 @@ def _duplicate_scatterer(d):
     pytest.param(_material(temperature_K=0.0), "temperature_K must be",
                  id="temperature"),
     # a plausible typo (underscores) must fail at config load, not in the engine
-    pytest.param(_export(coherent_partition_mode="principal_xs_weighted"),
+    pytest.param(_export(coherent_partition_mode="principal_share"),
                  "coherent_partition_mode", id="partition-mode"),
     pytest.param(_export(incoherent_elastic_mode="anisotropic"),
                  "incoherent_elastic_mode", id="incoherent-mode"),
@@ -127,7 +127,7 @@ def test_config_rejects(edit, match):
 
 
 def test_config_accepts_valid_modes():
-    for mode in ("auto", "exact-total", "principal-xs-weighted"):
+    for mode in ("auto", "exact-total", "principal-share"):
         cfg = NCrystalExportConfig.from_dict(_cfg_dict(coherent_partition_mode=mode))
         assert cfg.coherent_partition_mode == mode
     for mode in ("isotropic", "directional"):

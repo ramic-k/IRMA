@@ -10,10 +10,10 @@ One-phonon terms (exact harmonic):
 - coherent n=1, the (UV) term of Squires Sec. 3.7: atom amplitudes are summed
   before squaring; the diagonal (self) and interference pieces are kept too.
   With coherent_partition_mode='exact-total' the diagonal piece is the
-  per-site sum of |A_d|^2; in the default principal-xs-weighted mode it is the
-  principal group's self term |F_p|^2, which includes the interference
-  between sites of that group, and the interference piece is its weighted
-  share of the cross-group terms;
+  per-site sum of |A_d|^2; in the principal-share mode it is the principal
+  group's self term |F_p|^2, which includes the interference between sites of
+  that group, and the interference piece is the principal's share of the
+  total minus that self term;
 - incoherent n=1, the (UV0) term of Squires Sec. 3.9;
 - the incoherent-approximation n=1 term: the same self kernel scaled with
   sigma_total instead of sigma_inc (mode 1, and the n=1 partner of the
@@ -123,7 +123,6 @@ from irma.core.noncubic_workers import (  # noqa: F401  (re-exported for callers
     precompute_directional_multiphonon_orders,
     multiphonon_seed_area_deficit,
     set_worker_state,
-    principal_weighted_coherent_partition,
     _batched_qpoints_eigh,
     accumulate_coherent_block,
     accumulate_incoherent_shell_block,
@@ -237,15 +236,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--coherent-partition-mode",
-        choices=("auto", "exact-total", "principal-xs-weighted"),
+        choices=("auto", "exact-total", "principal-share"),
         default="auto",
         help=(
             "How the coherent one-phonon term is mapped onto the exported MT4 law. "
             "'exact-total' keeps the full mixed-material coherent intensity; "
-            "'principal-xs-weighted' keeps the exact principal self term and assigns "
-            "cross-species interference to the principal group with coherent-strength "
-            "weights; 'auto' uses exact-total for a single group and principal-xs-weighted "
-            "when multiple site groups are provided."
+            "'principal-share' gives the principal group the fraction "
+            "|F_p|^2 / sum_g |F_g|^2 of the exact total, so every share is non-negative "
+            "and the shares of all groups add up to the total; 'auto' uses exact-total "
+            "for a single group and principal-share when multiple site groups are "
+            "provided."
         ),
     )
     parser.add_argument(
@@ -464,15 +464,11 @@ def compute_from_args(
         principal_site_indices = site_groups[principal_group_index]
         principal_site_mask = np.zeros(len(primitive.symbols), dtype=bool)
         principal_site_mask[principal_site_indices] = True
-        group_coherent_weights = np.array(
-            [float(np.sum(sigma_coh_by_atom[group])) for group in site_groups],
-            dtype=float,
-        )
         coherent_partition_mode = str(args.coherent_partition_mode)
         if coherent_partition_mode == "auto":
-            coherent_partition_mode = "exact-total" if len(site_groups) == 1 else "principal-xs-weighted"
-        if coherent_partition_mode not in ("exact-total", "principal-xs-weighted"):
-            raise ValueError("coherent_partition_mode must be 'auto', 'exact-total', or 'principal-xs-weighted'.")
+            coherent_partition_mode = "exact-total" if len(site_groups) == 1 else "principal-share"
+        if coherent_partition_mode not in ("exact-total", "principal-share"):
+            raise ValueError("coherent_partition_mode must be 'auto', 'exact-total', or 'principal-share'.")
         export_incoherent_prefactors = incoherent_prefactors.copy()
         export_incoherent_prefactors[~principal_site_mask] = 0.0
         export_incoherent_approx_prefactors = incoherent_approx_prefactors.copy()
@@ -687,7 +683,6 @@ def compute_from_args(
                 "coherent_partition_mode": coherent_partition_mode,
                 "coherent_group_site_indices": site_groups,
                 "principal_group_index": principal_group_index,
-                "group_coherent_weights": group_coherent_weights,
             }
             if emit_gain_side:
                 coherent_state.update({
@@ -1126,8 +1121,6 @@ def compute_from_args(
             "principal_group_index": principal_group_index,
             "principal_group_site_count": int(len(principal_site_indices)),
             "site_group_sizes": [int(len(group)) for group in site_groups],
-            "group_coherent_weights": [float(w) for w in group_coherent_weights],
-            "coherent_interference_pair_weighting": "w_p/(w_p+w_o) per pair",
             # what the coherent_diagonal arrays hold in this partition mode
             "coherent_diagonal_term": (
                 "per-site self term sum_d |A_d|^2"
