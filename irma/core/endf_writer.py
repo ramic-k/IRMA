@@ -2,11 +2,10 @@
 
 write_endf_output assembles the tape via endf-parserpy. The MF7/MT2 elastic
 section comes from one of the builders: the classic LEAPR coherent table
-(_build_coherent_elastic, iel=1-6), the generalized CEF/MEF builders
+(_build_coherent_elastic, iel=1-6), the generalized SEF/MEF builders
 (iel=10), or the incoherent-elastic builder (iel<0). MF7/MT4 stores
 the symmetric law S*exp(-beta/2) via _endf_s (isym/ilog variants).
 
-CEF in identifiers is the single-channel elastic format the docs and GUI call SEF.
 """
 
 import sys
@@ -324,7 +323,7 @@ def write_endf_output(filename, mat, za, awr, spr, npr, iel, nss,
             mat, za, awr, bragg, nedge, ntempr, tempr,
             crystal_info, dwpix_out, sb, npr=npr)
     elif iel < 0:
-        mf7mt2 = _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out,
+        mf7mt2 = _build_sef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out,
                                        sb, npr)
     elif iel >= 1:
         # Built-in coherent elastic (iel=1-6)
@@ -637,10 +636,10 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
                                 crystal_info, dwpix_out, sb, npr=1):
     """Build MF7/MT2 for generalized elastic (iel=10).
 
-    Implements both CEF (elastic_mode=1) and MEF (elastic_mode=2) following
+    Implements both SEF (elastic_mode=1) and MEF (elastic_mode=2) following
     the paper: K. Ramic, J. I. Damian Marquez, et al., NIM-A 1027 (2022) 166227.
 
-    For CEF:
+    For SEF:
       - Single atom (nat=1): Eq 24/25 — store the dominant component (coherent
         when σ_coh > σ_inc, else incoherent), scaled by (σ_coh + σ_inc) / σ_dominant
       - Polyatomic (nat>1): Eq 26 — DC atom gets coherent elastic scaled
@@ -665,17 +664,17 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
         return _build_mef_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
                                    crystal_info, dwpix_out, npr)
 
-    # ---- CEF (elastic_mode=1) ----
+    # ---- SEF (elastic_mode=1) ----
 
     if nat == 1:
-        # Single atom CEF: Eq 24 or 25
+        # Single atom SEF: Eq 24 or 25
         if sigma_coh_p > sigma_inc_p:
             # Coherent approximation (Eq 24)
             # Scale Bragg edges by (σ_coh + σ_inc) / σ_coh
             scale = (sigma_coh_p + sigma_inc_p) / sigma_coh_p
             print(f"  SEF single atom: coherent approx, "
                   f"scale={(sigma_coh_p + sigma_inc_p):.4f}/{sigma_coh_p:.4f} = {scale:.4f}", flush=True)
-            return _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr,
+            return _build_sef_coherent(mat, za, awr, bragg, nedge, ntempr,
                                         tempr, dwpix_out, scale,
                                         crystal_info=crystal_info)
         else:
@@ -688,10 +687,10 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
             scale = (sigma_coh_p + sigma_inc_p) / sigma_inc_p
             print(f"  SEF single atom: incoherent approx, "
                   f"SB scale={scale:.4f}", flush=True)
-            return _build_cef_incoherent(mat, za, awr, ntempr, tempr,
+            return _build_sef_incoherent(mat, za, awr, ntempr, tempr,
                                           dwpix_out, sigma_inc_p * scale, npr)
 
-    # Polyatomic CEF (nat > 1): Eq 26
+    # Polyatomic SEF (nat > 1): Eq 26
     if principal_idx == dc_idx:
         # Principal scatterer IS the DC atom → LTHR=1 (coherent elastic)
         # Scale by 1/f_DC to get per-DC-atom cross section
@@ -699,7 +698,7 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
         scale = 1.0 / f_dc
         print(f"  SEF polyatomic: principal is DC atom, "
               f"scale=1/f_DC=1/{f_dc:.4f}={scale:.4f}", flush=True)
-        return _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr,
+        return _build_sef_coherent(mat, za, awr, bragg, nedge, ntempr,
                                     tempr, dwpix_out, scale,
                                     crystal_info=crystal_info)
     else:
@@ -722,7 +721,7 @@ def _build_generalized_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
         print(f"  SEF polyatomic: principal is NOT DC atom, "
               f"redist factor={redist:.4f}, SB={sb_redist:.4f} b "
               f"(x npr={npr} on tape)", flush=True)
-        return _build_cef_incoherent(mat, za, awr, ntempr, tempr,
+        return _build_sef_incoherent(mat, za, awr, ntempr, tempr,
                                       dwpix_out, sb_redist, npr)
 
 def _report_grouping_fidelity(E, delta, out_E, out_S, ntempr, tempr):
@@ -844,13 +843,13 @@ def _grouped_coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta_fn,
         }
     return table
 
-def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
+def _build_sef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
                          dwpix_out, scale, crystal_info):
     """Build LTHR=1 (coherent elastic) section with a multiplicative scale.
 
     The scale factor accounts for:
-    - Single atom CEF: (σ_coh + σ_inc)/σ_coh  (Eq 24)
-    - Polyatomic CEF DC atom: 1/f_DC  (Eq 26)
+    - Single atom SEF: (σ_coh + σ_inc)/σ_coh  (Eq 24)
+    - Polyatomic SEF DC atom: 1/f_DC  (Eq 26)
 
     If crystal_info with species_corr is provided, per-species Debye-Waller
     factors are applied inside the structure factor (matching NCrystal):
@@ -902,7 +901,7 @@ def _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
         bragg, nedge, ntempr, tempr, _edge_delta, crystal_info))
     return mf7mt2
 
-def _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out, sb_value,
+def _build_sef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out, sb_value,
                           npr=1):
     """Build an LTHR=2 (incoherent elastic) section: iel<0, the single-atom SEF
     case with sigma_coh <= sigma_inc, and the SEF principal that is not the DC
@@ -946,14 +945,14 @@ def _build_mef_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
 
     The incoherent SB follows the molecular convention ``SB = sigma_inc_p *
     npr`` (npr is recorded in MF7/MT4 B(6)), the same convention the classic
-    (iel<0) and SEF/CEF incoherent writers use, so a consumer's single
+    (iel<0) and SEF incoherent writers use, so a consumer's single
     division by npr is correct regardless of which writer produced the tape.
 
     σ^el_i = σ^coh/N + σ^inc_i
 
     When crystal_info carries 'F_species_per_temp' and 'bragg_dir_terms'
     (inelastic_mode=1/2), the coherent part uses the same plane-by-plane
-    directional Debye-Waller attenuation as the CEF builder:
+    directional Debye-Waller attenuation as the SEF builder:
         W_s(Ĝ) = (Ĝ · F_s · Ĝ) / (awr_s × kT)
     The incoherent term's W' stays isotropic: the LTHR=3 tabulation supports
     only a scalar W', so this uses the powder-averaged (isotropic) trace Tr(F)/3
@@ -964,9 +963,9 @@ def _build_mef_elastic(mat, za, awr, bragg, nedge, ntempr, tempr,
     (per-plane W_s(Ĝ) above) and inelastic channels.
     """
     sigma_inc_p = crystal_info['atom_types'][crystal_info['principal_atom_idx']]['sigma_inc']
-    mf7mt2 = _build_cef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
+    mf7mt2 = _build_sef_coherent(mat, za, awr, bragg, nedge, ntempr, tempr,
                                  dwpix_out, 1.0, crystal_info=crystal_info)
-    inc = _build_cef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out,
+    inc = _build_sef_incoherent(mat, za, awr, ntempr, tempr, dwpix_out,
                                 sigma_inc_p, npr)
     mf7mt2['LTHR'] = 3  # mixed elastic
     for key in ('SB', 'NBT', 'INT', 'Tint', 'Wp'):

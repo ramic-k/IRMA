@@ -1,5 +1,5 @@
 """irma.core.elastic_dw: each DW edge kernel against its formula (exact ==),
-the resolver's W_ps and mode flags, and CEF == scale * MEF per edge.
+the resolver's W_ps and mode flags, and SEF == scale * MEF per edge.
 """
 import numpy as np
 from math import exp
@@ -9,7 +9,7 @@ from irma.core.elastic_dw import (
     resolve_species_dw, isotropic_edge_delta,
     per_species_edge_delta, directional_edge_delta, make_edge_delta,
 )
-from irma.core.endf_writer import _build_cef_coherent, _build_mef_elastic
+from irma.core.endf_writer import _build_sef_coherent, _build_mef_elastic
 
 
 # ---- reference implementations of the DW edge formulas ---------------------
@@ -116,18 +116,18 @@ def test_factory_dispatches_directional():
                                              sdw.F_species_per_temp[1], sdw.bragg_dir_terms[0], 1.37)
 
 
-# ---- CEF and MEF share one arithmetic (differ only by the CEF scale) --------
-def test_cef_and_mef_edge_arithmetic_differ_only_by_scale():
-    """CEF == scale * MEF per edge."""
+# ---- SEF and MEF share one arithmetic (differ only by the SEF scale) --------
+def test_sef_and_mef_edge_arithmetic_differ_only_by_scale():
+    """SEF == scale * MEF per edge."""
     ci_dir, tempr = _two_species_sdw(directional=True, ntempr=1)
     bragg = [(0.002, 1.0), (0.004, 1.0)]
     scale = 1.37
-    cef = _build_cef_coherent(1, 6012.0, 11.898, bragg, 2, 1, tempr,
+    sef = _build_sef_coherent(1, 6012.0, 11.898, bragg, 2, 1, tempr,
                               [0.5], scale, {**ci_dir})
     mef = _build_mef_elastic(1, 6012.0, 11.898, bragg, 2, 1, tempr,
                              {**ci_dir}, [0.5])
-    cef_S = np.array(cef['S_T0_table']['S'][:2])
+    sef_S = np.array(sef['S_T0_table']['S'][:2])
     mef_S = np.array(mef['S_T0_table']['S'][:2])
     # cumulative S scales linearly with the per-edge delta scale (pre-sigfig the
     # deltas are exactly scale*; compare to several sig-figs post-rounding)
-    np.testing.assert_allclose(cef_S, scale * mef_S, rtol=1e-6)
+    np.testing.assert_allclose(sef_S, scale * mef_S, rtol=1e-6)
