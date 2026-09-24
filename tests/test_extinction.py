@@ -6,9 +6,11 @@ limits, monotonicity and model dispatch.
 """
 import math
 
+import numpy as np
 import pytest
 
 from irma.core import extinction as ext
+from irma.core.extinction import _sabine_secondary_factors
 
 
 # ----- BC2025 'std' recipe limits & monotonicity -----
@@ -86,15 +88,12 @@ def test_below_bragg_threshold_is_unity():
     assert y == 1.0
 
 
-# ---- review PH-2: numerical stability of the Sabine secondary factors -----
+# ---- numerical stability of the Sabine secondary factors ------------------
 
 def test_sabine_triangular_small_x_window_is_stable():
-    """The naive 1-(1-exp(-2x))/(2x) lost all significant digits for x just
-    above the 1e-9 branch threshold (factors as wrong as -26 at the review's
-    reproducer point). The stable expm1 form must stay physical through the
-    whole window."""
-    import numpy as np
-    from irma.core.extinction import _sabine_secondary_factors
+    """The textbook 1-(1-exp(-2x))/(2x) loses all significant digits for x
+    just above the 1e-9 branch threshold; the expm1 form must stay in [0, 1]
+    through the whole window."""
     for x in np.geomspace(1e-12, 1e3, 4001):
         for tilt in (0, 1):
             el, eb = _sabine_secondary_factors(float(x), tilt)
@@ -104,15 +103,18 @@ def test_sabine_triangular_small_x_window_is_stable():
             assert 0.0 <= eb <= 1.0 + 1e-6, (x, tilt, eb)
 
 
-def test_sabine_stable_form_matches_naive_at_moderate_x():
-    """Where the textbook expressions are well-conditioned, the stable
-    rewrites must agree with them to rounding."""
-    import numpy as np
-    from irma.core.extinction import _sabine_secondary_factors
+def test_sabine_stable_forms_match_the_textbook_where_it_is_accurate():
+    """E_L against the textbook form on x in [1e-2, 50]; the E_B series used
+    below x = 1e-4 against 2/x^2 (x - log1p(x)) on [1e-5, 1e-4), where that
+    form is still accurate to about 4e-11 and the series truncation error is
+    below 1e-12."""
     for x in np.geomspace(1e-2, 50.0, 200):
         x = float(x)
-        el, eb = _sabine_secondary_factors(x, 1)
-        el_naive = 1.0 / x * (1.0 - (1.0 - math.exp(-2.0 * x)) / (2.0 * x))
-        eb_naive = 2.0 / x / x * (x - math.log1p(x))
-        assert el == pytest.approx(el_naive, rel=1e-9)
-        assert eb == pytest.approx(eb_naive, rel=1e-9)
+        el, _ = _sabine_secondary_factors(x, 1)
+        el_textbook = 1.0 / x * (1.0 - (1.0 - math.exp(-2.0 * x)) / (2.0 * x))
+        assert el == pytest.approx(el_textbook, rel=1e-9)
+    for x in np.geomspace(1e-5, 1e-4, 50, endpoint=False):
+        x = float(x)
+        _, eb = _sabine_secondary_factors(x, 1)
+        eb_textbook = 2.0 / x / x * (x - math.log1p(x))
+        assert eb == pytest.approx(eb_textbook, rel=1e-9)
