@@ -1,8 +1,8 @@
 name: Docs
 
-# GitLab `pages` (default branch only) -> GitHub Pages. Same strict build:
-# mkdocs --strict fails on broken links, missing nav entries, or a stale
-# version/CHANGELOG reference, so nothing publishes unless the docs are clean.
+# GitHub Pages from the default branch. Strict build: mkdocs --strict fails
+# on broken links, missing nav entries, or a missing CHANGELOG.md snippet, so
+# nothing publishes unless the docs are clean.
 
 on:
   push:

@@ -3,22 +3,18 @@ name: CI
 # IRMA CI on hosted runners.
 # Every gate is self-contained: no test executes NJOY or OCLIMAX, the
 # golden comparisons read committed reference tapes, so nothing here
-# needs a special machine.
-#
-# The two plugin gates carried `resource_group: irma-ci-plugin-env` on
-# GitLab because they force-reinstalled into ONE shared persistent conda
-# env and would corrupt each other (and did, 2026-07-01). Hosted runners
-# are ephemeral, so that constraint is gone and the gates run in parallel.
+# needs a special machine. Hosted runners are ephemeral, so the two plugin
+# gates run in parallel.
 
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]          # version tags only (GitLab rule matched ANY tag)
+    tags: ["v*"]          # version tags only
   pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true   # GitLab `interruptible: true`
+  cancel-in-progress: true
 
 env:
   # Pin native BLAS/OMP pools to 1 for the whole job, before any Python
@@ -118,8 +114,8 @@ jobs:
       - run: twine check dist/*                # metadata / long-description render
 
   docs-lint:
-    # mkdocs --strict fails on broken links, missing nav entries, or a stale
-    # version/CHANGELOG reference. Skipped on the default branch, where the
+    # mkdocs --strict fails on broken links, missing nav entries, or a
+    # missing CHANGELOG.md snippet. Skipped on the default branch, where the
     # pages workflow already does the strict build before publishing.
     if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -199,9 +195,8 @@ jobs:
           python -m pytest ncrystal_plugin_ENDFTSL/tests ncrystal_plugin_ENDFTSL/reference -q
 
   build-wheel:
-    # Release-artifact guard, VERSION TAGS ONLY (the GitLab rule matched any
-    # tag, so a non-version tag started a deploy that then failed on the
-    # tag/version comparison -- QA finding REL-13, fixed here by the port).
+    # Release-artifact guard, version tags only (a non-version tag would
+    # start a deploy that fails on the tag/version comparison).
     # Depends on every mandatory gate at the same commit: a tag cannot
     # produce a wheel unless lint, tests, installs, docs, and both plugin
     # gates passed.
