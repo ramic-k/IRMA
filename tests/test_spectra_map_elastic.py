@@ -131,12 +131,12 @@ def test_map_mode0_coherent_elastic_bragg_peaks():
 
 
 def test_map_elastic_broadening_spreads_the_line_and_keeps_its_integral():
-    """broaden=True applies sigma(E=0) to the deposited line: the on/off
-    difference spreads beyond the two seed bins while its per-Q energy integral
-    is conserved by the (normalized) resolution kernel."""
+    """broaden=True gives the line the resolution width sigma(E=0): the on/off
+    difference spreads beyond the two bins bracketing 0 while its per-Q energy
+    integral stays the elastic area (the whole line is on this axis)."""
     _, diff, area = _incoherent_line(broaden=True)
     got = diff.sum(axis=1) * GRID["dE"]
-    assert np.allclose(got, area, rtol=2e-2)         # kernel conserves the area
+    assert np.allclose(got, area, rtol=2e-2)         # the line keeps its area
     # ... but the line is no longer a two-bin spike
     thresh = 1e-6 * float(np.abs(diff).max())
     assert int((np.abs(diff) > thresh).sum(axis=1).min()) > 2
@@ -156,18 +156,18 @@ def test_map_elastic_skipped_when_E0_outside_axis():
 
 
 def test_map_elastic_axis_endpoint_zero_carries_half_line():
-    """The default e_min=0 axis puts the line CENTER on the axis edge: only the
-    on-axis half of the line is representable, so the broadened map carries
-    half the elastic area under the kernel's trapezoidal quadrature -- and a
-    NOTE says so. (Physical truncation, not a numerics loss: extend e_min<0
-    for the full line.)"""
-    msgs = []
+    """The default e_min=0 axis puts the line CENTER on the axis edge: the
+    broadened map carries the 1-D path's elastic line restricted to the axis,
+    which is half the elastic area. (Physical truncation: extend e_min<0 for
+    the full line.)"""
+    from irma.spectra.sqe import elastic_line
     m_on, diff, area = _incoherent_line(grid=dict(GRID, e_min=0.0, e_max=60.0),
-                                        broaden=True, progress=msgs.append)
+                                        broaden=True)
     assert m_on.metadata["elastic_deposited"] is True
-    assert any("endpoint" in str(x) for x in msgs)
+    line = elastic_line(m_on.E, 1.0, (0.02 * 250.0, 0.0, 0.0))   # direct poly default
+    assert np.allclose(diff, area[:, None] * line[None, :], rtol=1e-9, atol=1e-15)
     got = np.trapezoid(diff, m_on.E, axis=1)
-    assert np.allclose(got, 0.5 * area, rtol=5e-2)     # the visible half
+    assert np.allclose(got, 0.5 * area, rtol=5e-3)     # the visible half
 
 
 def test_map_explicit_elastic_model_deposits():

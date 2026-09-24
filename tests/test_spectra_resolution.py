@@ -4,7 +4,7 @@ Pure-math checks on ``irma.spectra.sqe.resolution_convolve`` / ``elastic_line``
 -- no external validation data needed. The Gaussian path
 is the OCLIMAX-equivalent (OCLIMAX applies only a Gaussian resolution function);
 the Lorentzian is the extra heavier-tailed option. These pin the normalization,
-the heavier Lorentzian tails and the elastic-line window.
+the heavier Lorentzian tails and the independence from the energy window.
 """
 import numpy as np
 import pytest
@@ -17,29 +17,62 @@ def _trapz(y, x):
     return float(np.trapezoid(y, x))
 
 
-@pytest.mark.parametrize("shape", ["gaussian", "lorentzian"])
-def test_flat_input_preserved(shape):
-    """A constant input convolves to itself (normalized kernel) in the interior."""
-    E = np.linspace(-200.0, 200.0, 801)
-    I_in = np.ones_like(E)
-    out = si.resolution_convolve(E, I_in, (2.0, 0.0, 0.0), shape=shape)
-    interior = np.abs(E) < 120.0
-    assert np.allclose(out[interior], 1.0, atol=2e-2)
+@pytest.mark.parametrize("shape,tol", [("gaussian", 1e-6), ("lorentzian", 1e-3)])
+@pytest.mark.parametrize("step,width", [(0.5, 2.0),     # fine grid
+                                        (1.0, 0.31)])   # step 3x the width
+def test_flat_input_preserved_up_to_the_window_edges(shape, tol, step, width):
+    """A constant input sampled on the padded grid convolves to itself on the
+    whole window, edges included: the pad reaches 6 sigma for a Gaussian and
+    leaves at most 1e-3 of a Lorentzian's area outside. On the coarse grid the
+    sampled Gaussian alone adds up to 1.34; the grid-sum scaling makes it 1."""
+    E = np.arange(-200.0, 200.0 + 0.5 * step, step)
+    E_in = si.padded_grid(E, (width, 0.0, 0.0), shape=shape)
+    out = si.resolution_convolve(E, np.ones_like(E_in), (width, 0.0, 0.0),
+                                 shape=shape, E_in=E_in)
+    assert np.allclose(out, 1.0, atol=tol)
 
 
 @pytest.mark.parametrize("shape", ["gaussian", "lorentzian"])
 @pytest.mark.parametrize("coeffs", [(2.0, 0.0, 0.0),      # constant width
-                                    (0.5, 0.2, 0.0),      # strongly varying width
+                                    (0.5, 0.05, 0.0),     # varying width
                                     (0.31, 0.005, 8.1e-7)])  # VISION
-def test_resolution_convolve_conserves_flux(shape, coeffs):
-    """The column-normalized kernel conserves flux: integral(out) == integral(in)
-    for any input AND for an energy-DEPENDENT width (a flux leak there was the
-    HIGH finding). Row-normalizing would instead leak up to several % under a
-    varying width."""
-    E = np.linspace(0.0, 300.0, 3001)
-    I_in = np.exp(-0.5 * ((E - 150.0) / 20.0) ** 2)       # localized interior peak
-    out = si.resolution_convolve(E, I_in, coeffs, shape=shape)
-    assert _trapz(out, E) == pytest.approx(_trapz(I_in, E), rel=1e-9)
+def test_padded_convolution_does_not_depend_on_the_window(shape, coeffs):
+    """The convolved values on [0, 150] equal those of the same input
+    convolved on the wider [-50, 200]: the result is the restriction of the
+    full convolution, not renormalized to the window."""
+    def f(E):
+        return (np.exp(-0.5 * ((E - 80.0) / 10.0) ** 2)
+                + np.exp(-0.5 * ((E - 2.0) / 3.0) ** 2))  # a peak at the edge
+    wide = np.linspace(-50.0, 200.0, 1001)
+    win = wide[(wide >= 0.0) & (wide <= 150.0)]
+    out = {}
+    for E in (wide, win):
+        E_in = si.padded_grid(E, coeffs, shape=shape)
+        out[E.size] = si.resolution_convolve(E, f(E_in), coeffs, shape=shape, E_in=E_in)
+    keep = (wide >= 0.0) & (wide <= 150.0)
+    tol = 1e-8 if shape == "gaussian" else 2e-3
+    assert np.allclose(out[win.size], out[wide.size][keep], rtol=0.0, atol=tol)
+
+
+@pytest.mark.parametrize("shape", ["gaussian", "lorentzian"])
+def test_instrument_spectrum_does_not_depend_on_the_window(shape):
+    """The 1-D spectrum samples S past the window edges: its values on
+    [0, 90] are those of the [-5, 90] spectrum, near E=0 included."""
+    q = np.linspace(0.5, 8.0, 30)
+    E = np.linspace(0.0, 100.0, 201)
+    bands = (np.exp(-0.5 * ((E - 30.0) / 8.0) ** 2)
+             + np.exp(-0.5 * ((E - 3.0) / 1.0) ** 2))
+    p = si.from_noncubic_arrays(q, E, (q ** 2)[:, None] * bands[None, :],
+                                T_K=300.0, sigma_b=1.0)
+    def Q_of_E(Etr):
+        return si.Q_indirect(Etr, 3.5, 45.0)
+    wide = np.arange(-5.0, 90.0 + 1e-9, 0.25)
+    keep = wide >= 0.0
+    a = si.instrument_spectrum(p, Q_of_E, wide, si.VISION_SIGMA_COEFFS,
+                               elastic_area=2.0, shape=shape)
+    b = si.instrument_spectrum(p, Q_of_E, wide[keep], si.VISION_SIGMA_COEFFS,
+                               elastic_area=2.0, shape=shape)
+    assert np.allclose(b["I_total"], a["I_total"][keep], rtol=1e-9, atol=0.0)
 
 
 def test_resolution_response_is_unbiased_under_varying_width():
@@ -102,19 +135,21 @@ def test_unknown_shape_rejected():
         si.resolution_convolve(E, I_in, (1.0, 0, 0), shape="voigt")
 
 
-# ---- elastic_line: renormalize only when the peak is inside the window -------
-@pytest.mark.parametrize("e_min,n,keeps_full_area", [
-    (0.5, 2001, False),   # window excludes E=0: only the analytic tail (~5%)
-    (-5.0, 4001, True),   # window includes the peak: the area is conserved
-    (0.0, 4001, True),    # axis starts at the peak centre: the half line
-                          # renormalizes to the full area
+# ---- elastic_line: the line restricted to the window ---------------------------
+@pytest.mark.parametrize("e_min,n,visible", [
+    (0.5, 2001, None),    # window excludes E=0: only the analytic tail
+    (-5.0, 4001, 1.0),    # window includes the peak: the full area
+    (0.0, 4001, 0.5),     # axis starts at the peak centre: the half line
+    (0.0, 51, 0.5),       # the same on a 2 meV grid, coarse against sigma
 ])
-def test_elastic_line_window(e_min, n, keeps_full_area):
+def test_elastic_line_window(e_min, n, visible):
     area = 10.0
     E = np.linspace(e_min, 100.0, n)
     line = si.elastic_line(E, area, [0.31])     # VISION-like sigma (meV)
     integral = float(np.trapezoid(line, E))
-    if keeps_full_area:
-        assert integral == pytest.approx(area, rel=1e-6)
-    else:
+    if visible is None:
         assert integral < 0.2 * area
+    else:
+        assert integral == pytest.approx(visible * area, rel=1e-6)
+    if e_min == 0.0 and n > 51:                 # the peak value is not doubled
+        assert line[0] == pytest.approx(area / (np.sqrt(2 * np.pi) * 0.31))

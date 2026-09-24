@@ -37,9 +37,9 @@ def test_direct_map_poly_default_is_geometry_aware(monkeypatch):
     captured = {}
     orig = sqe.resolution_kernel
 
-    def spy(E_out, width, shape="gaussian"):
+    def spy(E_out, width, shape="gaussian", E_in=None):
         captured["width"] = width
-        return orig(E_out, width, shape=shape)
+        return orig(E_out, width, shape=shape, E_in=E_in)
 
     monkeypatch.setattr(sqe, "resolution_kernel", spy)
     compute_sqe_map(

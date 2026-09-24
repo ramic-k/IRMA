@@ -225,12 +225,26 @@ def test_compute_sqe_map_kinematic_factor_weights_each_energy_column():
         rtol=1e-12, atol=0.0)
 
 
+def test_compute_spectrum_does_not_depend_on_the_axis_end():
+    """S is computed past e_max by the resolution kernel's reach, so the
+    broadened values near e_max do not change when the axis is extended (the
+    old window renormalization moved the last bin by 23%; the Q grid shifts
+    with the pad, which leaves interpolation noise below 1e-4)."""
+    kw = {k: v for k, v in BASE.items() if k != "e_max"}
+    short = compute_spectrum(geometry="vision", dos_species=[_carbon()], e_max=80.0, **kw)
+    long = compute_spectrum(geometry="vision", dos_species=[_carbon()], e_max=120.0, **kw)
+    n = short.E.size
+    np.testing.assert_allclose(short.I_total, long.I_total[:n], rtol=5e-4, atol=0.0)
+
+
 def test_compute_sqe_map_broadening_changes_the_map():
     """broaden=True must actually apply the resolution kernel: the raw and
     broadened maps of the SAME input must differ. A no-op that only flips the
-    'broadened' metadata flag would fail here."""
+    'broadened' metadata flag would fail here. The 3 meV width is wider than
+    the 2 meV step (a much narrower line is sampled as nearly one point)."""
     common = dict(geometry="vision", dos_species=[_carbon()], q_min=1.0, q_max=8.0,
-                  dQ_map=0.5, e_max=100.0, dE=2.0, **MAP_BASE)
+                  dQ_map=0.5, e_max=100.0, dE=2.0, sigma_coeffs=(3.0, 0.0, 0.0),
+                  **MAP_BASE)
     m_raw = compute_sqe_map(broaden=False, **common)
     m_brd = compute_sqe_map(broaden=True, **common)
     assert m_raw.metadata["broadened"] is False

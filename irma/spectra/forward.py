@@ -113,7 +113,8 @@ class SpectrumResult:
 
 
 def build_locus_support(geometry, e_fixed_meV, angles_deg, dE, e_max, dQ,
-                        e_min=0.0, q_pad=0.5, q_floor=0.05, include_gain=True):
+                        e_min=0.0, q_pad=0.5, q_floor=0.05, include_gain=True,
+                        e_pad=0.0):
     """Build the engine's (Q_support, E_support) for an instrument locus.
 
     E_support is the uniform LOSS-side energy grid the engine computes S(Q,E)
@@ -123,19 +124,24 @@ def build_locus_support(geometry, e_fixed_meV, angles_deg, dE, e_max, dQ,
     loss grid is extended to ``|e_min|`` so the gain wing in [e_min, -e_max] has
     loss data to mirror instead of being silently zeroed by the fill_value=0
     interpolator. Q_support is a ``dQ``-spaced grid spanning the UNION envelope
-    of every bank locus ``Q(E)`` over the full E range.
+    of every bank locus ``Q(E)`` over the full E range. ``e_pad`` widens that
+    range on both sides: the resolution broadening needs S past the axis ends
+    (``irma.spectra.sqe.pad_reach``).
     """
     from irma.spectra.sqe import Q_indirect, Q_direct
-    e_loss_max = float(e_max)
-    if include_gain and float(e_min) < 0.0:
-        e_loss_max = max(e_loss_max, -float(e_min))               # cover the gain wing
+    e_lo, e_hi = float(e_min) - float(e_pad), float(e_max) + float(e_pad)
+    e_loss_max = e_hi
+    if include_gain and e_lo < 0.0:
+        e_loss_max = max(e_loss_max, -e_lo)                        # cover the gain wing
     E_support = np.arange(0.0, e_loss_max + 0.5 * dE, dE)         # engine loss grid
     # The Q envelope must cover the full SIGNED output range [e_min, e_max], not
     # just the loss side: when e_min < 0 the energy-GAIN locus Q(E<0) reaches
     # different (often higher) |Q| than the loss side, and the output spectrum is
     # sampled there too. Spanning only [0, e_max] would let the fill_value=0
     # interpolator silently zero the energy-gain wing.
-    E_env = np.arange(min(0.0, float(e_min)), float(e_max) + 0.5 * dE, dE)
+    # Padded at the top only: the q_pad margin covers the gain-side pad, and
+    # the Q grid keeps its origin, so S is sampled at the same Q points.
+    E_env = np.arange(min(0.0, float(e_min)), e_hi + 0.5 * dE, dE)
     Qof = Q_indirect if geometry in ("vision", "indirect") else Q_direct
     Qall = np.concatenate([np.asarray(Qof(E_env, e_fixed_meV, tt), float)
                            for tt in angles_deg])
@@ -458,9 +464,13 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
     e_fixed = instr.E_fixed
     angles = list(instr.angles_deg)
 
+    # S is computed past both axis ends by the resolution kernel's reach
+    from irma.spectra.sqe import pad_reach
+    e_pad = pad_reach(np.arange(float(e_min), float(e_max) + 0.5 * dE, dE),
+                      instr.width_source(), resolution_shape)
     Q_support, E_support = build_locus_support(
         geometry, e_fixed, angles, dE, e_max, dQ, e_min, q_pad,
-        include_gain=include_gain)
+        include_gain=include_gain, e_pad=e_pad)
 
     # Extend the Q-support over the constant-Q cuts, padded by the full cut
     # band (cut_dq): band samples outside the support read 0 and dilute the
@@ -679,11 +689,12 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
     ``compute_spectrum``.
 
     The per-Q elastic area ``elastic_dsigma_dOmega(Q, q_res=dQ_map)``
-    [barn/sr] is deposited as an E=0 line, split across the two bins
-    bracketing 0, before the resolution pass. When E=0 is an endpoint of the
-    axis (the default ``e_min=0``) the map carries half the elastic line. The
-    metadata reports ``elastic`` (a model was active) and ``elastic_deposited``
-    (the line landed on this energy axis).
+    [barn/sr] enters as an E=0 line. Broadened, it is the 1-D path's
+    resolution line shape restricted to the energy axis, so an axis that
+    starts at E=0 (the default ``e_min=0``) carries half the line. Unbroadened,
+    the area is split across the two bins bracketing 0 when 0 is on the axis.
+    The metadata reports ``elastic`` (a model was active) and
+    ``elastic_deposited`` (the line landed on this energy axis).
     """
     from irma.spectra import sqe as _sqe
 
@@ -695,10 +706,14 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
 
     Q_grid = np.arange(float(q_min), float(q_max) + 0.5 * dQ_map, dQ_map)
     # Loss grid reaches |e_min| when a deeper gain side is requested, so the gain
-    # wing in [e_min, -e_max] has loss data to mirror (else it is zeroed).
-    e_loss_max = float(e_max)
-    if include_gain and float(e_min) < 0.0:
-        e_loss_max = max(e_loss_max, -float(e_min))
+    # wing in [e_min, -e_max] has loss data to mirror (else it is zeroed). The
+    # broadened map needs S past both axis ends by the kernel's reach.
+    e_pad = (_sqe.pad_reach(np.arange(float(e_min), float(e_max) + 0.5 * dE, dE),
+                            instr.width_source(), resolution_shape) if broaden else 0.0)
+    e_lo, e_hi = float(e_min) - e_pad, float(e_max) + e_pad
+    e_loss_max = e_hi
+    if include_gain and e_lo < 0.0:
+        e_loss_max = max(e_loss_max, -e_lo)
     E_support = np.arange(0.0, e_loss_max + 0.5 * dE, dE)         # loss side
     powder, skey, eff_order, gain_side_used, m0, res = _powder_sqe(
         caller="compute_sqe_map", geometry=geometry, Q=Q_grid, E=E_support,
@@ -740,39 +755,43 @@ def compute_sqe_map(*, geometry, phonopy_yaml, temperature_k, mesh, sab_mass_rat
     qg, Es, Ss = _sqe.signed_sqe(powder, include_gain=include_gain)
     interp = _sqe.sqe_interpolator(qg, Es, Ss)
     E_out = np.arange(float(e_min), float(e_max) + 0.5 * dE, dE)
-    QQ, EE = np.meshgrid(Q_grid, E_out, indexing="ij")
+    width = instr.width_source()
+    # the broadened map samples S past both axis ends, as the 1-D path does
+    E_in = (_sqe.padded_grid(E_out, width, shape=resolution_shape, support=(Es[0], Es[-1]))
+            if broaden else E_out)
+    QQ, EE = np.meshgrid(Q_grid, E_in, indexing="ij")
     S_map = interp(np.column_stack([QQ.ravel(), EE.ravel()])).reshape(QQ.shape)
     if kinematic_factor:
         # count-rate weighting kf/ki per energy column, as in compute_spectrum:
         # on the inelastic part, before the elastic line and the resolution
-        S_map *= np.nan_to_num(instr.kf_ki()(E_out), nan=0.0)[None, :]
+        S_map *= np.nan_to_num(instr.kf_ki()(E_in), nan=0.0)[None, :]
+    if broaden:
+        # one kernel for every Q row: the kernel build dominates the per-row
+        # convolution cost
+        R = _sqe.resolution_kernel(E_out, width, shape=resolution_shape, E_in=E_in)
+        S_map = np.array([_sqe.apply_resolution_kernel(R, E_in, row) for row in S_map])
     elastic_deposited = False
     if elastic_model is not None:
-        # Split the per-Q area [barn/sr] linearly across the two bins
-        # bracketing E=0 (a uniform grid need not contain 0): the energy
-        # integral stays area(Q) and the centroid stays at E=0.
-        if E_out[0] <= 0.0 <= E_out[-1]:
-            area = elastic_model.elastic_dsigma_dOmega(Q_grid, q_res=dQ_map)
+        area = elastic_model.elastic_dsigma_dOmega(Q_grid, q_res=dQ_map)
+        if broaden:
+            # the 1-D path's resolution-broadened line, restricted to the axis
+            line = _sqe.elastic_line(E_out, 1.0, width, shape=resolution_shape)
+            S_map += area[:, None] * line[None, :]
+            elastic_deposited = bool(np.any(line > 0.0))
+        elif E_out[0] <= 0.0 <= E_out[-1]:
+            # Split the per-Q area [barn/sr] linearly across the two bins
+            # bracketing E=0 (a uniform grid need not contain 0): the energy
+            # integral stays area(Q) and the centroid stays at E=0.
             j = min(max(int(np.searchsorted(E_out, 0.0, side="right")) - 1, 0),
                     E_out.size - 2)
             w_hi = (0.0 - E_out[j]) / (E_out[j + 1] - E_out[j])
             S_map[:, j] += area * (1.0 - w_hi) / dE
             S_map[:, j + 1] += area * w_hi / dE
             elastic_deposited = True
-            if E_out[0] == 0.0 or E_out[-1] == 0.0:
-                # The 1-D path renormalizes its half line to the full area.
-                progress("NOTE: E=0 is an axis endpoint; the map carries half "
-                         "the elastic line (set e_min<0 for the full line).")
-        else:
+        if not elastic_deposited:
             progress(f"NOTE: E=0 is outside the requested energy axis "
                      f"[{E_out[0]:g}, {E_out[-1]:g}] meV; the elastic line "
                      "does not appear on the map.")
-    if broaden:
-        # one kernel for every Q row: the (nE, nE) build dominates the
-        # per-row convolution cost
-        R = _sqe.resolution_kernel(E_out, instr.width_source(), shape=resolution_shape)
-        for iq in range(Q_grid.size):
-            S_map[iq] = _sqe.apply_resolution_kernel(R, E_out, S_map[iq])
 
     envelope = None
     if angle_range_deg is not None and e_fixed_meV is not None:
