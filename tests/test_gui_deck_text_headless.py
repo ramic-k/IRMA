@@ -1,16 +1,9 @@
 """Headless coverage for the Tk-free GUI deck-text helpers.
 
-Exercises irma/gui/deck_text.py — the pure emit helpers (_quote, fmt_array,
-emit_comment_lines) and the transactional import parser (parse_deck_to_staging)
-— WITHOUT importing tkinter, so the QA2-001 HIGH quote-doubling fix and the
-import staging/validation logic get CI coverage on a display-less runner.
-
-Findings: F26 (quote helper moved Tk-free + round-trip), F20+C10 (staging
-parse is transactional and complete), C11 (title/iprint preserved), C12
-(noncubic controls validated with engine ranges), F23 (comment whitespace
-round-trips). F22 (_parse_atoms token-count guard) lives on a Tk widget and is
-covered by the display-gated GUI suite; its pure validation rule is mirrored
-here against the staging parser's atom path.
+Exercises irma/gui/deck_text.py -- the emit helpers (_quote, fmt_array,
+emit_comment_lines), the atom-line parser and the transactional import parser
+(parse_deck_to_staging) -- without importing tkinter, so they run on a
+display-less runner.
 """
 import pytest
 
@@ -40,7 +33,7 @@ CLASSIC_DECK = (
 )
 
 
-# ---------------- F26: quote-doubling, Tk-free ----------------
+# ---------------- quote doubling ----------------
 
 def test_quote_doubles_embedded_single_quotes():
     assert _quote("O'Brien's / x") == "'O''Brien''s / x'"
@@ -55,11 +48,16 @@ def test_quote_roundtrip_through_tokenizer(tmp_path):
     assert reader.read_string() == original
 
 
-def test_quote_helper_import_is_tk_free():
-    # Importing the module must not require tkinter (headless coverage).
-    import importlib
-    mod = importlib.import_module("irma.gui.deck_text")
-    assert hasattr(mod, "_quote")
+def test_deck_text_import_is_tk_free():
+    # a fresh interpreter: this file has already imported the module
+    import os
+    import subprocess
+    import sys
+    import irma
+    root = os.path.dirname(os.path.dirname(os.path.abspath(irma.__file__)))
+    code = "import sys, irma.gui.deck_text; assert 'tkinter' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], check=True,
+                   env=dict(os.environ, PYTHONPATH=root))
 
 
 def test_fmt_array_wraps_five_per_line():
@@ -68,7 +66,7 @@ def test_fmt_array_wraps_five_per_line():
     assert out.splitlines()[1].strip() == f"{6.0:.6e}"
 
 
-# ---------------- F20 + C10: transactional, complete staging ----------------
+# ---------------- transactional, complete staging ----------------
 
 def test_staging_parses_classic_deck_completely(tmp_path):
     st = _stage(CLASSIC_DECK, tmp_path)
@@ -98,7 +96,7 @@ def test_staging_is_transactional_on_malformed_deck(tmp_path):
         _stage(bad, tmp_path)
 
 
-# ---------------- C11: title + iprint preserved ----------------
+# ---------------- title and iprint preserved ----------------
 
 def test_staging_preserves_title_and_iprint(tmp_path):
     deck = CLASSIC_DECK.replace("1 0 4/", "1 5 4/")
@@ -107,7 +105,7 @@ def test_staging_preserves_title_and_iprint(tmp_path):
     assert st['iprint'] == 5
 
 
-# ---------------- C12: noncubic controls validated with engine ranges ----
+# ---------------- noncubic controls validated with engine ranges ----
 
 NONCUBIC_HEAD = (
     "20 /\n'nc'/\n1 0 4/\n1 6012./\n"
@@ -151,7 +149,7 @@ def test_noncubic_four_field_card6g_rejected(tmp_path):
         _stage(_nc_deck(ctrl="10000 1000 0 1"), tmp_path)
 
 
-# ---------------- F23: comment whitespace round-trips ----------------
+# ---------------- comment whitespace round-trips ----------------
 
 def test_comment_whitespace_preserved_through_staging(tmp_path):
     deck = (
@@ -182,11 +180,10 @@ def test_emit_comment_lines_empty_block_emits_nothing():
     assert emit_comment_lines("   \n") == []
 
 
-# ---------------- F22: _parse_atoms token-count guard ----------------
+# ---------------- atom-line token-count guard ----------------
 #
-# the pure atom-line parser lives in the Tk-free deck_text module
-# (F22/F26); importing irma.gui.app here would pull in tkinter and break
-# tkinter-less CI runners.
+# the atom-line parser lives in the Tk-free deck_text module; importing
+# irma.gui.app here would pull in tkinter and break tkinter-less runners.
 
 def _parse_atoms(text):
     from irma.gui.deck_text import parse_atoms_text
@@ -219,7 +216,7 @@ def test_parse_atoms_valid_line_parses():
     assert atoms[0]['positions'] == [(0.0, 0.0, 0.5)]
 
 
-# ---------------- SPG-6 + CDX-2 + SPG-7: engine guards mirrored -------------
+# ---------------- engine guards mirrored -------------
 #
 # The staging parser checks the deck structure; the engine checks the
 # ranges at Run. One case per structure check here, and a near-miss deck
@@ -277,7 +274,7 @@ def test_iel10_phonopy_mode_ncold_rejected(tmp_path):
                            card6b="2 1 0 2", card6e=""), tmp_path)
 
 
-# ---------------- SPG-7: Card 4 checked conversion --------------------------
+# ---------------- Card 4 checked conversion --------------------------
 
 def test_card4_flags_use_checked_conversion(tmp_path):
     """A non-integral iint=1.9 used to import as the valid lin-lin flag 1

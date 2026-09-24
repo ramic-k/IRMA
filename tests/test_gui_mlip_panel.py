@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-# importorskip FIRST -- a hard `import tkinter` at module top would error
-# at collection on ase-only environments.
+# importorskip before the irma.gui import: without tkinter that import would
+# fail at collection and stop the whole run.
 tk = pytest.importorskip("tkinter")
 pytest.importorskip("yaml")
 

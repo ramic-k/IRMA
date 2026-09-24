@@ -1,15 +1,20 @@
-"""GUI-owned temp files must not survive the window (review GUI-2).
+"""GUI-owned temp files must not survive the window.
 
 The unlink callbacks are queued via after() and die with the Tk interpreter,
 so every panel exposes an idempotent cleanup_temp_files() that app close
-calls synchronously. Tk-free: the cleanup methods only touch plain
-attributes, so they are exercised unbound on stand-in objects.
+calls synchronously. The cleanup methods only touch plain attributes, so they
+are exercised unbound on stand-in objects: no display is needed, but the
+modules import tkinter.
 """
 import types
 
-from irma.gui.app import IrmaApp
-from irma.gui.endf_form import EndfFormMixin
-from irma.gui.ncrystal_panel import NCrystalPanel
+import pytest
+
+pytest.importorskip("tkinter")
+
+from irma.gui.app import IrmaApp  # noqa: E402
+from irma.gui.endf_form import EndfFormMixin  # noqa: E402
+from irma.gui.ncrystal_panel import NCrystalPanel  # noqa: E402
 
 
 def _tmpfile(tmp_path, name):
