@@ -175,7 +175,7 @@ class AngstromPrimitiveCell:
     frequency factor are paired with.
     """
 
-    cell: np.ndarray                # (3, 3) row vectors, ANGSTROM
+    cell: np.ndarray                # (3, 3) row vectors, Angstrom
     scaled_positions: np.ndarray    # (N_sites, 3) fractional
     symbols: List[str]
     masses: np.ndarray              # (N_sites,) amu
@@ -289,12 +289,12 @@ class PhonopyPrimitiveStructure:
 
 def load_phonopy_primitive_structure(phonopy_yaml_path
                                      ) -> PhonopyPrimitiveStructure:
-    """Read a phonopy model's PRIMITIVE cell through phonopy itself.
+    """Read a phonopy model's primitive cell through phonopy itself.
 
     The primitive cell, not the yaml's ``unit_cell``/``primitive_cell``
     block, because that is the cell IRMA's crystal cards must describe:
     ``irma.core.crystal`` matches every Card 6d position against the
-    phonopy PRIMITIVE-cell mesh for inelastic_mode 1/2, and rejects the
+    phonopy primitive-cell mesh for inelastic_mode 1/2, and rejects the
     deck when they do not correspond. Reading it through ``phonopy.load``
     (with the cross-version primitive-matrix pin) is the only way to get
     the same cell the engine will build: the yaml's ``primitive_cell``
@@ -367,7 +367,7 @@ def warn_dynamic_instability(frequencies_ev, qpoints) -> None:
         print(f"WARNING: {int(np.count_nonzero(nongamma_imag))} imaginary phonon "
              f"mode(s) at non-Gamma q-points (min "
              f"{np.min(freqs[nongamma_imag]) * 1000:.3f} meV) -- the phonon model "
-             "is DYNAMICALLY UNSTABLE (a finite-wavevector soft mode); review the "
+             "is dynamically unstable (a finite-wavevector soft mode); review the "
              "structure and force constants before trusting this evaluation.")
     elif np.any(freqs < -1.0e-4):
         print("WARNING: imaginary modes near Gamma (min "
