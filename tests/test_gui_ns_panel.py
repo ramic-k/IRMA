@@ -687,6 +687,13 @@ def test_direct_map_hides_output_and_breakdown(panel):
     assert panel._export_row.winfo_manager() == "pack"
 
 
+def test_fresh_direct_map_is_unmasked_for_the_width_polynomial(panel):
+    """A fresh panel's Direct tab uses the 'width polynomial' model, whose
+    map is unmasked, as after switching to that model."""
+    assert panel.dir_res_model.get() == "width polynomial"
+    assert panel.dir_map_mask.get() is False
+
+
 def test_map_mask_checkbox_starts_disabled_like_save_map(panel):
     """The Plot tab's 'mask to accessible' toggle only redraws a cached
     2-D map, so it shares the Save-map button's disabled-until-a-map-runs
