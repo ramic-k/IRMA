@@ -1,31 +1,30 @@
 # ENDFTSL test fixtures
 
-## graphite MEF (LTHR=3) tape — `../../examples/graphite/graphite_mef_296K.endf`
+Two graphite ENDF/TSL tapes (the MEF tape was made with IRMA v0.18.0). Both
+decks use the vendored
+phonopy model `tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml`
+(Card 6f, a repository-relative path), mode 2 (exact coherent one-phonon term,
+anisotropic Debye-Waller), 4000/200 powder directions, 296 K, ZA 6012, and
+explicit 200 x 426 alpha/beta grids with the default log-linear Card 4
+interpolation.
 
-A vendored ENDF/TSL tape used by the converter test suite and the reference
-gate. The single tracked copy lives with the graphite example
-(`examples/graphite/graphite_mef_296K.endf`); the tests and reference scripts
-read it from there. It carries **both** elastic components — MF7/MT2 **LTHR=3**
-(coherent Bragg edges + incoherent Debye-Waller) — plus the inelastic S(α,β)
-(MF7/MT4, `LAT=1, LASYM=0, LLN=0`), so v1 exercises the full elastic +
-inelastic stack from a single fixture.
+| Deck | Tape | Card 6b | Mesh | Used by |
+|---|---|---|---|---|
+| `graphite_mef_296K.input` | `../../examples/graphite/graphite_mef_296K.endf` | `2 1 0 2` (MEF, MF7/MT2 LTHR=3: coherent Bragg edges plus incoherent Debye-Waller) | 40 x 40 x 40 | the converter tests and the reference gate |
+| `graphite_cef_296K.input` | `graphite_cef_296K.endf` | `1 1 0 2` (coherent elastic only, LTHR=1) | 12 x 12 x 12 | `test_zero_out.py` |
 
-Generated with **IRMA v0.18.0 (fixture provenance; regeneration from a current checkout must be run FROM THE REPOSITORY ROOT -- the Card 6f phonopy path in the .input decks is repo-relative)** from `graphite_mef_296K.input`:
+The MEF tape carries both elastic components and the inelastic S(alpha,beta)
+(MF7/MT4, `LAT=1, LASYM=0, LLN=0`), so one fixture exercises the full elastic
+and inelastic stack.
+
+To regenerate, run from the repository root:
 
 ```bash
-conda run -n irma_and_mcstas_environment python -m irma \
-    graphite_mef_296K.input ../../examples/graphite/graphite_mef_296K.endf
+python -m irma ncrystal_plugin_ENDFTSL/tests/data/graphite_mef_296K.input \
+    ncrystal_plugin_ENDFTSL/examples/graphite/graphite_mef_296K.endf
+python -m irma ncrystal_plugin_ENDFTSL/tests/data/graphite_cef_296K.input \
+    ncrystal_plugin_ENDFTSL/tests/data/graphite_cef_296K.endf
 ```
 
-- `graphite_mef_296K.input` is a copy of the repo's `examples/tsl/graphite_mode2.input`
-  with **Card 6b** changed from `1 1 0 2 /` (SEF) to `2 1 0 2 /` (MEF) — the only
-  edit. It is mode-2 (exact coherent one-phonon + anisotropic DW), 40×40×40 mesh,
-  4000/200 powder directions, 296 K, with the phonopy model at
-  `tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml`.
-
-This is a **checked-in fixture** — regenerate only deliberately (the converter
-tests read it; the converter just replays whatever the tape contains).
-
-> NOTE: generating it needs phonopy's C backend. IRMA forces `lang="C"`
-> (phonopy ≥ 4 defaults to the Rust `phonors` backend, whose rayon thread pool
-> deadlocks the mode-2 worker ProcessPool — see `irma/core/phonopy_io.py`).
+These are checked-in fixtures; regenerate them only deliberately. The
+converter reproduces whatever the tape contains.
