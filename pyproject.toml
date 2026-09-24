@@ -42,12 +42,13 @@ dependencies = [
     "threadpoolctl>=3.0",
 ]
 classifiers = [
-    # NOTE: no per-minor `Python :: 3.x` classifiers -- CI runs a single version
-    # (3.12). Add them only alongside a pinned multi-version CI matrix.
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Physics",
 ]
 
@@ -57,8 +58,9 @@ Issues = "https://github.com/ramic-k/IRMA/issues"
 Documentation = "https://ramic-k.github.io/IRMA/"
 
 [project.optional-dependencies]
-# Required only for the generalized noncubic inelastic paths
-# (iel=10 with inelastic_mode=1 or 2); everything else runs without it.
+# Required only for the phonopy-backed inelastic modes (iel=10 with
+# inelastic_mode=1 or 2, spectra modes 1/2, the NCrystal exporter);
+# everything else runs without it.
 # Floor 4.2: phonopy 4 is the supported and tested major (verified on 4.3.1);
 # IRMA passes phonopy 4's lang="C" and reads its physical-units table.
 phonopy = ["phonopy>=4.2"]
@@ -71,10 +73,9 @@ spectra = ["scipy>=1.10", "pyyaml>=6"]
 # displacement with a pretrained universal interatomic potential, producing
 # a phonon model bundle for the ENDF/spectra/NCrystal consumers. ASE drives the
 # relax/displace loop, phonopy assembles force constants, PyYAML backs the
-# emitted spectra/ncrystal configs. The potential packages themselves
-# (mattersim, sevenn, orb-models, mace-torch) are NOT listed: their pins
-# conflict with each other, they pull their own torch, and every import is
-# lazy -- install any subset alongside this extra (see INSTALL.md).
+# emitted spectra/ncrystal configs. The potential packages are not listed:
+# their pins conflict with each other, so `irma mlip env create` installs
+# each potential into its own environment (see INSTALL.md).
 mlip = ["ase>=3.23", "phonopy>=4.2", "pyyaml>=6"]
 
 [project.scripts]
@@ -99,15 +100,12 @@ line-length = 100          # documented intent; not enforced (E501 unselected)
 # F  = pyflakes  (unused imports, undefined names, redefinitions -- real bugs)
 # E9 = syntax errors (always-green sanity)
 select = ["F", "E9"]
-# F841 (assigned-but-unused local) is enforced: the 12 dead locals it flagged were
-# swept (deleted, the card-consuming `nout` read kept without its binding, and the
-# Tk app ref kept with `# noqa: F841`). A new dead local now reds the gate.
+# F841 (assigned-but-unused local) is enforced.
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-# engine.py and noncubic_engine.py are deliberate backward-compat FACADES: they
-# re-import names (run_leapr, the LEAPR kernels, the worker/numerics primitives)
-# purely to re-export them for the public API and the test suite. Those imports
-# are "unused" within the module by design, so F401 does not apply here.
+# engine.py and noncubic_engine.py are re-export modules: they import names
+# (run_leapr, the LEAPR kernels, the worker/numerics primitives) to re-export
+# them for the public API and the test suite, so F401 does not apply here.
 "irma/core/engine.py" = ["F401"]
 "irma/core/noncubic_engine.py" = ["F401"]
