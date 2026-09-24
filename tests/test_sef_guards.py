@@ -33,7 +33,7 @@ def test_polyatomic_nondc_principal_with_zero_sigma_inc_raises_clearly():
 # With no surviving Bragg edge the coherent table cannot be built.
 
 def _ci_coh():
-    # Single-atom CEF coherent branch (sigma_coh > sigma_inc) so the build
+    # Single-atom SEF coherent branch (sigma_coh > sigma_inc) so the build
     # reaches the coherent-S table; no edges supplied.
     at = {'Z': 6, 'A': 12, 'awr': 11.9, 'b_coh': 6.6, 'sigma_inc': 0.001,
           'sigma_coh': 5.5, 'fraction': 1.0, 'dwpix': [0.5]}

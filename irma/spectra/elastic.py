@@ -88,7 +88,7 @@ def _mf7mt2_lines(path):
 def _mf7mt4_npr(path):
     """npr (principal-atom count) from MF7/MT4 B(6) of the same tape.
 
-    MF7/MT2 does not carry npr, but every IRMA writer (classic iel<0, SEF/CEF
+    MF7/MT2 does not carry npr, but every IRMA writer (classic iel<0, SEF
     and MEF generalized) stores the molecular incoherent-elastic
     ``SB = per-principal sigma x npr`` and records npr in MF7/MT4 B(6)
     (endf_writer: ``mf7mt4['B'][6]``), so the same tape's MT4 is the
@@ -302,7 +302,7 @@ def _parse_incoherent(cur, T_target, npr=1.0):
     (sigma_b [per principal atom], W'(T)[1/meV]).
 
     The tape SB is molecular: per-principal sigma x npr (the convention every
-    IRMA writer -- classic iel<0, SEF/CEF, MEF -- uses; NJOY THERMR divides it
+    IRMA writer -- classic iel<0, SEF, MEF -- uses; NJOY THERMR divides it
     back out the same way). Dividing by ``npr`` converts to this module's
     per-principal-atom convention. CAVEAT: MF7/MT2 alone does not carry npr,
     so a standalone parse must be handed it explicitly (``from_endf_mf7mt2``

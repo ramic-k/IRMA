@@ -1,4 +1,4 @@
-"""A generalized CEF LTHR=2 tape with npr > 1 round-trips through the ENDFTSL
+"""A generalized SEF LTHR=2 tape with npr > 1 round-trips through the ENDFTSL
 converter back to the per-principal incoherent-elastic cross section: the
 writer stores SB = per-principal x npr and the converter divides by MT4
 B(6)=npr once.
@@ -45,7 +45,7 @@ def _write_eq25_tape(path, npr):
 
 
 @pytest.mark.parametrize("npr", [1, 2, 4])
-def test_generalized_cef_converter_recovers_per_principal(tmp_path, npr):
+def test_generalized_sef_converter_recovers_per_principal(tmp_path, npr):
     per_principal = _H['sigma_inc'] * (
         (_H['sigma_coh'] + _H['sigma_inc']) / _H['sigma_inc'])
     tape = tmp_path / f"eq25_npr{npr}.endf"

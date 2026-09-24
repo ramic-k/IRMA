@@ -87,7 +87,7 @@ def _tokens(*lines):
 
 # a minimal iel=10 mode-0 crystal-card block (Cards 6b-6d) for Be
 _BE_CARDS = (
-    "1 1 0 0/",                                                  # 6b: CEF, 1 atom, mode 0
+    "1 1 0 0/",                                                  # 6b: SEF, 1 atom, mode 0
     "2.2866 2.2866 3.5833 90 90 120/",                          # 6c: lattice
     "4 9 8.93478 7.79 0.0018 2/",                               # 6d: Be atom
     "0.33333333 0.66666667 0.75 0.66666667 0.33333333 0.25/",   # 6d: positions

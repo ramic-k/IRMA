@@ -1,9 +1,9 @@
 """MEF (LTHR=3) applies the directional Debye-Waller. On a synthetic
 anisotropic crystal the plane-by-plane attenuation
 W_s(Ĝ) = (Ĝ·F_s·Ĝ)/(awr_s·kT) must reproduce a hand-evaluated value and
-differ between c-axis and basal-plane edges. That CEF and MEF share this
+differ between c-axis and basal-plane edges. That SEF and MEF share this
 arithmetic is tested in test_elastic_dw.py
-(test_cef_and_mef_edge_arithmetic_differ_only_by_scale).
+(test_sef_and_mef_edge_arithmetic_differ_only_by_scale).
 """
 import numpy as np
 import pytest

@@ -13,7 +13,7 @@ the cumulative-S TAB1/LIST records. Three physical forms exist:
     reciprocal-vector directions merged into the edge.
 
 This module is the single source of that arithmetic for
-``_build_coherent_elastic`` (iel=1-6) and ``_build_cef_coherent`` (iel=10
+``_build_coherent_elastic`` (iel=1-6) and ``_build_sef_coherent`` (iel=10
 SEF, and MEF through it with scale 1), so the elastic Debye-Waller treatment
 cannot drift between the classic and generalized paths.
 

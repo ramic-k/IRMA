@@ -1,5 +1,5 @@
-"""CEF incoherent-elastic (LTHR=2) writer round-trip: the SUCCESS paths of
-_build_cef_incoherent and both dispatch branches that select it.
+"""SEF incoherent-elastic (LTHR=2) writer round-trip: the SUCCESS paths of
+_build_sef_incoherent and both dispatch branches that select it.
 
 The Eq-25 single-atom incoherent-dominant branch (sigma_inc >= sigma_coh) and
 the Eq-26 polyatomic non-DC redistribution branch (K. Ramic et al., NIM-A 1027
@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from irma.core.constants import BK
-from irma.core.endf_writer import _build_cef_incoherent, write_endf_output
+from irma.core.endf_writer import _build_sef_incoherent, write_endf_output
 from irma.spectra.elastic import from_endf_mf7mt2, _mf7mt4_npr
 
 _TEMPR = [296.0, 500.0]
@@ -35,7 +35,7 @@ _BE = {'Z': 4, 'A': 9, 'awr': 8.93, 'b_coh': 7.79, 'sigma_inc': 0.22,
 
 def _ci(atom_types, principal=0, dc=None):
     return {
-        'elastic_mode': 1,   # CEF
+        'elastic_mode': 1,   # SEF
         'atom_types': atom_types,
         'nat': len(atom_types),
         'principal_atom_idx': principal,
@@ -53,7 +53,7 @@ def _ci_mef(atom_types, principal=0):
     return ci
 
 
-# A minimal two-edge Bragg set. The CEF/SEF incoherent builder ignores
+# A minimal two-edge Bragg set. The SEF incoherent builder ignores
 # bragg/nedge entirely, but the MEF builder writes the coherent edges too and
 # rejects an empty list, so the MEF fixtures pass these.
 _BRAGG = [(2.5e-3, 1.0), (5.0e-3, 0.5)]
@@ -78,14 +78,14 @@ def _write_iel10_tape(path, za, awr, crystal_info, npr=1, bragg=None):
 
 @pytest.fixture(scope="module")
 def eq25_tape(tmp_path_factory):
-    p = tmp_path_factory.mktemp("cef_eq25") / "eq25.endf"
+    p = tmp_path_factory.mktemp("sef_eq25") / "eq25.endf"
     _write_iel10_tape(p, 1001.0, _H['awr'], _ci([_H]))
     return p
 
 
 @pytest.fixture(scope="module")
 def eq26_tape(tmp_path_factory):
-    p = tmp_path_factory.mktemp("cef_eq26") / "eq26.endf"
+    p = tmp_path_factory.mktemp("sef_eq26") / "eq26.endf"
     _write_iel10_tape(p, 8016.0, _O['awr'], _ci([_O, _BE], dc=1))
     return p
 
@@ -122,18 +122,18 @@ def test_wprime_survives_roundtrip(request, tape_fixture, awr, temp_idx):
     assert m.Wprime_invmeV == pytest.approx(expected_inv_mev, rel=1e-6)
 
 
-# ---- generalized CEF stores the molecular SB = per-principal x npr ----------
+# ---- generalized SEF stores the molecular SB = per-principal x npr ----------
 
 @pytest.fixture(scope="module")
 def eq25_npr4_tape(tmp_path_factory):
-    p = tmp_path_factory.mktemp("cef_eq25_npr4") / "eq25_npr4.endf"
+    p = tmp_path_factory.mktemp("sef_eq25_npr4") / "eq25_npr4.endf"
     _write_iel10_tape(p, 1001.0, _H['awr'], _ci([_H]), npr=4)
     return p
 
 
 @pytest.fixture(scope="module")
 def eq26_npr2_tape(tmp_path_factory):
-    p = tmp_path_factory.mktemp("cef_eq26_npr2") / "eq26_npr2.endf"
+    p = tmp_path_factory.mktemp("sef_eq26_npr2") / "eq26_npr2.endf"
     _write_iel10_tape(p, 8016.0, _O['awr'], _ci([_O, _BE], dc=1), npr=2)
     return p
 
@@ -218,11 +218,11 @@ def test_mef_classic_sef_writers_agree(mef_npr2_tape, classic_npr2_tape):
     """All three incoherent-SB writers store the same molecular value for
     the same material at npr=2: the MEF (LTHR=3) tape, the classic iel<0
     (LTHR=2) tape (the convention THERMR was written against), and the
-    SEF/CEF builder called directly."""
+    SEF builder called directly."""
     expected = 2 * _BE['sigma_inc']
     assert _parsed_mt2_sb(mef_npr2_tape) == pytest.approx(expected, rel=1e-6)
     assert _parsed_mt2_sb(classic_npr2_tape) == pytest.approx(expected, rel=1e-6)
-    sb_sef = _build_cef_incoherent(1, 4009.0, _BE['awr'], 2, _TEMPR,
+    sb_sef = _build_sef_incoherent(1, 4009.0, _BE['awr'], 2, _TEMPR,
                                    list(_DWPIX), _BE['sigma_inc'], 2)['SB']
     assert sb_sef == pytest.approx(expected, rel=1e-6)
 
