@@ -80,7 +80,7 @@ detailed and realistic starting point than such models.
 
 ## Crystalline polyethylene against VISION
 
-High-density polyethylene is a crystalline polymer with a spectrum
+High-density polyethylene is a semicrystalline polymer (the calculation models its orthorhombic crystalline phase) with a spectrum
 measured on the VISION spectrometer at the Spallation Neutron Source, which makes it a direct test of the full chain from
 potential to instrument. The builds used the experimental orthorhombic
 cell and the same supercell as the DFT reference:

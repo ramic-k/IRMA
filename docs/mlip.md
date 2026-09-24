@@ -67,10 +67,6 @@ prediction.
 | `--potential` | default model | training data (level) | license | note |
 |---|---|---|---|---|
 | `nequip` | `mir-group/NequIP-OAM-L:0.1` | OMat24 + sAlex + MPtrj (PBE/PBE+U) | MIT / CC-BY-4.0 | best all-around in our validation |
-
-The training-data column names each dataset and, in parentheses, the
-DFT flavor behind it (PBE, PBE+U, r2SCAN: exchange-correlation
-functionals; a potential inherits its reference's systematic offsets).
 | `grace` | `GRACE-2L-OAM` | OMat24 + sAlex + MPtrj (PBE/PBE+U) | **ASL (academic)** | TensorFlow; runs via a dedicated env |
 | `orb` | `orb_v3_conservative_inf_omat` | OMat24 (PBE/PBE+U) | Apache-2.0 | |
 | `sevennet` | `7net-mf-ompa` | MPtrj + sAlex + OMat24 (PBE/PBE+U) | GPL-3.0 | |
@@ -79,6 +75,10 @@ functionals; a potential inherits its reference's systematic offsets).
 | `mace-off` | `medium` | SPICE organics (wB97M-D3) | ASL | molecules only (H C N O F P S Cl Br I) |
 | `pet-mad` | `pet-mad-s` (newest release, pinned at build) | MAD (**r2SCAN**) | BSD-3-Clause | expect a small stiff offset vs PBE references |
 | `dpa3` | `DPA-3.1-3M` | OpenLAM multitask (PBE/PBE+U) | LGPL / CC-BY-4.0 | open baseline; **not for van-der-Waals layered crystals** |
+
+The training-data column names each dataset and, in parentheses, the
+DFT flavor behind it (PBE, PBE+U, r2SCAN: exchange-correlation
+functionals; a potential inherits its reference's systematic offsets).
 
 Potentials are never installed by `pip install irma[mlip]`; each brings
 its own heavy dependency stack, and the stacks conflict with each
@@ -198,8 +198,8 @@ does not establish that it is safe.
    lattice vector reaches it).
 3. **Forces**: one potential evaluation per displaced supercell, serial
    by default. `--jobs N` runs N spawn workers with one native thread
-   each, and for heavy models it is the one performance knob that
-   matters: pick a value
+   each, and for heavy models it is the main performance setting: pick a
+   value
    that divides the displacement count evenly, up to your core count
    (see the performance notes below). Forces are cached under a
    physics fingerprint, so an interrupted build resumes where it
@@ -229,9 +229,9 @@ than built.
 A bundle is code-adjacent input: treat a
 received bundle with the same caution as a script from the same
 source. The manifest's sha256 hashes prove *internal consistency*
-only: the bundle's files match what its builder recorded. An
-attacker-built bundle is perfectly self-consistent, so the hashes are
-worthless as evidence of origin or good faith. The concrete hazard is
+only: the bundle's files match what its builder recorded. A bundle
+built by an attacker is also self-consistent, so the hashes say nothing
+about where it came from or whether it is safe. The concrete hazard is
 `phonopy.yaml`: phonopy parses it with PyYAML's **unsafe** loader,
 which executes `!!python/` tags at parse time. IRMA therefore scans
 every phonopy.yaml and refuses a file carrying any YAML tag or `%TAG`
@@ -354,9 +354,8 @@ masses.
 
 ## Environments and conflicting dependencies
 
-The potential packages cannot all live in one Python environment; the
-pins are mutually unsatisfiable, and this is upstream reality rather
-than an IRMA choice:
+The potential packages cannot all live in one Python environment, because
+the published version pins of these packages conflict:
 
 - `mace-torch` pins `e3nn==0.4.4`; `sevenn` and `mattersim` need
   `e3nn>=0.5`; `nequip` needs `e3nn>=0.6`.
@@ -391,12 +390,10 @@ that needs a newer torch fails to install there, and the torch that
 does install was built against NumPy 1.x, which breaks next to the
 NumPy 2 that current packages pull in (`nequip` can work after
 installing `numpy<2` in its env, below); use Linux or an Apple-Silicon
-Mac. Everything else in IRMA works normally on Intel Macs. The two e3nn camps (`mace-torch` versus everything
-else that uses e3nn)
-were both demonstrated to break in live installs, in either direction;
-this is not a
-theoretical conflict. IRMA's answer is per-potential environments with
-transparent dispatch:
+Mac. Everything else in IRMA works normally on Intel Macs. Installing
+`mace-torch` next to any other e3nn-based potential breaks one of them
+(observed in both directions). IRMA therefore gives each potential its
+own environment and dispatches to it transparently:
 
 ```bash
 irma mlip env create mace     # build + register a dedicated env
@@ -449,7 +446,7 @@ torchvision/torchaudio on the same flavor as torch (a mixed pair
 fails at import with "operator torchvision::nms does not exist").
 The pipeline itself is verified on Linux: it reproduces the macOS
 phonons identically (ZrO2: same freq_max and imaginary census), with
-the same near-linear `--jobs` scaling (serial 197 s -> 46 s at
+the same `--jobs` scaling (serial 197 s -> 46 s, about 4x, at
 `--jobs 9` on a 40-core node).
 
 Everything the front end downloads or builds lives under one cache
@@ -463,8 +460,8 @@ The snapshot compares each potential's maximum phonon frequency
 against DFT references, with the imaginary-mode
 census on the shared meshes (Ni fcc vs a 4×4×4-supercell VASP reference
 computed on Perlmutter, the NERSC supercomputer;
-graphite vs the published PBE calculation behind the IRMA paper, whose
-seven-functional spread is 198.2-202.7 meV; wurtzite BeO vs the paper's
+graphite vs the published PBE calculation behind the IRMA paper (a
+separate seven-functional study spans 198.2-202.7 meV); wurtzite BeO vs the paper's
 4x4x3 calculation, no NAC on either side). The census values below are backed
 by the archived campaign record
 [campaign_census_2026-07-17.txt](assets/mlip/campaign_census_2026-07-17.txt),
@@ -506,7 +503,7 @@ relaxation if the potential drifts the positions off the exact Wyckoff
 sites (phonopy then expects one row per atom); supplying per-atom Born
 rows sidesteps it.
 
-Points worth carrying into your own material choices: pet-mad's stiff
+Implications for choosing a potential: pet-mad's stiff
 offset on graphite and BeO is its r2SCAN training reference showing
 through, not an error; dpa3 is systematically soft and cannot bind
 van-der-Waals layers (both of its materials heads produce thousands of
@@ -516,16 +513,17 @@ functional is within the spread of DFT functionals themselves.
 
 ## Performance notes
 
-Measured on monoclinic ZrO2 (baddeleyite, 12-atom P2_1/c cell, 324-atom
-supercell, 18 symmetry-reduced displacements; Apple-silicon laptop, 16
-cores):
+Measured on monoclinic ZrO2 (baddeleyite, 12-atom P2_1/c cell, 3x3x3
+supercell of 324 atoms from the default 12 Å minimum-length rule, not the
+3x2x2 validation cell; 18 symmetry-reduced displacements; Apple-silicon
+laptop, 16 cores):
 
 - **Worker memory scales with supercell size and architecture.** On a
-  432-atom supercell, sevennet and dpa3 each needed ~24 GB *per worker*
+  larger, 432-atom supercell (not the ZrO2 cell above), sevennet and dpa3 each needed ~24 GB *per worker*
   (they run comfortably at `--jobs 1`-`2` there; the other potentials
   are unremarkable). Watch the first wave's memory before committing to
   a large `--jobs` on big cells.
-- **`--jobs` is the lever for heavy models.** With single-thread-clean
+- **Use `--jobs` for heavy models.** With single-thread-clean
   workers, the NequIP force loop went from 458 s (serial, pathological
   artifact; see below) to 93.6 s serial and **21.1 s with `--jobs 9`**.
   Choose a jobs value that packs the displacement count into full waves
@@ -539,7 +537,7 @@ cores):
   call) while ignoring every runtime clamp. IRMA therefore compiles
   nequip artifacts in a clamped environment and tags them (`-st1`) so a
   pathological artifact can never be reused from an older cache.
-- **Fast models don't care.** MatterSim finishes the same ZrO2 force
+- **Fast models gain little from tuning.** MatterSim finishes the same ZrO2 force
   loop in 8-10 s under every configuration; tuning only pays off for
   nequip-class equivariant models on large supercells.
 - **`--worker-threads`** exists for machines and backends where
