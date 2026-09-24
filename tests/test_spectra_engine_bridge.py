@@ -1,4 +1,4 @@
-"""irma.spectra native-engine bridge (P1) -- self-contained, no external data.
+"""irma.spectra native-engine bridge -- self-contained, no external data.
 
 Pins the engine -> spectra contract: (1) ``_pick_sqe_key`` must stay in lockstep
 with ``standalone_sab._pick_sab_key`` (same mode/order branch, ``sqe_`` prefix +

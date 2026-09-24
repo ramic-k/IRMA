@@ -1,10 +1,9 @@
-"""irma.spectra.build_locus_support (P2) -- pure geometry, no engine/phonopy.
+"""irma.spectra.build_locus_support -- pure geometry, no engine/phonopy.
 
 The forward orchestrator computes S(Q,E) only on this locus support, so the
 support MUST envelope every bank locus Q(E) over the full energy range (else the
 sqe interpolator silently zeros the high-E wing). These checks pin that coverage
-contract and the uniform loss-side energy grid -- fast, data-free, CI-safe. The
-engine-fed end-to-end gate lives in neutron_scattering_analysis/gate_p2_forward.py.
+contract and the uniform loss-side energy grid -- fast and data-free.
 """
 import os
 

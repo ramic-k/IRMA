@@ -43,10 +43,9 @@ def _engine(mode, emit, e_grid, q_grid=None):
     q_grid = np.arange(1.0, 10.01, 0.5) if q_grid is None else q_grid
     import contextlib
     import io
-    # jobs=1 (NO fork pool): these are correctness pins, not parallelism, and
-    # forking the engine pool many times in one pytest process can deadlock on a
-    # shared CI runner (the classic fork-after-threads hazard). The parallel
-    # fork path is exercised by test_spectra_engine_integration.py.
+    # jobs=1 (no worker pool): these are correctness pins, not parallelism, and
+    # every pooled run pays the spawn start-up. The pool path is exercised by
+    # test_spectra_engine_integration.py.
     with contextlib.redirect_stdout(io.StringIO()):
         res = run_noncubic_sab_inprocess(
             inelastic_mode=mode, emit_gain_side=emit, phonopy_yaml=_YAML,

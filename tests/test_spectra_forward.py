@@ -203,7 +203,7 @@ def test_save_sqe_map_full_and_masked(tmp_path):
 
 
 def test_locus_support_extends_loss_grid_for_deep_gain():
-    """sweep-3: a gain side requested below -e_max must extend the engine loss
+    """A gain side requested below -e_max must extend the engine loss
     grid to |e_min| so the gain wing has loss data to mirror (else the
     fill_value=0 interpolator silently zeros it). For |e_min| <= e_max the grid
     is unchanged (byte-stable for the common case)."""
