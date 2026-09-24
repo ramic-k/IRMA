@@ -1,18 +1,7 @@
-"""GUI widget behavior.
+"""GUI widgets: help popup sizing, and the fresh form (methodology defaults
+prefilled, material identity blank).
 
-Covers the help popup sizing -- a fixed 12-line, non-resizable,
-scrollbar-less Text would clip the longest help texts (Bragg-edge grouping,
-mpdir, ilog, ...) mid-sentence -- and the fresh form's two-part contract:
-
-  * METHODOLOGY defaults must match the documented production settings
-    (Card 6g '10000 1000 1', mesh 40^3, Auto-size ON, LAT=1, npr=1, 296 K);
-  * MATERIAL IDENTITY (ZA, MAT, AWR, sigma_free, the lattice, the Card 6d
-    atom block) must be BLANK -- IRMA cannot know the user's material, and a
-    plausible-but-wrong prefill ships a tape for the wrong one. Reset must
-    land in that same blank state, an example deck must fill it, and
-    generating from it must name the missing cards.
-
-Requires a display (Tk); skipped headless (CI).
+Needs tkinter and a display; skips without them.
 """
 import pytest
 
@@ -147,9 +136,8 @@ def test_fresh_form_keeps_the_methodology_defaults(fresh_app):
 
 
 def test_reset_lands_in_the_same_blank_state_as_a_fresh_form(new_app):
-    """Reset (deck import runs it first) and a freshly built form must agree.
-    Reset used to leave ZA/MAT/AWR/spr at '0' and the lattice at '0' where the
-    builder had graphite's numbers -- two different 'defaults', neither blank."""
+    """Reset (deck import runs it first) and a freshly built form must agree:
+    both leave every identity field blank."""
     fresh = _identity_state(new_app)
     new_app.za.set("4009")
     new_app.mat.set("29")
@@ -210,10 +198,8 @@ def test_blank_crystal_names_its_own_cards(new_app):
 
 
 def test_fill_from_za_fills_awr_and_sigma_free_from_the_table(new_app):
-    """The successor to the old 'fresh defaults agree with the button' pin:
-    with ZA blank there is nothing to agree with, so what matters is that
-    setting a ZA and pressing the button fills the other two from the
-    built-in table (in the deck's FREE-atom convention)."""
+    """Setting a ZA and pressing the button fills AWR and the free cross
+    section from the built-in table (in the deck's free-atom convention)."""
     from unittest import mock
     from irma.gui import endf_form
     from irma.core.nuclear_data import lookup

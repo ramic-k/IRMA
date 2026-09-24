@@ -1,19 +1,8 @@
-"""ENDF tab: 'Apply ZA' keeps Card 5 and the Card 6d atom rows consistent.
+"""ENDF tab: 'Apply ZA' relabels the principal's Card 6d row to the Card 4
+nuclide, asks before overwriting custom constants, and refuses what the
+engine would reject.
 
-The engine requires the principal (Z, A) on Card 4 to be one of the atom
-rows. 'Fill structure from phonopy.yaml' fills the rows as natural elements
-(A = 0), and the user then names an isotope on the Scattering tab; the
-button relabels that element's row to the same nuclide, positions kept.
-The contract pinned here:
-- a row whose constants are the table's own is relabelled without a
-  question, a row with custom constants only after a yes, and 'No' changes
-  nothing at all (Card 5 included);
-- other elements' rows are untouched (BeO: O stays natural);
-- a nuclide with no tabulated constants or energy-dependent ones is refused
-  before anything changes;
-- deck generation refuses a ZA that matches no row, with the engine's
-  message, and changes no row.
-Requires a display (Tk); skipped headless (CI).
+Needs tkinter and a display; skips without them.
 """
 import pytest
 

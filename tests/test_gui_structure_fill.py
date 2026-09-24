@@ -1,18 +1,8 @@
-"""ENDF tab: 'Fill structure from phonopy.yaml'.
+"""ENDF tab: 'Fill structure from phonopy.yaml' prefills the iel=10 lattice
+and atom block from the Card 6f model, only after the preview and never one
+without the other.
 
-The button prefills the iel=10 Lattice Parameters and the whole 'Atom Types
-in Unit Cell' block from the phonopy model named on Card 6f. The contract
-this file pins:
-
-- deck import applies the deck's own Card 6c/6d, not a fill;
-- the preview is a real gate: Cancel mutates nothing;
-- Apply is ATOMIC -- lattice and atom block are replaced together, never one
-  without the other;
-- a missing path / unreadable yaml reports and mutates nothing;
-- what it writes generates a deck the core tokenizer reads and the GUI
-  import parser accepts.
-
-Requires a display (Tk); skipped headless (CI).
+Needs tkinter and a display; skips without them.
 """
 import pathlib
 

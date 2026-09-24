@@ -1,14 +1,10 @@
 """GUI deck generation and import (export -> engine -> import round trips).
 
-Covers the QA GUI slice: export/import previously crashed with NameError for
-every iel != 10 (inelastic_mode_val / inelastic_mode_loaded unbound), the
-secondary scatterer exported an invalid Card 6 (mss=0, b7 hardcoded 0, nss=2
-offered), ncold/nsk decks were exported without their Cards 17-19 S(kappa)
-records, Card 6g's auto-order field and Card 6e partial spectra were dropped,
-multi-positive-temperature decks were silently collapsed, and isabt/ilog/smin
-were reset on export.
+Covers export and import for every iel, the secondary scatterer (Card 6),
+the ncold/nsk Cards 17-19 S(kappa) records, Card 6g's auto-order field, Card 6e
+partial spectra, multi-temperature decks, and the Card 4 isabt/ilog/smin flags.
 
-Requires a display (Tk); skipped headless (CI).
+Needs tkinter and a display; skips without them.
 """
 
 import pytest
@@ -90,11 +86,11 @@ def _run_engine(deck_text, tmp_path):
     run_leapr(str(inp), str(tmp_path / "gui.endf"))
 
 
-# ---------- H6/H7: every iel must export and import ----------
+# ---------- every iel must export and import ----------
 
 def test_export_classic_iel0_runs_engine(app, tmp_path):
     _reset(app)
-    text = app._generate_input_text()      # NameError before the fix
+    text = app._generate_input_text()
     assert "0 0 0 0 0 /" in text           # Card 6: no secondary
     _run_engine(text, tmp_path)
 
@@ -117,7 +113,7 @@ def test_import_classic_deck_populates_fields(app, tmp_path):
         "0.99917 20.449 2 0 0 0/\n0/\n3 4 1/\n"
         "0.05 1.0 8.0/\n0.0 0.6 2.0 6.0/\n300/\n0.005 6/\n"
         "0.0 0.20 0.45 0.55 0.30 0.0/\n0. 0. 1./\n0/\n/\n")
-    summary = app._import_leapr_from_path(str(deck))   # NameError before fix
+    summary = app._import_leapr_from_path(str(deck))
     assert "iel=0" in summary
     assert app.npr.get() == "2"
     assert app._code(app.iel_var) == 0
@@ -142,7 +138,7 @@ def test_iint_default_and_linlin_export_and_roundtrip(app, tmp_path):
     assert "0 0 1e-75 1 /" in app._generate_input_text()
 
 
-# ---------- H8/H9: secondary scatterer ----------
+# ---------- secondary scatterer ----------
 
 def test_secondary_free_gas_roundtrip(app, tmp_path):
     _reset(app)
@@ -223,7 +219,7 @@ def test_two_pass_without_secondary_spectrum_refused(app):
         app._generate_input_text()
 
 
-# ---------- H11: ncold/nsk need Cards 17-19 ----------
+# ---------- ncold/nsk need Cards 17-19 ----------
 
 def test_skold_exports_cards_17_18_19_and_roundtrips(app, tmp_path):
     _reset(app)
@@ -266,7 +262,7 @@ def test_ncold_emits_skappa_but_no_cfrac(app):
     assert lines[i17 + 2] == "/"
 
 
-# ---------- #30: multi-positive-temperature decks refused ----------
+# ---------- multi-positive-temperature decks refused ----------
 
 def test_multi_positive_temperature_import_refused(app, tmp_path):
     _reset(app)
@@ -281,7 +277,7 @@ def test_multi_positive_temperature_import_refused(app, tmp_path):
         app._import_leapr_from_path(str(deck))
 
 
-# ---------- #29 + #32 + mode-1/2 validation (iel=10) ----------
+# ---------- mode-1/2 validation (iel=10) ----------
 
 def _setup_iel10(app):
     app.iel_var.set("10 — Generalized (crystal structure)")
@@ -459,9 +455,7 @@ def test_oscillator_mismatch_rejected(app, secondary, energies, weights, match):
 def test_reset_defaults_match_production_recommendation(app):
     """The reset/fresh-form sampling defaults must be the documented
     recommended production sampling (Card 6g '10000 1000 1', mesh 40^3,
-    the validation-campaign sampling and the `irma mlip emit` sampling) --
-    the pre-0.17 defaults (ndir=5000, mesh 20^3, Auto-size OFF with
-    nphon=100) were the manual's own documented high-Q truncation case.
+    the validation-campaign sampling and the `irma mlip emit` sampling).
     LAT must match the builder default (1) too."""
     _reset(app)
     app._reset_form_to_defaults()
@@ -623,12 +617,12 @@ def test_extinction_dist_dropdown_restricted_to_model_family(app):
 def test_switching_to_a_phonopy_mode_clears_the_special_modes(app):
     """Hiding the sections CLEARS them, so the invalid state is unreachable.
 
-    Before: nsk set in mode 0 survived the switch to mode 2 invisibly and
-    Run failed with 'ncold/nsk pair-correlation options are not available
-    with inelastic_mode=1/2' -- pointing at a control that was off screen.
-    The refusal is correct physics and stays (Skold corrects the incoherent
-    approximation, which modes 1/2 do not use); the fix is to clear the
-    values when the section goes away.
+    Otherwise nsk set in mode 0 would survive the switch to mode 2 unseen,
+    and Run would fail with 'ncold/nsk pair-correlation options are not
+    available with inelastic_mode=1/2', pointing at a control that is off
+    screen. The refusal is correct physics (Skold corrects the incoherent
+    approximation, which modes 1/2 do not use), so the values are cleared
+    when the section goes away.
     """
     _reset(app)
     app.nsk.set("2 — Skold")

@@ -1,10 +1,10 @@
-"""irma.gui.runner (P7) -- generic subprocess runner + cancel-kills-workers.
+"""irma.gui.runner -- generic subprocess runner and cancel.
 
 The runner runs the calculation out-of-process in its own process group so a
 single killpg tears down the engine's ProcessPoolExecutor workers. These tests
 exercise the generic command path, exit-code -> message mapping, the LEAPR
-argv adapter, and -- the P7 gate -- that cancel() actually terminates
-forked worker processes (not just the parent).
+argv adapter, and that cancel() terminates the forked worker processes, not
+just the parent.
 """
 import os
 import sys
@@ -92,6 +92,8 @@ def test_second_run_ignored_while_running():
                   success_msg="second")   # must be ignored
     assert ev.wait(20)
     assert done["msg"] == "first"
+    time.sleep(0.3)                             # a queued run would print now
+    assert "second" not in [ln.strip() for ln in logs]
 
 
 # ---- argv adapters ----------------------------------------------------------
@@ -146,10 +148,10 @@ def test_cancel_terminates_forked_workers():
 # ---- shutdown reaping -------------------------------------------------------
 @pytest.mark.skipif(os.name != "posix", reason="process-group kill is POSIX")
 def test_shutdown_reaps_child_before_returning(monkeypatch):
-    """S8 gap 3: at GUI exit a plain cancel() delegates the SIGTERM->SIGKILL
+    """At GUI exit a plain cancel() would leave the SIGTERM->SIGKILL
     escalation to a daemon thread that dies with the interpreter, stranding
-    the detached session-leader child. shutdown() must run the escalation on
-    the calling thread and only return once the child is gone -- even when the
+    the detached session-leader child. shutdown() runs the escalation on the
+    calling thread and returns only once the child is gone, even when the
     child ignores SIGTERM (forcing the SIGKILL escalation)."""
     import irma.gui.runner as runner_mod
     monkeypatch.setattr(runner_mod, "_KILL_GRACE_SECONDS", 0.3)  # fast escalation
@@ -174,7 +176,7 @@ def test_shutdown_reaps_child_before_returning(monkeypatch):
     assert _wait(lambda: not r.is_running, 10)
 
 
-# ---- #8: a "success" that wrote no (or an empty) output file is a failure ----
+# ---- a "success" that wrote no (or an empty) output file is a failure --------
 def test_output_problem_when_empty(tmp_path):
     out = tmp_path / "empty.endf"
     out.write_text("")
@@ -203,7 +205,7 @@ def test_run_command_success_with_written_output_passes(tmp_path):
     assert done["ok"] is True and done["msg"] == "ok"
 
 
-# ---- #12: phase markers extracted from streamed child log lines --------------
+# ---- phase markers extracted from streamed child log lines -------------------
 def test_phase_from_log_line_extracts_markers():
     pytest.importorskip("tkinter")
     from irma.gui.endf_form import _phase_from_log_line as phase

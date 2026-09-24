@@ -160,7 +160,7 @@ def test_build_command_jitter_cycles(panel):
 
 
 def test_emit_command_deck_and_ncrystal_selectors(panel, tmp_path):
-    """SPG-4: --inelastic-mode / --elastic-format / --material-id are
+    """--inelastic-mode / --elastic-format / --material-id are
     selectable from the panel ('default' omits the flag; explicit values are
     forwarded), and the argv parses on the real CLI surface."""
     panel.bundle.set(str(tmp_path))
@@ -202,10 +202,10 @@ def test_emit_command_deck_and_ncrystal_selectors(panel, tmp_path):
 def test_emit_argv_drops_fields_the_targets_do_not_read(panel, tmp_path):
     """Hidden fields are neither validated nor forwarded.
 
-    Filling the ENDF/NCrystal fields and then narrowing the targets used to
-    leave the stale values in the argv: an NCrystal-only emit carried
-    --mat/--inelastic-mode/--elastic-format, from rows the user could no
-    longer see. The spectra target has no scoped field of its own, so a
+    Filling the ENDF/NCrystal fields and then narrowing the targets must not
+    leave the stale values in the argv: an NCrystal-only emit must not carry
+    --mat/--inelastic-mode/--elastic-format from rows the user can no longer
+    see. The spectra target has no scoped field of its own, so a
     spectra-only emit must carry none of them.
     """
     panel.bundle.set(str(tmp_path))
@@ -432,8 +432,8 @@ def test_energy_dependent_species_opens_its_own_row(panel, tmp_path):
 
     Gd's tabulated scattering length is a resonance-region value; the CLI
     refuses to prefill it, and because the cross-target preflight resolves
-    species before publishing anything, a failed emit used to leave no
-    files to edit afterwards. Here the row opens itself instead.
+    species before publishing anything, a failed emit leaves no files to
+    edit afterwards. So the row opens itself instead.
     """
     panel.bundle.set(_write_bundle_yaml(tmp_path, [("Gd", 157.25),
                                                    ("O", 15.999)]))

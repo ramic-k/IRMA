@@ -96,9 +96,8 @@ def test_bad_number_names_the_field(form, explicit, match):
 def test_auto_grid_defaults_single_source(root):
     """The seven auto-grid knobs must carry the SAME defaults on the ENDF
     Evaluation grid tab, the NCrystal panel form, and the export config --
-    all traced to irma.core.grids.AUTO_GRID_DEFAULTS (the one place to
-    change them). Guards against the drift the n_upper 20->80 change had
-    to chase across files."""
+    all read from irma.core.grids.AUTO_GRID_DEFAULTS, the one place to
+    change them."""
     import dataclasses
 
     from irma.core.grids import AUTO_GRID_DEFAULTS
