@@ -2,8 +2,8 @@
 
 A thin controller for IRMA's third capability: exporting the per-temperature
 NCrystal scattering data (``.irmapack`` files + a ``@CUSTOM_IRMA`` NCMAT snippet)
-that wire an IRMA mode-2 (coherent one-phonon + anisotropic Debye-Waller)
-calculation into NCrystal. It collects inputs into an
+that wire an IRMA mode-1 or mode-2 calculation (anisotropic Debye-Waller; mode 2
+adds the coherent one-phonon term) into NCrystal. It collects inputs into an
 :class:`~irma.ncrystal.NCrystalExportConfig` and runs ``irma.ncrystal.write_packs``
 -- it reimplements no export logic.
 
@@ -39,12 +39,9 @@ from irma.spectra.config import SpectraConfigError
 _INELASTIC_LABELS = ["2 (coherent 1ph + multi)", "1 (incoherent approx)"]
 _INELASTIC_BY_INT = {1: "1 (incoherent approx)", 2: "2 (coherent 1ph + multi)"}
 
-# The export keys this form OWNS: every key ``build_config`` can write, i.e.
-# every one with a control on the panel (the grid form names its own). The
-# remaining NCrystalExportConfig fields -- gain_side, elastic,
-# coherent_partition_mode, lat -- have no widget here, so a
-# loaded config's values for them are carried through untouched rather than
-# silently reset to the dataclass defaults on the next Export. See
+# The export keys with a control on this panel (the grid form names its own).
+# The other NCrystalExportConfig fields (gain_side, elastic,
+# coherent_partition_mode, lat) are carried from a loaded config; see
 # ``_unrepresented_export``.
 FORM_EXPORT_KEYS = frozenset(
     {"material_id", "inelastic_mode", "num_directions",
@@ -56,20 +53,10 @@ _SCATTERER_KEYS = ("sigma_bound_b", "awr", "b_coh_fm", "sigma_inc_b")
 
 
 def _unrepresented_export(cfg):
-    """Loaded export settings this form has no control for, and cannot show.
-
-    ``irma mlip emit`` writes ``gain_side``, ``elastic`` and
-    ``coherent_partition_mode`` into every ``ncrystal.yaml``, and the panel
-    exposes none of them. Rebuilding the config from the widgets alone would
-    quietly rewrite them to the dataclass defaults -- turning
-    ``coherent_partition_mode: auto`` into ``principal-xs-weighted`` (a
-    DIFFERENT partition on a single-group material) or ``elastic: false``
-    back on -- so the loader keeps them and ``build_config`` merges them back.
-
-    Only values that DIFFER from the config default are carried: a file that
-    just spells out a default needs nothing carried, and the panel reports
-    exactly the settings a reader of the form would otherwise not know about.
-    """
+    """Loaded export settings with no control on this form (for example
+    ``coherent_partition_mode`` and ``elastic``, which ``irma mlip emit``
+    writes), carried so Export does not reset them to the defaults. Only
+    values that differ from the default are carried."""
     carried = {}
     for field in dataclasses.fields(NCrystalExportConfig):
         if field.name == "material" or field.name in FORM_EXPORT_KEYS:
@@ -82,16 +69,16 @@ def _unrepresented_export(cfg):
 
 
 # ---------------------------------------------------------------------------
-# Per-field help text (the '?' buttons). Each explains what the field is, its
+# Per-field help text (the 'i' help icons). Each explains what the field is, its
 # units, how to choose it, and what the pre-filled default means.
 # ---------------------------------------------------------------------------
 HELP = {
     "phonopy_yaml": (
-        "The phonopy.yaml from your phonon calculation. Use the FULL file that "
+        "The phonopy.yaml from your phonon calculation. Use the full file that "
         "carries the supercell and force-constant context (the one phonopy "
-        "writes alongside FORCE_CONSTANTS/FORCE_SETS), NOT a primitive-cell "
+        "writes alongside FORCE_CONSTANTS/FORCE_SETS), not a primitive-cell "
         "mesh.yaml dump.\n\nIt defines the lattice, the atom positions, and the "
-        "force constants that the mode-2 engine evaluates. Required."),
+        "force constants that the engine evaluates. Required."),
     "born": (
         "Optional BORN file (Born effective charges plus dielectric tensor). It "
         "adds the non-analytical LO-TO splitting at the zone "
@@ -114,31 +101,31 @@ HELP = {
         "gives a smoother result at more cost (cost scales as nx*ny*nz). The "
         "default, 40 40 40, is the validation-suite production density."),
     "temperature": (
-        "Sample temperature in Kelvin. ONE config covers ONE temperature and "
+        "Sample temperature in Kelvin. One config covers one temperature and "
         "writes one NCrystal data file (.irmapack) per principal scatterer "
         "(each distinct element in the material). Re-run at each temperature for a "
         "multi-temperature deployment.\n\nDefault 296 K (room temperature)."),
     "scatterers": (
-        "One row per DISTINCT element in your phonopy.yaml. Each species in the "
+        "One row per distinct element in your phonopy.yaml. Each species in the "
         "structure must have a matching row.\n\nColumns:\n"
         "  Sym            element symbol; must match the atoms in phonopy.yaml.\n"
         "  sigma_bound_b  bound scattering cross section [barn]; normalizes the "
-        "S(alpha,beta) table. REQUIRED.\n"
+        "S(alpha,beta) table. Required.\n"
         "  AWR            atomic weight ratio A = M/m_n. Sets the recoil and "
         "Debye-Waller mass (blank = derived from the phonopy mass).\n"
         "  b_coh_fm       coherent scattering length [fm] (can be < 0); drives "
         "the coherent Bragg edges. Needed for the coherent elastic line.\n"
         "  sigma_inc_b    incoherent bound cross section [barn]; drives the "
         "incoherent elastic Debye-Waller line.\n\n"
-        "The table starts with one EMPTY row on purpose -- the scatterers "
-        "are your material's identity, which IRMA cannot guess; typing a "
+        "The table starts with one empty row on purpose: the scatterers "
+        "are your material's identity, which IRMA cannot guess. Typing a "
         "symbol and leaving the cell autofills the blank columns from "
         "IRMA's built-in nuclear table (Rauch-Waschkowski/Sears)."),
     "material_id": (
         "Identifier stamped into the output filenames and the NCMAT snippet "
         "(data files are written as '<material_id>__<symbol>.irmapack'). Required."),
     "inelastic_mode": (
-        "Fidelity of the mode-2 inelastic export. Inelastic scattering "
+        "Physics level of the inelastic export. Inelastic scattering "
         "exchanges energy with the lattice vibrations (phonons).\n\n"
         "  2 (default): exact coherent one-phonon dispersion plus the "
         "multiphonon "
@@ -148,11 +135,11 @@ HELP = {
         "incoherent-approximation multiphonons); cheaper."),
     "num_directions": (
         "Number of golden-spiral directions used to powder-average the "
-        "ONE-phonon term (averaged over crystal "
+        "one-phonon term (averaged over crystal "
         "orientations).\n\nDefault 10000 (the validation-campaign value). Cost is "
         "roughly linear in this number; drop to about 4000 for a faster look."),
     "multiphonon_num_directions": (
-        "Number of powder-average directions for the MULTIPHONON background. "
+        "Number of powder-average directions for the multiphonon background. "
         "Each direction is cheaper here than in the one-phonon term.\n\nDefault "
         "1000; converged by about 50-100 directions, so the default carries "
         "ample margin."),
@@ -160,13 +147,13 @@ HELP = {
         "Highest multiphonon order summed in the background. The order is the "
         "number of lattice vibrations exchanged in one scattering event.\n\n"
         "Default 'auto': the order is convergence-sized to the recoil tail at "
-        "high Q (momentum transfer), which is recommended: the anisotropic "
-        "Debye-Waller order required to reach the free-gas limit grows with Q. "
+        "high Q (momentum transfer), which is recommended: the multiphonon "
+        "order needed to reach the free-gas limit grows with Q. "
         "Enter an integer to set the order exactly (lower = faster, but a "
         "too-low value truncates the high-Q cross section)."),
     "min_phonon_energy": MIN_PHONON_ENERGY_HELP,
     "incoherent_elastic_mode": (
-        "Debye-Waller treatment of the pack's INCOHERENT elastic "
+        "Debye-Waller treatment of the pack's incoherent elastic "
         "component.\n\n"
         "  isotropic (default): the plugin collapses each site's displacement "
         "tensor to its trace/3 scalar (NCrystal's standard model).\n"
@@ -179,7 +166,7 @@ HELP = {
     "jobs": (
         "Number of worker processes for the parallel direction/shell sums.\n\n"
         "Default: blank = every CPU core on this machine. Enter a number to "
-        "cap it -- lower it when memory is tight (each worker holds its own "
+        "cap it; lower it when memory is tight (each worker holds its own "
         "copy of the phonon arrays) or to leave cores for other work; 1 runs "
         "serially."),
     "outdir": (
@@ -188,12 +175,11 @@ HELP = {
         "are written (created if absent). Required."),
 }
 
-# The scatterer list is MATERIAL IDENTITY: a prefilled carbon row is IRMA
-# asserting a material it cannot know, and a plausible-but-wrong row survives
-# review far more easily than an empty one. The export settings below it
-# (mesh, directions, grid) are methodology and stay prefilled.
+# The scatterer list is the material's identity, which IRMA cannot know, and
+# a plausible but wrong prefilled row is easy to miss, so it starts empty. The
+# export settings below it (mesh, directions, grid) stay prefilled.
 IDENTITY_HINT_SCATTERERS = (
-    "Blank on purpose — the scatterers describe YOUR material, and must be "
+    "Blank on purpose: the scatterers describe your material, and must be "
     "the species of the phonopy.yaml above. Type a symbol and the nuclear "
     "constants autofill from the built-in table.")
 
@@ -248,8 +234,8 @@ class NCrystalPanel(RunPanel):
         self.element_table = ElementTable(g)
         self.element_table.set_visible(NUCLEAR)
         self.element_table.pack(fill=tk.X, pady=2)
-        # One EMPTY row: the scatterer list is the user's material, so IRMA
-        # asserts nothing about it. Typing a symbol and leaving the cell fills
+        # One empty row: the scatterer list is the user's material, so IRMA
+        # prefills nothing. Typing a symbol and leaving the cell fills
         # the nuclear constants from the built-in table (see autofill_row).
         self.element_table.add_row()
 
@@ -347,9 +333,8 @@ class NCrystalPanel(RunPanel):
         material["scatterers"] = scat
 
         mpo = self.multiphonon_max_order.get().strip()
-        # Settings a loaded config carried that this form has no control for
-        # go in FIRST, so anything the widgets own still wins (by construction
-        # the two key sets are disjoint -- see FORM_EXPORT_KEYS).
+        # Settings carried from a loaded config go in first; the two key sets
+        # are disjoint (see FORM_EXPORT_KEYS).
         export = dict(self._carried_export)
         export.update({
             "material_id": self.material_id.get().strip(),
@@ -388,19 +373,12 @@ class NCrystalPanel(RunPanel):
     # ---------------------------------------------------------------- load ---
     @staticmethod
     def _set_constant(row, key, value):
-        """Put ONE nuclear constant into a freshly autofilled scatterer row.
+        """Put one nuclear constant into a freshly autofilled scatterer row.
 
-        The row arrives with the built-in table's values in place and recorded
-        as machine-filled (``autofill_row``), which is the state typing the
-        symbol into an empty row produces. A config value equal to the table's
-        is therefore left exactly as the autofill wrote it, provenance intact,
-        so a later symbol edit refreshes it instead of carrying the old
-        element's constants; a value that differs overwrites the machine
-        string and thereby reads as user data, which is what it is. Compared
-        numerically, so 5.551 from the file and '5.551' from the table match
-        whatever either side's formatting is. ``None`` (the config omitted the
-        field, e.g. awr derived from the phonopy mass) clears the cell, so the
-        next build omits it again.
+        A config value numerically equal to the table value keeps the autofill
+        record, so a later symbol edit still refreshes it; a different value
+        overwrites it as user data. ``None`` (omitted in the config) clears the
+        cell, so the next build omits it again.
         """
         var = row["_var"][key]
         if value is None:
@@ -423,18 +401,10 @@ class NCrystalPanel(RunPanel):
                 self._set_constant(row, key, getattr(s, key))
 
     def load_config(self, cfg):
-        """Populate every widget from an :class:`NCrystalExportConfig`.
-
-        The inverse of :meth:`build_config`, field for field: anything that
-        method writes, this one reads back, so an exported config -- or an
-        ``ncrystal.yaml`` from ``irma mlip emit`` -- round-trips through the
-        form. Settings with no control here are carried instead (see
-        :func:`_unrepresented_export`).
-
-        Total by construction: it only formats values off an already-validated
-        config, so it cannot fail halfway and leave a half-loaded form. The
-        caller validates FIRST (``from_yaml``) and calls this only on success.
-        """
+        """Populate every widget from an :class:`NCrystalExportConfig`, the
+        inverse of :meth:`build_config`; settings with no control are carried
+        (see :func:`_unrepresented_export`). The caller validates the config
+        with ``from_yaml`` first, so this cannot fail halfway."""
         m = cfg.material
         load_phonopy_fields(self, m)
         self.temperature.set(m.temperature_K)
@@ -456,14 +426,9 @@ class NCrystalPanel(RunPanel):
 
     # -------------------------------------------------------------- actions --
     def _open_config(self):
-        """Load an NCrystal exporter config YAML into the form.
-
-        Parsed by the EXPORTER's own loader, so the form can never accept a
-        config the export would reject and the two cannot drift apart. A
-        cancelled dialog, an unreadable file, or a config the exporter refuses
-        changes NOTHING: the config is fully validated before the first widget
-        is touched, so there is no partial application to undo.
-        """
+        """Load an NCrystal exporter config YAML into the form. The file is
+        validated by the exporter's own loader before any widget changes, so
+        a rejected config leaves the form as it was."""
         path = filedialog.askopenfilename(
             filetypes=[("NCrystal export config", "*.yaml *.yml"),
                        ("All files", "*.*")])
