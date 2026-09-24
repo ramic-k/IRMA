@@ -225,9 +225,10 @@ def test_driver_flags_uniform_for_identical_tensors():
 
 
 def test_driver_flags_uniform_through_eigensolver_bit_noise():
-    """Symmetry-equivalent sites carry ~1e-16 noise in symmetry-forbidden
-    tensor elements; that must NOT kick the material off the byte-pinned
-    species-averaged fast path (the graphite/Be/BeO goldens depend on it)."""
+    """Equivalent uniaxial sites (graphite, Be, BeO) carry ~1e-16 eigensolver
+    noise in tensor elements their symmetry makes zero; that must not move
+    the material off the byte-pinned species-averaged fast path, which the
+    graphite/Be/BeO goldens depend on."""
     from irma.core.driver import _store_directional_species_dw
     ci = _driver_crystal_info([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]])
     F = np.diag([1.0, 2.0, 3.0])
