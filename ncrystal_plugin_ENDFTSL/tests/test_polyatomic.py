@@ -34,13 +34,16 @@ def test_build_packs_rejects_bad_fractions(specs, match):
 
 def test_fraction_weighting_recovers_per_atom_all_channels():
     ev = read_tsl(str(TAPE))
-    single = build_pack(ev, 296.0, "g", 12.0107)  # default species_fraction=1.0
+    single = build_pack(ev, 296.0, "g", 12.0107)  # default scales of 1
     assert single.coh_cumS, "fixture tape must carry coherent Bragg edges"
     packs = build_packs(_specs(0.5, 0.5), 296.0, "g2")
     assert len(packs) == 2
     for pk in packs:
         # inelastic (bound_xs) is fraction-weighted -> per-atom after summing
         assert math.isclose(pk.bound_xs_barn, 0.5 * single.bound_xs_barn, rel_tol=1e-12)
+        # incoherent elastic is fraction-weighted the same way
+        assert math.isclose(pk.elastic_incoherent_xs_barn,
+                            0.5 * single.elastic_incoherent_xs_barn, rel_tol=1e-12)
         # coherent Bragg edges are fraction-weighted
         assert len(pk.coh_cumS) == len(single.coh_cumS)
         for scaled, raw in zip(pk.coh_cumS, single.coh_cumS):

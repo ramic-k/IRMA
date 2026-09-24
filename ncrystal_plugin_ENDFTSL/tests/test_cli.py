@@ -84,7 +84,7 @@ def test_cli_config_valid_polyatomic_one_pack_per_species(tmp_path):
         assert str(p.resolve()) in ln
 
 
-# ---- reviews IO-1 + CLI-1c: args validated before work; clean boundaries ---
+# ---- arguments are validated before any work; clean exit codes ----
 
 def test_cli_density_zero_exits_2_before_writing_anything(tmp_path, capsys):
     rc = main([str(TAPE), "-o", str(tmp_path / "out"), "--symbol", "C",
@@ -92,7 +92,7 @@ def test_cli_density_zero_exits_2_before_writing_anything(tmp_path, capsys):
     assert rc == 2
     err = capsys.readouterr().err
     assert "density" in err and "Traceback" not in err
-    assert not (tmp_path / "out").exists()      # NOTHING was written
+    assert not (tmp_path / "out").exists()      # nothing was written
 
 
 def test_cli_missing_tape_exits_3_cleanly(tmp_path, capsys):
