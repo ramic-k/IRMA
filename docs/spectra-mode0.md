@@ -15,9 +15,8 @@ Mode 0 is the lightweight end of the range. It runs the same
 incoherent-approximation phonon expansion LEAPR (NJOY's standard thermal
 scattering law module) uses, straight from a phonon
 density of states (DOS), with no eigenvectors and without the mode-1/2
-engine. It is the right choice when the material is hydrogen-rich,
-incoherent, or disordered, where the incoherent approximation is already
-excellent and hydrogen dominates the signal; when a DOS is all you have,
+engine. It is the right choice for hydrogen-rich or disordered materials,
+where the incoherent approximation holds well; when a DOS is all you have,
 whether from molecular dynamics (via the velocity autocorrelation function),
 from a measurement, or from a quick calculation; or when you want a fast
 survey before committing to a full mode-1/2 run. It does not capture
@@ -32,19 +31,21 @@ Each element scatters by its own partial DOS, mass, and Debye-Waller factor;
 the result is the cross-section- and multiplicity-weighted per-atom average
 
 $$
-\frac{d^2\sigma}{d\Omega\,dE'}(Q,E)=\frac{1}{N}\sum_d m_d\,\frac{\sigma_d}{4\pi}\,
+\mathcal{S}(Q,E)=\frac{1}{N}\sum_d m_d\,\frac{\sigma_d}{4\pi}\,
 e^{-2W_d(Q)}\,[\text{expansion of }\rho_d],\qquad
 \alpha_d=\frac{C_E\,Q^2}{A_d\,k_BT},
 $$
 
-with $C_E$ the α-conversion constant ($\hbar^2/2m_n$), $A_d$ the atomic
+where $\mathcal{S}(Q,E)$, in barn/sr/meV, is the double-differential cross
+section $d^2\sigma/d\Omega\,dE'$ without its $k_f/k_i$ factor (the
+`kinematic_kf_ki` option multiplies it in), $C_E$ is the α-conversion constant ($\hbar^2/2m_n$), $A_d$ the atomic
 weight ratio, $m_d$ the multiplicity, and $N=\sum_d m_d$ the atoms per
 cell. The $1/N$ makes the absolute scale
 per represented atom (per atom of the cell included in the calculation),
 the same normalization as `inelastic_mode` 1 and 2 (the
 eigenvector engine also normalizes per represented atom), so a mode-0 and a
-mode-1/2 spectrum are directly comparable. Hydrogen is never blended away
-into a single effective spectrum.
+mode-1/2 spectrum are directly comparable. Each element keeps its own
+partial DOS; species are never merged into one effective spectrum.
 
 ## Where the DOS comes from (`dos_source`)
 
