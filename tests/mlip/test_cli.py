@@ -74,6 +74,8 @@ def test_build_validate_emit_end_to_end(al_poscar, tmp_path, capsys):
     assert rec["elastic_format"] == "mef"          # the omitted-flag default
     m = json.load(open(os.path.join(outdir, "manifest.json")))
     assert m["calculator"]["dev_backend"] is True
+    assert m["input"]["args"]["argv"].startswith(f"irma mlip build {al_poscar} -o ")
+    assert "emitted inputs use the phonon mesh" in out
 
     assert main(["emit", outdir, "--to", "oclimax"]) == 2
     assert "unknown emit target" in capsys.readouterr().err
@@ -247,3 +249,16 @@ def test_uncovered_element_is_refused_before_relaxation(tmp_path, monkeypatch,
     err = capsys.readouterr().err
     assert "covers H C" in err and "contains Cu" in err
     assert not (tmp_path / "b").exists()
+
+
+def test_keyerror_message_names_its_type(monkeypatch, capsys):
+    """A KeyError or TypeError is still exit 2, but its message names the
+    type: a bare "'fingerprint'" says nothing."""
+    import irma.mlip.cli as cli
+
+    def boom(args):
+        raise KeyError("fingerprint")
+    monkeypatch.setattr(cli, "_cmd_validate", boom)
+    assert main(["validate", "whatever"]) == 2
+    assert "KeyError: 'fingerprint'" in capsys.readouterr().err
+
