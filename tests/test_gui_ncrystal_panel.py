@@ -276,7 +276,8 @@ def _fill(panel):
     panel.mesh.set("30 30 24")
     panel.temperature.set("500")
     panel.material_id.set("beo")
-    panel.inelastic_mode.set(panel._INELASTIC_BY_INT[1])
+    from irma.gui.ncrystal_panel import _INELASTIC_BY_INT
+    panel.inelastic_mode.set(_INELASTIC_BY_INT[1])
     panel.num_directions.set("4000")
     panel.multiphonon_num_directions.set("200")
     panel.multiphonon_max_order.set("120")

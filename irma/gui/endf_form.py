@@ -1076,7 +1076,6 @@ class EndfFormMixin:
             format_atom_row, nuclide_label, principal_row_match, relabel_row,
             row_constants_match_table, split_za)
         from irma.core.nuclear_data import lookup
-        from irma.gui.deck_text import parse_atoms_text
         za_text = str(self.za.get()).strip()
         if not za_text:
             messagebox.showerror(
