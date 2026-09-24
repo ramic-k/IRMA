@@ -1,4 +1,4 @@
-"""Format round-trip + validation guards for the .irmapack container (SP1).
+"""Format round-trip + validation guards for the .irmapack container.
 
 Pure/fast: no engine, no phonopy.
 """

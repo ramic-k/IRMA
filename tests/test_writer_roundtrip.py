@@ -230,7 +230,7 @@ def test_mf1_header_fields_land_in_spec_columns():
 
 def test_tape_contains_no_carriage_returns(principal_run):
     """Tapes must be LF-only on every platform: a CRLF tape written on
-    Windows is no longer byte-identical to the NJOY references."""
+    Windows would not be byte-identical to the NJOY references."""
     with open(principal_run[0], "rb") as f:
         data = f.read()
     assert data.count(b"\n") > 50               # sanity: a real multi-line tape

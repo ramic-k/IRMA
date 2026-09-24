@@ -1,4 +1,4 @@
-"""Integration (reference) tests for the IRMA→NCrystal exporter (SP1).
+"""Integration (reference) tests for the IRMA→NCrystal exporter.
 
 Slow: runs the mode-2 engine on tiny grids. Gated on phonopy + the bundled
 graphite/BeO phonopy fixtures. The core assertion is ENGINE-OUTPUT-EQUALITY: the
@@ -52,7 +52,7 @@ def _graphite_cfg(**over):
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
 def test_graphite_single_pack_engine_equality(tmp_path):
     cfg = _graphite_cfg()
-    packs, snippet = build_packs(cfg, progress=lambda *a: None)
+    packs, ncmat = build_packs(cfg, progress=lambda *a: None)
     assert len(packs) == 1
     pack = packs[0]
     assert pack.material_id == "graphite__C"
@@ -223,11 +223,11 @@ def test_freq_max_auto_estimated_from_phonopy():
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
 @pytest.mark.skipif(not _BEO_YAML.exists(), reason="BeO fixture absent")
 def test_beo_two_packs_summed(tmp_path):
-    packs, snippet = build_packs(_beo_cfg(), progress=lambda *a: None)
+    packs, ncmat = build_packs(_beo_cfg(), progress=lambda *a: None)
     assert len(packs) == 2
     ids = {p.material_id for p in packs}
     assert ids == {"beo__Be", "beo__O"}
-    # exactly one pack carries the coherent Bragg (double-count-free, see D1)
+    # exactly one pack carries the coherent Bragg, so it is not counted twice
     coherent = [p for p in packs if p.elastic_u_tensors_a2]
     assert len(coherent) == 1
     # both packs are valid precomputed_sab kernels on the same grid
@@ -235,7 +235,7 @@ def test_beo_two_packs_summed(tmp_path):
         assert p.backend == "precomputed_sab"
         assert p.beta_grid[0] == 0.0
         assert len(p.sab_values) == len(p.alpha_grid) * len(p.beta_grid)
-    assert snippet.count("pack ") == 2
+    assert ncmat.count("pack ") == 2
     # per-atom normalization: each pack's inelastic bound_xs is its species
     # sigma_bound scaled by the atom fraction (BeO is 1:1 -> 0.5 each), so the
     # plugin's weight-1.0 pack sum is per-atom-average, not per-formula-unit.
@@ -271,7 +271,7 @@ def _beo_cfg(**over):
 @pytest.mark.skipif(not _GRAPHITE_YAML.exists(), reason="graphite fixture absent")
 @pytest.mark.skipif(not _BEO_YAML.exists(), reason="BeO fixture absent")
 def test_exact_total_multigroup_rejected():
-    # H3: 'exact-total' on a 2-species export would give every pack the whole-
+    # 'exact-total' on a 2-species export would give every pack the whole-
     # crystal coherent total and double-count it on summation. Must be rejected.
     cfg = _beo_cfg(coherent_partition_mode="exact-total")
     with pytest.raises(ValueError, match="exact-total"):
@@ -288,8 +288,8 @@ def test_inelastic_only_pack_has_a_kernel_and_no_elastic_block(tmp_path):
 
 
 def test_extra_scatterer_row_is_an_error():
-    """A scatterer for a species the structure lacks used to be SILENTLY
-    ignored (review NC-2)."""
+    """A scatterer for a species the structure lacks is an error, not
+    silently ignored."""
     from irma.ncrystal.build import resolve_principal_groups
     d = {
         "material": {
