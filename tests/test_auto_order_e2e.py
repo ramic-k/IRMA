@@ -1,9 +1,8 @@
 """End-to-end check that Card 6g auto_multiphonon_order=1 raises the
 multiphonon order above the deck's nphon and changes the MT4 law, on the
 vendored graphite phonopy model with a tiny configuration (mesh 4^3,
-ndir=40, mpdir=20, 6 alpha x 8 beta, nphon=2). A phonopy-free test of
-derive_required_multiphonon_order keeps the order formula covered on
-runners without phonopy.
+ndir=40, mpdir=20, 6 alpha x 8 beta, nphon=2). The order formula itself is
+tested without phonopy in test_multiphonon_order.py.
 """
 import io
 import math
@@ -12,11 +11,7 @@ import re
 import tempfile
 import contextlib
 
-import numpy as np
 import pytest
-
-# Pure formula-path coverage needs no phonopy.
-from irma.core.noncubic_engine import derive_required_multiphonon_order  # noqa: E402
 
 _YAML = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "mode2_euphonic_n1_validation", "graphite",
@@ -50,21 +45,6 @@ _DECK = """20 /
 _DECK_NPHON = 2
 _AUTO_LOG_RE = re.compile(
     r"auto-sizing order\s+(\d+)\s*->\s*(\d+)")
-
-
-def test_derive_required_multiphonon_order_raises_above_requested():
-    """Pure (no-phonopy) coverage of the order-formula path the e2e
-    auto-size branch consumes: a low requested order is raised to the
-    required order on a soft (graphite-c-axis-like) anisotropic tensor."""
-    U = np.array([np.diag([0.005, 0.005, 0.011])])   # u_max = 0.011 Angstrom^2
-    q_max = 46.7                                      # work-grid Q_max (tiny deck)
-    effective, required, two_w, u_max = derive_required_multiphonon_order(
-        q_max, U, requested_order=_DECK_NPHON)
-    assert math.isclose(u_max, 0.011)
-    assert math.isclose(two_w, q_max * q_max * 0.011)
-    assert required > _DECK_NPHON                      # formula demands more
-    assert effective == required                       # raised to the requirement
-    assert effective > _DECK_NPHON                      # ... above the deck order
 
 
 # ---------------------------------------------------------------------------
