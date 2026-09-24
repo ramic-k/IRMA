@@ -20,7 +20,7 @@ class InelasticLaw:
 
 def _interp_T(temps, columns, T):
     """lin-lin interpolate a per-temperature column list to T. Raises if T is
-    outside the stored grid (spec §10: never silently extrapolate).
+    outside the stored grid (never extrapolate).
     `columns[i]` is the data vector at temperature temps[i]. Returns a vector."""
     ts = [float(t) for t in temps]
     tol = 1e-6 * max(1.0, abs(ts[-1]))
@@ -51,9 +51,9 @@ def incoherent_msd(ev, T):
     # MF7/MT2 stores SB = sigma_inc_bound * npr (per molecule), parallel to
     # MT4 B(1)=npr*sigma_free; the inelastic bound_xs divides B(1) by npr (per atom),
     # so divide SB by npr too for a consistent per-atom incoherent-elastic xs.
-    # LTHR=3 (mixed elastic) follows the SAME molecular convention: the IRMA MEF
-    # writer stores SB = per-principal x npr like the classic and SEF/CEF writers
-    # (resolved in the IRMA pre-release review), so the division is uniform.
+    # LTHR=3 (mixed elastic) follows the same molecular convention: the IRMA MEF
+    # writer stores SB = per-principal x npr like the classic and SEF/CEF
+    # writers, so the division is uniform.
     npr = float(ev.b_array[6]) if len(ev.b_array) > 6 and ev.b_array[6] > 0 else 1.0
     sb /= npr
     return Wp * HBAR2_OVER_2MN_EV_A2, sb
@@ -67,15 +67,16 @@ def physical_inelastic(ev, T) -> InelasticLaw:
             "is not supported")
     if ev.lasym in (2, 3):
         raise NotImplementedError(
-            "LASYM=2/3 (asymmetric SS, stored with NO e^{±β/2} factor) is deferred (spec §11)")
+            "LASYM=2/3 (asymmetric S, stored with no e^{±β/2} factor) is not supported")
     # The stored symmetric S (LASYM=0) IS the pack's scaled-symmetric value:
     # the stored number for LLN=0, exp(stored) for LLN=1. No exp(+-beta/2)
     # round trip, which overflows for LAT=1 tapes below ~41 K.
     unpack = math.exp if ev.lln != 0 else float
     # The tape stores S(alpha,beta) at one or more discrete temperatures (temps_mt4).
-    # Select the column whose temperature EXACTLY matches the request (no interpolation
-    # between columns), and LAT-un-scale the grids by THAT column's temperature, not the
-    # raw request (a mismatch would pair the column's S-values with a wrong-T grid).
+    # Select the column whose temperature matches the request (no interpolation
+    # between columns), and undo the LAT scaling of the grids with that column's
+    # temperature, not the requested one (a mismatch would pair the column's S
+    # values with a grid for another temperature).
     tindex = None
     for k, tk in enumerate(ev.temps_mt4):
         if abs(T - tk) <= max(0.5, 1e-3 * tk):

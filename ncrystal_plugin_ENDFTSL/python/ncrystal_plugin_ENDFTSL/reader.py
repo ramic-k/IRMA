@@ -18,7 +18,7 @@ def _parser():
 
 def _as_list(x):
     """endf_parserpy gives TAB1 bodies as 0-indexed lists but LIST/multi arrays as
-    1-indexed dicts. Normalize either to a plain list (dropping a key-0 if absent)."""
+    1-indexed dicts. Normalize either to a plain list in key order."""
     if isinstance(x, dict):
         keys = sorted(k for k in x.keys() if isinstance(k, int))
         return [x[k] for k in keys]
@@ -86,16 +86,16 @@ def read_tsl(path) -> TSLEvaluation:
     codes = [int(c) for c in _as_list(mt4["beta_interp"]["INT"])]
     beta_int = [next(c for n, c in zip(nbt, codes) if j + 2 <= n)
                 for j in range(len(beta) - 1)]
-    # T0 is the PRINCIPAL temperature (the column parsed into `sab` below);
-    # mt4["T"] holds only the LT EXTRA temperatures. Prepend T0 so
+    # T0 is the principal temperature (the column parsed into `sab` below);
+    # mt4["T"] holds only the LT extra temperatures. Prepend T0 so
     # temps_mt4[0] is the actual temperature of the parsed S(alpha,beta)
     # (e.g. ENDF/B-VIII.1 BeO: 293.6 K, then 400..1200 K) — dropping T0
     # here would mislabel the principal column with an extra temperature.
     temps_mt4 = [float(mt4["T0"])] + [float(t) for t in _as_list(mt4.get("T", {}))]
     # Each per-beta block S_table[bi+1] carries the alpha grid AND the principal-
     # temperature S column (S_table[bi+1]['S'], 0-indexed over alpha). The top-level
-    # mt4['S'] exists ONLY when ntempr>1 and holds the EXTRA temperatures (indexed
-    # [alpha][beta][temp]); the single-temperature fixture has NO mt4['S'].
+    # mt4['S'] exists only when ntempr>1 and holds the extra temperatures (indexed
+    # [alpha][beta][temp]); the single-temperature fixture has no mt4['S'].
     alpha = [_as_list(mt4["S_table"][bi + 1]["alpha"]) for bi in range(len(beta))]
     # sab[bi][ai] = [S(T0), S(T1), ..., S(T_LT)] aligned with temps_mt4. The T0 column
     # is in S_table[bi+1]['S']; the LT extra temperatures are in mt4['S'][alpha][beta]

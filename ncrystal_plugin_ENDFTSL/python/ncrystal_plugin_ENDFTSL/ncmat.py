@@ -2,8 +2,9 @@
 
 multi_pack_ncmat writes one @DYNINFO per element (fractions summing to 1) + one `pack` line per principal
 scatterer. The plugin overrides every channel, so the placeholder freegas dynamics
-never reach the cross section; the per-pack scatterers (inelastic + incoherent
-elastic, plus the coherent block on exactly ONE pack) are summed by the C++.
+never reach the cross section. The C++ sums the per-pack scatterers: inelastic and
+incoherent elastic on every pack, and on each coherent-bearing pack its
+fraction-weighted Bragg edges.
 """
 from __future__ import annotations
 
