@@ -1,8 +1,8 @@
 """Write a base ``.ncmat`` from the phonopy primitive cell.
 
 The NCrystal IRMA plugin matches the pack's per-site anisotropic Debye-Waller
-tensors to the material's atom sites BY FRACTIONAL POSITION (tolerance 1e-6, with
-modulo-1 wrapping). So the pack and the ``.ncmat`` MUST describe the same cell in
+tensors to the material's atom sites by fractional position (tolerance 1e-6, with
+modulo-1 wrapping). So the pack and the ``.ncmat`` must describe the same cell in
 the same setting — a stock stdlib NCMAT for the same compound generally uses a
 different origin and fails to match. The exporter therefore emits the NCMAT
 structure straight from the phonopy primitive cell the pack was built from, so

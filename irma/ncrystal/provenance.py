@@ -1,7 +1,7 @@
 """Reference-pin provenance for a baked pack.
 
-IRMA-as-reference is non-negotiable: a pack must record exactly which IRMA build and
-which run parameters produced it, so the SP3 plugin CI can regenerate and
+IRMA is the reference: a pack records which IRMA build and
+which run parameters produced it, so the plugin CI can regenerate and
 byte/tolerance-compare against the mode-2 tape and catch any drift. These land as
 ``meta.*`` lines (schema v2) that the C++ loader ignores.
 """

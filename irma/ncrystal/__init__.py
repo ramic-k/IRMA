@@ -8,7 +8,7 @@ Public API::
 
     from irma.ncrystal import NCrystalExportConfig, build_packs, write_packs
     cfg = NCrystalExportConfig.from_yaml("graphite_export.yaml")
-    packs, ncmat_snippet = build_packs(cfg)
+    packs, material_ncmat = build_packs(cfg)
 
 or from the command line::
 
