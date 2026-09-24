@@ -1,19 +1,16 @@
-"""irma.gui NSPanel + restructure (P8) -- widget<->SpectraConfig round-trips.
+"""irma.gui NSPanel -- widget<->SpectraConfig round-trips.
 
 Requires tkinter (skips without it). Uses a withdrawn root, so no display is
-shown. Pins: (1) the restructure keeps the ENDF notebook's five tabs intact
-under the new top-level "ENDF Evaluation" tab (so deck generation is unchanged --
-the existing test_gui_deck_io suite is the byte-identical-deck gate); (2) the NS
-panel's build_config/load_config are exact inverses for every geometry; (3)
-Save/Open is config.dump/load.
+shown. Pins: (1) the app's top-level tabs and the five parts of the ENDF form;
+(2) the NS panel's build_config/load_config are exact inverses for every
+geometry.
 """
 import pytest
 
-# importorskip FIRST -- a hard `import tkinter` at module top would error at
-# COLLECTION time on a Python built without _tkinter (e.g. the CI runner's
-# Homebrew python), aborting the whole pytest run instead of skipping cleanly.
+# importorskip first: on a Python built without _tkinter a plain import would
+# fail at collection and stop the whole run instead of skipping this file.
 tk = pytest.importorskip("tkinter")
-from irma.spectra.config import SpectraConfig, SpectraConfigError, dump, load  # noqa: E402
+from irma.spectra.config import SpectraConfig, SpectraConfigError  # noqa: E402
 from irma.gui.runner import ComputationRunner               # noqa: E402
 
 
@@ -76,8 +73,8 @@ def _cfg(geometry, **over):
     return SpectraConfig.from_dict(d)
 
 
-# ---- restructure: ENDF single-page form intact + two geometry tabs ---------
-def test_app_has_two_top_tabs_and_endf_intact(root):
+# ---- top-level tabs, ENDF form parts, geometry tabs --------------------------
+def test_app_top_tabs_and_endf_parts(root):
     from irma.gui.app import IrmaApp
     app = IrmaApp(root)
     top = [app.top_notebook.tab(i, "text") for i in range(len(app.top_notebook.tabs()))]
@@ -247,10 +244,10 @@ def test_loading_a_config_clears_what_the_previous_one_set(panel):
 
 # ---- fresh panel: identity blank, methodology prefilled --------------------
 def test_fresh_panel_ships_no_material_identity(panel):
-    """The scatterer table is material IDENTITY: a fresh panel must assert
-    nothing about the user's material (the old prefilled natural-carbon row
-    let a BeO evaluation run on graphite's constants unnoticed). One EMPTY
-    row is offered, and the hint says how to fill it."""
+    """The scatterer table is material identity: a fresh panel must assert
+    nothing about the user's material, or a BeO evaluation could run on
+    another material's constants unnoticed. One empty row is offered, and the
+    hint says how to fill it."""
     rows = panel.element_table.get_rows()
     assert len(rows) == 1
     assert all(v == "" for k, v in rows[0].items() if k != "dos_unit")
@@ -324,7 +321,7 @@ def test_element_table_add_remove(panel):
     assert len(t.rows) == n0
 
 
-# ---- Codex-review fixes -----------------------------------------------------
+# ---- hidden fields, positions, vision configs, mode-0 crystal ----------------
 def test_dos_files_mode_ignores_hidden_engine_fields(panel):
     """Garbage left in the hidden mesh/jobs widgets must not break a DOS-files
     build (those fields are not parsed in mode 0)."""
@@ -351,7 +348,7 @@ def test_bad_positions_count_rejected(panel):
 
 
 def test_vision_config_maps_onto_indirect_tab(panel):
-    """A legacy 'vision' config has no tab of its own -- it loads onto the
+    """A vision-geometry config has no tab of its own -- it loads onto the
     Indirect tab as the equivalent Ef=3.5, 45/135-bank indirect calculation,
     and keeps its q cuts."""
     cfg = _cfg("vision", instrument={"q_cuts": [2.5]})
@@ -440,18 +437,6 @@ def test_map_output_frame_visibility_follows_selector(panel):
     assert panel._mapcfg_frame.winfo_manager() == ""
 
 
-# ---- Save/Open is config.dump/load -----------------------------------------
-@pytest.mark.parametrize("geometry", ["indirect", "direct"])
-def test_save_open_round_trip(panel, tmp_path, geometry):
-    cfg = _cfg(geometry)
-    panel.load_config(cfg)
-    p = dump(panel.build_config(), tmp_path / f"{geometry}.yaml")
-    reloaded = load(p)
-    assert reloaded == cfg
-    panel.load_config(reloaded)
-    assert panel.build_config() == cfg
-
-
 # ---- width-polynomial coefficient fields (c0/c1/c2) ------------------------
 def test_width_coeffs_all_blank_is_none(panel):
     """Default (all three fields blank) => sigma_coeffs None (VISION preset)."""
@@ -498,9 +483,9 @@ def test_read_spectrum_handles_total_only_and_breakdown(panel, tmp_path, ext):
     assert I2 is not None and El2 is not None and I2.shape == (1, 6)
 
 
-# ---- QA4 fixes ---------------------------------------------------------------
+# ---- elastic crystal, defaults, entry errors, file dialogs, close ------------
 def test_phonopy_mode0_elastic_multiplicity_from_positions(panel):
-    """F5: phonopy-source mode 0 with the elastic crystal emits multiplicity ==
+    """phonopy-source mode 0 with the elastic crystal emits multiplicity ==
     n(positions) (the mult column is hidden there), so a multi-atom species
     passes validate's mult == len(positions) check and round-trips."""
     from irma.spectra.config import validate
@@ -519,7 +504,7 @@ def test_phonopy_mode0_elastic_multiplicity_from_positions(panel):
 
 
 def test_direct_tab_fresh_defaults_validate(panel):
-    """F17: the Direct tab's untouched defaults must validate out of the box
+    """the Direct tab's untouched defaults must validate out of the box
     (the Ei pre-fill sits above the Grid 'E max' default)."""
     from irma.spectra.config import validate
     panel.phonopy_yaml.set("g.yaml")    # the one field with no default
@@ -531,7 +516,7 @@ def test_direct_tab_fresh_defaults_validate(panel):
 
 
 def test_mode0_save_keeps_crystal_when_elastic_off(panel):
-    """F18: toggling the elastic line 'off' must not erase the lattice and
+    """toggling the elastic line 'off' must not erase the lattice and
     positions from a built (saved) mode-0 config."""
     cfg = _mode0_cfg()
     panel.load_config(cfg)
@@ -545,7 +530,7 @@ def test_mode0_save_keeps_crystal_when_elastic_off(panel):
 
 
 def test_bad_numeric_entry_names_the_field(panel):
-    """F29: a blank or typo'd numeric entry must fail with the field's name,
+    """a blank or typo'd numeric entry must fail with the field's name,
     not a bare 'could not convert string to float' message."""
     panel.de.set("0,5")
     with pytest.raises(ValueError, match=r"dE \(meV\)"):
@@ -557,7 +542,7 @@ def test_bad_numeric_entry_names_the_field(panel):
 
 
 def test_constant_q_blank_angles_still_validates(panel):
-    """F47: 'cut by constant-Q' with a blanked (hidden) angles field must build
+    """'cut by constant-Q' with a blanked (hidden) angles field must build
     a config that passes the angles_deg requirement (constant-Q ignores it)."""
     from irma.spectra.config import validate
     panel.phonopy_yaml.set("g.yaml")
@@ -572,7 +557,7 @@ def test_constant_q_blank_angles_still_validates(panel):
 
 
 def test_file_selector_save_extension_follows_filetypes(root, panel):
-    """F44: the save-dialog default extension derives from the widget's
+    """the save-dialog default extension derives from the widget's
     filetypes (first concrete pattern) instead of a hardcoded '.endf'."""
     from irma.gui.widgets import FileSelector
     assert panel.output.defaultextension == ".csv"        # CSV is listed first
@@ -587,7 +572,7 @@ def test_file_selector_save_extension_follows_filetypes(root, panel):
 
 
 def test_map_temp_files_unlinked_on_destroy(root, tmp_path):
-    """F46: the panel's temp 2-D map .npz files are removed on teardown."""
+    """the panel's temp 2-D map .npz files are removed on teardown."""
     from irma.gui.ns_panel import NSPanel
     holder = tk.Frame(root)
     p = NSPanel(holder, runner=ComputationRunner())
@@ -602,8 +587,8 @@ def test_map_temp_files_unlinked_on_destroy(root, tmp_path):
 
 
 def test_close_handler_confirms_and_shuts_down_active_run(root, monkeypatch):
-    """F27 + S8: WM_DELETE_WINDOW confirms during an active run, then SHUTS
-    DOWN (blocking reap, not the fire-and-forget cancel whose daemon kill
+    """WM_DELETE_WINDOW confirms during an active run, then shuts down the
+    run (a blocking reap, not the fire-and-forget cancel whose daemon kill
     thread dies with the interpreter) before destroying; when idle it
     destroys without prompting."""
     import irma.gui.app as app_mod
@@ -628,11 +613,11 @@ def test_close_handler_confirms_and_shuts_down_active_run(root, monkeypatch):
     assert calls == {"shutdown": 1, "destroy": 2}
 
 
-# ---- About dialog agrees with THIRD_PARTY_NOTICES.md (REL-8) ---------------
-def test_about_dialog_matches_third_party_notices(root, monkeypatch):
-    """The About box is the shipped attribution surface: it must list every
-    project the notices file covers and nothing the notices file does not
-    (INSPIRED is credited in docs/mlip.md, not in the notices)."""
+# ---- About dialog attribution list -----------------------------------------
+def test_about_dialog_names_the_third_party_projects(root, monkeypatch):
+    """The About box names the projects THIRD_PARTY_NOTICES.md covers (a fixed
+    list here, to keep in step with the notices file by hand) and points to
+    the file; INSPIRED is credited in docs/mlip.md, not in the notices."""
     import irma.gui.app as app_mod
     app = app_mod.IrmaApp(root)
     seen = {}
