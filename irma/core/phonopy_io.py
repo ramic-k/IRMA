@@ -647,6 +647,16 @@ def thermal_displacements_to_f_matrix(thermal_mats_ang2, awr_by_atom, tev):
     return thermal_mats * scale
 
 
+def mode_histogram(energies, weights, energy_grid):
+    """Sum ``weights`` into the bins of a uniform ``energy_grid`` that starts
+    at 0: each mode goes to the bin of its nearest grid energy, and a mode
+    above the grid to the last bin. ``energies`` and the grid share a unit."""
+    delta = energy_grid[1] - energy_grid[0]
+    bins = np.clip(np.rint(np.asarray(energies) / delta).astype(int),
+                   0, len(energy_grid) - 1)
+    return np.bincount(bins, weights=weights, minlength=len(energy_grid))
+
+
 def compute_atom_dos(mesh_data, freq_max_ev, n_freq):
     """Per-atom phonon DOS on a uniform energy grid from 0 to ``freq_max_ev``:
     a histogram of the mesh modes (see the module docstring).
@@ -667,8 +677,7 @@ def compute_atom_dos(mesh_data, freq_max_ev, n_freq):
     weight = np.repeat(mesh_data.weights, mesh_data.n_branches).astype(float)[keep]
     e2 = (np.abs(mesh_data.eigenvectors.reshape(freq.size, mesh_data.n_atoms, 3))
           ** 2).sum(axis=2)[keep]                                # (N_kept, N_atoms)
-    bins = np.clip(np.rint(freq[keep] / delta_ev).astype(int), 0, n_freq - 1)
-    dos = np.stack([np.bincount(bins, weights=weight * e2[:, d], minlength=n_freq)
+    dos = np.stack([mode_histogram(freq[keep], weight * e2[:, d], energy_grid)
                     for d in range(mesh_data.n_atoms)])
     n_valid = int(np.sum(keep))
     print(f"  DOS: {n_valid} valid modes, {freq.size - n_valid} skipped "

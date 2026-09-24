@@ -212,35 +212,30 @@ def _flat_crystal(k_a=0.0, k_b=5.0):
     return ph
 
 
-def _integral(e, rho):
-    return np.trapezoid(rho, e)
-
-
-def test_dos_mixed_flat_and_dispersive_triggers_fallback():
-    """One flat sublattice inside an otherwise dispersive spectrum must
-    still trigger the fallback (min over bands, not max/all)."""
+def test_dos_counts_flat_bands_in_full():
+    """The histogram DOS counts a flat sublattice's bands in full (the
+    tetrahedron method gave them zero width)."""
     from irma.mlip.bundle import _dos_and_census
 
-    # k_b large: flat B bands sit ABOVE the dispersive A range (no crossing)
+    # k_b large: the three flat B bands sit above the dispersive A range
     ph = _flat_crystal(k_a=2.0, k_b=40.0)
     e, rho, census = _dos_and_census(ph, [8, 2, 2])
-    assert census.get("dos_smearing_fallback_mev") == 1.0
-    assert _integral(e, rho) == pytest.approx(6, rel=0.05)
-    assert np.all(np.diff(e) < 0.51)            # pitch never coarser than 0.5
+    pitch = e[1] - e[0]
+    assert pitch <= 0.5
+    assert rho.sum() * pitch == pytest.approx(6.0)          # every mode
+    assert rho[-1] * pitch == pytest.approx(3.0)            # the flat B bands
 
 
-def test_dos_dispersive_bands_keep_tetrahedron(al_model):
-    """A normal dispersive crystal must NOT trigger the smearing fallback
-    (the tetrahedron DOS already integrates to the band count)."""
+def test_gamma_only_dos_drops_the_translations(al_model):
+    """mlip_b#0: on a Gamma-only mesh the three zero-frequency translations
+    are not in the DOS."""
     from irma.mlip.bundle import _dos_and_census
 
     _rr, pr = al_model
-    e, rho, census = _dos_and_census(pr.phonon, [6, 6, 6])
-    assert "dos_smearing_fallback_mev" not in census
-    # tetrahedron integral approximates the band count (coarse-mesh
-    # tolerance; the fallback decision itself is by band spread, not this)
+    e, rho, _census = _dos_and_census(pr.phonon, [1, 1, 1])
     n_bands = 3 * len(pr.phonon.primitive)
-    assert _integral(e, rho) == pytest.approx(n_bands, rel=0.15)
+    assert rho.sum() * (e[1] - e[0]) == pytest.approx(n_bands - 3)
+    assert rho[0] == 0.0
 
 
 # ---- SEC-1: validate must not execute code from the bundle -------------------

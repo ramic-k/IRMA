@@ -215,10 +215,6 @@ def _build_parser():
     b.add_argument("--disordered", action="store_true",
                    help="disordered/amorphous material: box = its own "
                         "supercell, Gamma mesh, DOS-driven emission")
-    b.add_argument("--dos-smearing", type=float, default=None,
-                   metavar="MEV", help="DOS Gaussian smearing width in meV "
-                                       "[tetrahedron; auto 1 meV smearing "
-                                       "when flat bands would be dropped]")
     b.add_argument("--overwrite", action="store_true",
                    help="replace an existing bundle/outputs")
     b.add_argument("--allow-dev-backend", action="store_true",
@@ -340,8 +336,7 @@ def _cmd_build(args) -> int:
         return _err(f"--worker-threads must be >= 1, "
                     f"got {args.worker_threads}")
     for flag, value in (("--delta", args.delta), ("--fmax", args.fmax),
-                        ("--snap-symmetry", args.snap_symmetry),
-                        ("--dos-smearing", args.dos_smearing)):
+                        ("--snap-symmetry", args.snap_symmetry)):
         if value is not None and not (math.isfinite(value) and value > 0):
             return _err(f"{flag} must be a finite number > 0, got {value}")
     if args.nmax < 0:
@@ -489,7 +484,7 @@ def _cmd_build(args) -> int:
         calc_meta=calc_meta, args_used=vars(args) | {"argv": "irma mlip"},
         mesh=mesh, input_structure_path=args.structure,
         born_path=args.born, disordered=args.disordered,
-        dos_sigma_mev=args.dos_smearing, overwrite=args.overwrite)
+        overwrite=args.overwrite)
     print(f"  bundle written: {bundle.path}")
 
     if args.emit:
