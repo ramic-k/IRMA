@@ -48,7 +48,8 @@ import math
 import sys
 from pathlib import Path
 
-NEUTRON_MASS_U = 1.008664916
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from irma.core.constants import AMASSN as NEUTRON_MASS_U  # noqa: E402
 
 # Sears (1992) marks these "E" (strongly energy-dependent complex b), but the
 # upstream nsf table carries them as plain real b_c with no flag and no b_c_i

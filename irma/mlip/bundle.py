@@ -35,7 +35,9 @@ import os
 from dataclasses import dataclass
 
 MANIFEST_SCHEMA = 1
-THZ_TO_MEV = 4.13566553853599
+from irma.core.constants import THZ_TO_EV
+
+THZ_TO_MEV = THZ_TO_EV * 1.0e3
 IMAGINARY_FLOOR_MEV = -0.05     # below this a mode counts as imaginary
 
 _ADVICE = ("imaginary modes usually mean the structure is not at a true "

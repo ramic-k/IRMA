@@ -23,12 +23,9 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from irma.core.constants import AMU_KG as _AMU_KG, HBAR_J_S as _HBAR_J_S, KB_J_PER_K as _KB_J_PER_K
 from irma.core.crystal import lattice_to_cell_params
 
-# SI constants for the Debye MSD <-> Debye-temperature map.
-_HBAR_J_S = 1.054571817e-34
-_KB_J_PER_K = 1.380649e-23
-_AMU_KG = 1.66053906660e-27
 _ANG2_M2 = 1.0e-20
 
 
