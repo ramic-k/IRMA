@@ -51,15 +51,11 @@ import sys
 from irma.core.noncubic_inelastic import NoncubicInelasticControls
 
 from irma.core.constants import BK, WL2EKIN, _Z_TO_SYMBOL
-# CARD_END is unused inside engine.py but is re-exported through this facade
-# (tests/test_token_reader.py imports it from irma.core.engine).
 from irma.core.deck import (
     CARD_END, DeckError,
     parse_leapr_input, TokenReader,
     _read_temperature_detail_cards,
 )
-# sigfig is unused inside engine.py but re-exported via this facade (several
-# tests import it from irma.core.engine).
 from irma.core.kernels import (
     contin, trans, discre, coldh, skold_approx,
     sigfig,
@@ -69,16 +65,12 @@ from irma.core.crystal import (
     compute_bragg_edges_general, coher,
 )
 from irma.core.crystal_cards import _parse_crystal_cards
-# _grouped_coherent_s_table is unused inside engine.py but re-exported via
-# this facade (tests import it from irma.core.engine).
 from irma.core.endf_writer import (
     write_endf_output, _grouped_coherent_s_table,
 )
 
-# The LEAPR driver (run_leapr) and its two phonopy/MT4 helpers were
-# extracted to irma.core.driver to slim this module; re-imported here so
-# irma.core.engine stays a stable facade (the public API in irma/__init__.py,
-# the CLI, and the test suite all import run_leapr from irma.core.engine).
+# The LEAPR driver (run_leapr) and its phonopy/MT4 helpers live in
+# irma.core.driver; the CLI and the tests import them from this facade.
 from irma.core.driver import (
     LeaprResult,
     run_leapr,

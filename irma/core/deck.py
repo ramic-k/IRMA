@@ -13,7 +13,7 @@ import numpy as np
 
 # ============================================================================
 CARD_END = 'CARD_END'  # Sentinel token marking end of an NJOY input card (/)
-LINE_END = 'LINE_END'  # Sentinel for a line WITHOUT '/' (array continuation)
+LINE_END = 'LINE_END'  # Sentinel for a line without '/' (array continuation)
 _RECORD_ENDS = (CARD_END, LINE_END)
 
 
@@ -227,7 +227,7 @@ class TokenReader:
     def require(self, cond, msg):
         """Semantic deck validation tied to the current card context.
 
-        Reports the line where the card STARTED (the reader has already
+        Reports the line where the card started (the reader has already
         consumed the card by the time semantic checks run).
         """
         if not cond:
@@ -470,7 +470,7 @@ class TokenReader:
 
 
 def _read_temperature_detail_cards(reader, nsk, ncold):
-    """Read the legacy LEAPR temperature-detail block for one temperature."""
+    """Read the per-temperature detail block (Cards 11-19) for one temperature."""
     reader.card("Card 11 (delta ni — continuous-spectrum grid)")
     fvals = reader.read_floats(2)
     delta1 = fvals[0]
