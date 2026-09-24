@@ -1,6 +1,8 @@
 # Installation
 
-This page covers the two ways to install IRMA (the released package from PyPI, or an editable install from source), the optional extras some workflows need, the separately built C++ NCrystal plugins, and how to confirm the install works. IRMA itself is a pure-Python package with a small, stable dependency footprint: the core engine needs only NumPy, `endf-parserpy`, and `threadpoolctl`, the GUI uses the standard-library `tkinter`, and three optional extras cover the rest: `[phonopy]` for the noncubic inelastic modes, `[spectra]` for the neutron scattering forward model, and `[mlip]` for the MLIP phonon front end. Either route is one package-manager command; on PyPI you add the extras you need.
+This page covers installing IRMA from PyPI, from conda-forge, or from source; the optional extras; the separately built C++ NCrystal plugins; and checking the install.
+
+IRMA is a pure-Python package. The core needs NumPy, `endf-parserpy` and `threadpoolctl`, and the GUI uses `tkinter` from the standard library. Three extras add optional workflows: `[phonopy]` (the phonopy-backed inelastic modes 1/2), `[spectra]` (the neutron scattering forward model) and `[mlip]` (the MLIP phonon front end). The NCrystal exporter (`irma ncrystal`) needs `[phonopy,spectra]`.
 
 ## Requirements
 
@@ -14,7 +16,7 @@ This page covers the two ways to install IRMA (the released package from PyPI, o
 | `phonopy` | >= 4.2 | For `iel=10` with `inelastic_mode=1` or `2`, and for `irma.spectra` inelastic modes 1/2 or `dos_source: phonopy`, the spectra-config option that takes the DOS from the phonopy calculation (4.x is the only tested major) |
 | `scipy` + `PyYAML` | >= 1.10 / >= 6 | Only for the `irma.spectra` forward model (the `[spectra]` extra) |
 
-Most of this table is installed for you; the one dependency worth understanding is `phonopy`. It powers the eigenvector-based workflows: on the ENDF side, the generalized noncubic inelastic modes (`iel=10` combined with `inelastic_mode=1`, the directional incoherent approximation, or `inelastic_mode=2`, the exact coherent one-phonon), and on the spectra side, the inelastic modes 1/2 and the `dos_source: phonopy` option of mode 0. Everything else runs without it: all the classic LEAPR kernels, `iel=0`–`6`, `iel=10` with `inelastic_mode=0`, and spectra mode 0 from DOS files. The `euphonic` package is used only by offline validation harnesses and is never imported by the engine, so you do not need it for normal use.
+Most of this table is installed for you. The optional dependency that decides which workflows you can run is `phonopy`. It powers the eigenvector-based workflows: on the ENDF side, the phonopy-backed inelastic modes (`iel=10` combined with `inelastic_mode=1`, the directional incoherent approximation, or `inelastic_mode=2`, the exact coherent one-phonon), and on the spectra side, the inelastic modes 1/2 and the `dos_source: phonopy` option of mode 0. The NCrystal exporter uses it too, because it exports modes 1/2. Everything else runs without it: all the classic LEAPR kernels, `iel=0`–`6`, `iel=10` with `inelastic_mode=0`, and spectra mode 0 from DOS files. The `euphonic` package is used only by offline validation harnesses and is never imported by the engine, so you do not need it for normal use.
 
 ## Install (released package)
 
@@ -55,13 +57,13 @@ IRMA writes the output tape through `endf-parserpy`, which ships two interchange
 
 ### Adding the phonopy extra
 
-If you plan to run the noncubic inelastic modes (`iel=10` with `inelastic_mode=1` or `2`), install the `phonopy` extra:
+If you plan to run the phonopy-backed inelastic modes (`iel=10` with `inelastic_mode=1` or `2`), install the `phonopy` extra:
 
 ```bash
 pip install -e ".[phonopy]"
 ```
 
-This adds `phonopy>=4.2` on top of the core dependencies and enables the noncubic S(α,β) calculation (modes 1/2). Phonopy 4 is the only major version the suite is tested against.
+This adds `phonopy>=4.2` on top of the core dependencies and enables the mode-1/2 S(α,β) calculation. Phonopy 4 is the only major version the suite is tested against.
 
 Installing the extra makes the code available but does not supply the physics input: a mode 1/2 input file also needs a phonopy calculation on disk, a `phonopy.yaml` plus force constants (named on `Card 6f`) and the `Card 6g` controls. The force constants are read from the YAML if embedded, otherwise discovered next to it (`force_constants.hdf5`, `FORCE_CONSTANTS`, `FORCE_SETS`, in that order); the working directory is never consulted. See the [input file reference](input-reference.md) for the full `Card 6f`/`Card 6g` layout.
 
@@ -73,7 +75,7 @@ If you plan to use the neutron scattering forward model (the `irma spectra` CLI 
 pip install -e ".[spectra]"
 ```
 
-This adds `scipy` (S(Q,E) interpolation) and `PyYAML` (the primary config format). The extras combine: `pip install -e ".[phonopy,spectra,mlip]"` covers every workflow, and the spectra inelastic modes 1/2 (and mode 0 with `dos_source: phonopy`) need both `[phonopy]` and `[spectra]`. See [DOS-based spectra (mode 0)](spectra-mode0.md) for what each spectra mode requires.
+This adds `scipy` (S(Q,E) interpolation) and `PyYAML` (the primary config format). The extras combine: `pip install -e ".[phonopy,spectra,mlip]"` covers every workflow. The spectra inelastic modes 1/2 (and mode 0 with `dos_source: phonopy`) and the NCrystal exporter (`irma ncrystal`, which reads a YAML config) need both `[phonopy]` and `[spectra]`. See [DOS-based spectra (mode 0)](spectra-mode0.md) for what each spectra mode requires.
 
 ### Adding the mlip extra
 
@@ -137,7 +139,7 @@ Both open the same window.
 | Arch Linux | `sudo pacman -S tk` |
 | Conda | `conda install -c conda-forge tk` |
 
-On macOS, installing the official build from [python.org](https://www.python.org/downloads/) includes `tkinter`. On Windows it is included by default with the python.org installer (keep the "tcl/tk and IDLE" option checked). If the GUI does not appear under a virtual environment on macOS, recreate the environment with access to the system `tkinter`: `python -m venv --system-site-packages myenv`.
+On macOS, installing the official build from [python.org](https://www.python.org/downloads/) includes `tkinter`. On Windows it is included by default with the python.org installer (keep the "tcl/tk and IDLE" option checked). A virtual environment uses its base interpreter's `tkinter`: if `python -c 'import tkinter'` fails inside the venv, install Tk for the base Python (the python.org build, or `brew install python-tk`) and recreate the venv.
 
 ## Verify the install
 
@@ -164,11 +166,14 @@ The editable install above (`pip install -e .`) is already a developer install: 
 python -m pytest
 ```
 
-Two validation harnesses live under `tests/` and are run manually (they are not part of CI):
+Three validation harnesses live under `tests/` and are run manually (they are not part of CI):
 
 | Harness | What it checks | Extra needs |
 |---------|----------------|-------------|
-| `tests/native_LEAPR_NJOY_ENDF_validation/` | Reproduces published ENDF/B-VIII.1 tapes (graphite, Fe, Al, polyethylene to 7e-5; liquid methane, ortho-/para-hydrogen, ortho-/para-deuterium, and BeO exactly). Fully self-contained. | None |
+| `tests/native_LEAPR_NJOY_ENDF_validation/` | The classic kernels reproduce published ENDF/B-VIII.1 tapes to 7e-5 (graphite, Fe, Al, H in CH2) and freshly generated NJOY2016.78 tapes exactly (liquid CH4, ortho/para-H2, two-pass BeO). Fully self-contained. | None |
 | `tests/mode2_euphonic_n1_validation/` | Cross-validates the mode-2 exact one-phonon S(α,β) against Euphonic (graphite, Be, BeO). | The committed Euphonic reference is frozen; regenerating it (only if the phonon calculation changes) requires the `euphonic` package |
+| `tests/mode0_validation/` | Compares the mode-0 (DOS) VISION spectrum with mode 1 for graphite. | `phonopy` |
+
+Cold deuterium and the Sköld correction are not in these harnesses: the fast-suite minitapes (`tests/test_coldd_minitape.py` and `tests/test_coldh_skold_minitape.py`) pin them against NJOY byte for byte on small decks.
 
 One last note for long-time users: IRMA was renamed from THAWNE in June 2026, and the package is now `irma`. If you have older scripts, update imports and the CLI/GUI entry points (`python -m irma`, `irma`, `irma-gui`) accordingly.
