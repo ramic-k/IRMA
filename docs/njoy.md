@@ -51,7 +51,7 @@ broadr
 thermr
 20 23 31 /
 59 2825 32 1 2 1 0 1 250 1 /   -- 59 = the IRMA tape's MAT, 2825 = the base MAT,
-                               -- 32 angle bins, 1 temperature, iin=2 (read S(a,b)),
+                               -- 32 angle bins, 1 temperature, iinc=2 (read S(a,b)),
                                -- icoh=1 (elastic from tape), natom=1, MT250 output
 299.15 /
 0.001 5.0 /           -- tolerance and maximum energy [eV]
@@ -71,7 +71,7 @@ MeV, not eV, while the input file and IRMA's own grids work in eV or units of
 `kT`. Keep the conversion in mind when you compare a processed
 inelastic cross section against an IRMA-internal curve.
 
-## Stock-NJOY THERMR mangles coherent mode-2 tapes (`cliq` bug)
+## Stock NJOY2016 THERMR corrupts coherent mode-2 tapes (`cliq` defect)
 
 A coherent `inelastic_mode = 2` tape (graphite and other strongly
 coherent crystals) run through an unpatched NJOY2016 THERMR produces
@@ -105,8 +105,8 @@ but the `cliq` formula's sign requires decay along beta as well. A
 coherent mode-2 S(α,β) has a `β = 0` row that decays in α (acoustic
 intensity concentrated in the first low-`Q` bin) yet *rises* in β at
 `α₁`. That drives `cliq` negative, so `-cliq*b**2/a` becomes
-`+|cliq|*b²/a` and `exp(+|cliq|*b²/a)` explodes to `~1e150..1e354`:
-the `~1e91`-barn tape34 garbage. Liquids satisfy both decays, which is
+`+|cliq|*b²/a` and `exp(+|cliq|*b²/a)` grows to about 1e150 or
+overflows to Inf: the `~1e91`-barn values in tape34. Liquids satisfy both decays, which is
 why upstream never saw it.
 
 ### Symptom table
@@ -130,21 +130,17 @@ if (sab(1,1).gt.sab(2,1)) then
 if (sab(1,1).gt.sab(2,1).and.sab(1,1).gt.sab(1,2)) then
 ```
 
-Apply it at both `cliq` sites (the `sig()` extrapolation path and its
-duplicate), then rebuild NJOY. The patch is regression-clean: an
+Apply it at both `cliq` activation sites in `calcem`
+(`thermr.f90:1964` and `2286`; `sig()` only uses `cliq`), then rebuild
+NJOY. The patch is regression-clean: an
 `inelastic_mode = 0/1` tape34 is byte-identical before and after, and a
 patched THERMR processes a coherent mode-2 graphite tape (auto grid
 included) straight through to a sane cross section. The defect is
 reported upstream, with a synthetic reproducer, as
 [njoy/NJOY2016#399](https://github.com/njoy/NJOY2016/issues/399).
 
-Grid spacing is a non-issue here. Earlier guidance suggested forcing a
-uniform ~1 meV beta grid for NJOY, but the cliq blowup fires on the
-shape of a coherent S(α,β), and a uniform grid preserves the shape, so
-it does not prevent the failure. With the patched THERMR you can hand
-NJOY the standard IRMA automatic grid directly. (A uniform grid only
-ever sidestepped a separate, older log-tail stall; it was never the fix
-for the cliq garbage.)
+A uniform β grid does not avoid the defect; with the patched THERMR, use
+the standard automatic grid.
 
 Transfers that fall beyond the tabulated S(α,β) are handled downstream
 by THERMR's short-collision-time (SCT) extension, driven by the tape's
@@ -177,8 +173,9 @@ what the [validation record](validation/methodology.md) means by
 
 ## Known deliberate divergences from NJOY's LEAPR
 
-IRMA reproduces NJOY2016 LEAPR byte-for-byte on the validation set of
-reference tapes (the golden set under `tests/`), but eight NJOY
+IRMA reproduces fresh NJOY2016.78 tapes exactly and the published
+ENDF/B-VIII.1 tapes to below 7e-5 on the golden set under `tests/`, but
+eight NJOY
 behaviors are deliberately handled differently. Seven
 are bugs, placeholders, or numerical hazards in NJOY itself that IRMA does
 *not* reproduce; the eighth is an NJOY quirk that IRMA deliberately *does*
@@ -214,8 +211,8 @@ own source, and each entry names its consequence for users.
   answer. That is a latent NJOY bug: `T_eff/T` is a property of the
   phonon spectrum, not of the grid position. IRMA resets the ratio for
   every α. Affects only SCT tails reached through discrete oscillators;
-  the validation-set input files have no SCT-tail exposure and match NJOY to ~1e-4
-  either way.
+  the validation-set input files have no SCT-tail exposure and match NJOY
+  (to below 7e-5) either way.
 * **ln-S sentinel for zero-S points (ENDF writer).** NJOY's `endout`
   writes the ln-S sentinel −999 in the first-temperature TAB1 and the
   `isym=1/2/3` LIST branches, but writes **0** in the `isym=0`
@@ -231,16 +228,15 @@ own source, and each entry names its consequence for users.
   output depends on the print flag. IRMA applies the clamp
   unconditionally. All NJOY reference tapes in the expected set were
   generated with `iprint=1` (clamp active), and IRMA reproduces them to
-  ~1e-4; an `iprint=0` NJOY run can differ where the SCT range begins.
+  below 7e-5; an `iprint=0` NJOY run can differ where the SCT range begins.
 * **Translational self-term clamp (`trans`).** NJOY clamps only the
-  convolution part of the translational S(α,β) (`leapr.f90:1041`) and
+  convolution part of the translational S(α,β) (`leapr.f90:940`) and
   writes any self-term sum down to `smin = 1e-75` via `endout`. IRMA
   re-clamps the combined convolution-plus-self term below 1e-30, so a
   self term landing in (1e-75, 1e-30), reached only at high α where the
   Debye-Waller weight `α·f0 ≳ 70`, is zeroed where NJOY keeps it.
-  All validation-set input files reproduce their NJOY references to ~1e-4
-  with the
-  clamp active.
+  All validation-set input files reproduce their NJOY references to below
+  7e-5 with the clamp active.
 * **Overflow guard in the discrete-oscillator Bessel factors
   (`bfact`).** NJOY has no guard on exponential arguments above 709:
   `exp(709+)` overflows to Inf, and Inf times an underflowed Bessel
@@ -267,42 +263,33 @@ delta lines) and
 [njoy/NJOY2016#403](https://github.com/njoy/NJOY2016/issues/403) (lead
 `pb4`).
 
-## Comparing S(α,β) tables with `thermr_mimic`
+## How the validation record compared S(α,β) tables (`thermr_mimic`)
 
-`thermr_mimic` is a validated reimplementation of THERMR's
-tabulated-`S(α, β)` inelastic-cross-section kernel. It is validation
-tooling, not part of the `irma` package: its purpose is to let you
-compare two S(α, β) tables (for example an IRMA mode-2 table against
-one derived from OCLIMAX) at the inelastic-cross-section level without
-launching a full NJOY job. On the finest grid both programs can process,
-it agrees with corrected NJOY THERMR to a median of 0.05% and at worst
-0.8% (see the [validation methodology](validation/methodology.md)).
+`thermr_mimic` is the validation record's own reimplementation of
+THERMR's tabulated-`S(α, β)` inelastic-cross-section kernel. It is not
+part of the `irma` package or this repository. The validation record used
+it to compare two S(α, β) tables (for example an IRMA mode-2 table and
+one derived from OCLIMAX) at the inelastic-cross-section level without a
+full NJOY job. On the finest grid both programs can process, it agrees
+with corrected NJOY THERMR to a median of 0.05% and at worst 0.8% (see
+the [validation methodology](validation/methodology.md)).
 
-Use `thermr_mimic` when you want a fast comparison of two tabulated
-S(α, β) tables through the same cross-section kernel. Reach for real
-THERMR when you need the parts of the processing that the mimic
-deliberately does not reproduce: the short-collision-time extrapolation
-beyond the tabulated grid, the full secondary energy–angle
-reconstruction, and the final ACE-format output.
-
-A table converted from an external code
-(for example an OCLIMAX `S(Q, E)` map) can agree with the mimic yet
-diverge in real THERMR through the short-collision-time extrapolation.
-When you process such a table through NJOY, compare with `thermr_mimic`
-on the table's own grid; for the real THERMR run, first rebuild the
-tape for THERMR, either uniformly resampled or composited into a full
-evaluation whose grid THERMR handles.
+It does not reproduce the short-collision-time extrapolation beyond the
+tabulated grid, the full secondary energy–angle reconstruction, or the
+ACE-format output; those comparisons used real THERMR. A table converted
+from an external code (for example an OCLIMAX `S(Q, E)` map) can agree
+with the mimic yet diverge in real THERMR through the short-collision-time
+extrapolation, so for the THERMR runs such tables were first rebuilt,
+either uniformly resampled or composited into a full evaluation whose
+grid THERMR handles.
 
 ## THERMR `calcem` cosine-clamping warnings
 
 When THERMR's `calcem` routine reconstructs angular distributions it can
 emit warnings about clamping scattering cosines back into the physical
-`[-1, 1]` range. In our runs these clamp messages have been harmless:
-they appear to be a consequence of the adaptive reconstruction at grid
-edges rather than a defect in the IRMA tape. That is an observation
-from our runs, not a guarantee: if the messages appear on a tape that
-also fails downstream checks, investigate rather than assume they are
-benign.
+`[-1, 1]` range. In the validation runs these messages did not indicate
+a defect in the tape; they come from the adaptive reconstruction at grid
+edges. If they appear together with other failed checks, investigate.
 
 ## See also
 
