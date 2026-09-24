@@ -3,12 +3,12 @@ elastic_extinction + the endf_writer extinction S-table). Uses a synthetic
 single-species directional-DW state; the full physics gate is the CrysXT-plugin
 comparison (separate harness)."""
 import math
-import types
 
 import numpy as np
 import pytest
 
 from irma.core.constants import WL2EKIN
+from irma.core.elastic_dw import SpeciesDW
 from irma.core.elastic_extinction import make_sigma_coh_ext
 from irma.core import endf_writer
 
@@ -25,17 +25,19 @@ _FAMILIES = [(1.980, 0.574), (1.792, 2.270), (1.233, 1.85), (1.020, 1.2)]
 def _synthetic_species_dw(W_tensor_scale=0.0, use_dir=True):
     """nsp=1 single-species DW state. Directional (F-matrix) or per-species."""
     F = np.eye(3) * W_tensor_scale
-    return types.SimpleNamespace(
+    return SpeciesDW(
         use_dir_dw=use_dir, use_ps=not use_dir, nsp=1, b_sqb=[_B], awr_sp=[_AWR],
-        F_species_per_temp=[[F]], W_ps=[[0.0]], bragg_dir_terms=None)
+        sc=None, W_ps=[[0.0]], F_species_per_temp=[[F]], bragg_dir_terms=None,
+        atom_types=[])
 
 
 def _synthetic_species_dw_multitemp(W_scales):
     """ntempr>1 directional-DW state: one F-tensor scale per temperature."""
     Fs = [[np.eye(3) * w] for w in W_scales]
-    return types.SimpleNamespace(
+    return SpeciesDW(
         use_dir_dw=True, use_ps=False, nsp=1, b_sqb=[_B], awr_sp=[_AWR],
-        F_species_per_temp=Fs, W_ps=[[0.0] * len(W_scales)], bragg_dir_terms=None)
+        sc=None, W_ps=[[0.0] * len(W_scales)], F_species_per_temp=Fs,
+        bragg_dir_terms=None, atom_types=[])
 
 
 def _synthetic_bragg():
