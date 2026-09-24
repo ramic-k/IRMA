@@ -474,7 +474,7 @@ def trans(ssm_slice, alpha, beta, nalpha, nbeta, lat, arat, tev,
                             if st > 0.0:
                                 s += exp_alf0 * st
                                 # NJOY divergence: NJOY clamps only the
-                                # convolution part (leapr.f90:1041); IRMA
+                                # convolution part (leapr.f90:940); IRMA
                                 # also clamps convolution + self term below
                                 # tiny, zeroing self terms in (1e-75, 1e-30).
                                 if s < tiny:

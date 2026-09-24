@@ -7,7 +7,7 @@
 # Run from this directory (examples/spectra/):
 #   python -m irma spectra run graphite_direct_qcuts.yaml -o graphite_qcuts.csv
 #
-# Runtime: under a minute with the quick settings below.
+# Runtime: a few seconds with the quick settings below.
 #
 # NOTE on the energy grid: grid.e_max_meV must cover the FULL one-phonon
 # spectrum (~200 meV for graphite) whenever multiphonon terms are on, because

@@ -91,8 +91,9 @@ class NCrystalExportConfig:
     #                (irma.core.grids.generate_beta_grid / generate_alpha_grid) is
     #                generated from the phonon spectrum. freq_max_eV is auto-derived
     #                from the phonopy mesh when omitted; the other knobs default to
-    #                the ENDF-grid defaults. (Not a uniform Q/E grid -- that under-
-    #                integrates the thermal cross section; see generate_alpha_grid.)
+    #                the ENDF-grid defaults. (alpha is linear in Q; the uniform-alpha
+    #                layout it replaces under-integrates the thermal cross section;
+    #                see generate_alpha_grid.)
     alpha_grid: Optional[list] = None
     beta_grid: Optional[list] = None
     lat: int = 1

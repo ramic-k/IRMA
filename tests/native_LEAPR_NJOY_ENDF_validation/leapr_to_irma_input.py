@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Derive a IRMA ``.input`` deck from an NJOY LEAPR deck.
+"""Derive an IRMA ``.input`` deck from an NJOY LEAPR deck.
 
 WHY THIS EXISTS
 ---------------
@@ -12,14 +12,15 @@ and expects a *standalone* deck whose very first card is the output unit
 
 Feeding a raw NJOY deck to IRMA is the thing we must NOT do. Instead this
 tool performs the small, well-defined translation from the NJOY LEAPR block to
-a IRMA deck:
+an IRMA deck:
 
   1. Locate the ``leapr`` module line and take the LEAPR block that follows it,
      stopping at the next NJOY module name or ``stop`` (so a full multi-module
      job stream yields only its LEAPR part — e.g. the aluminum deck).
   2. Reformat Card 1: NJOY writes the output unit on its own line right after
      ``leapr`` (``25``); IRMA wants it as a normal terminated card (``25 /``).
-  3. Copy every remaining LEAPR card VERBATIM — Cards 2-9, the per-temperature
+  3. Quote Card 2 as one title line, and copy every other card unchanged:
+     Cards 3-9, the per-temperature
      detail blocks (continuous phonon spectrum, translational/oscillator data),
      the temperature cards (INCLUDING the negative-temperature "reuse the
      previous spectrum" cards, which IRMA now honors), and the MF1/MT451
@@ -27,7 +28,7 @@ a IRMA deck:
      NJOY LEAPR and IRMA, so no field-level rewriting is needed.
 
 The result is a faithful, runnable IRMA deck: same physics inputs, same
-comment/provenance block, just packaged as a IRMA deck instead of an NJOY job
+comment/provenance block, just packaged as an IRMA deck instead of an NJOY job
 stream.
 
 USAGE
@@ -41,7 +42,7 @@ import os
 import sys
 
 # NJOY module names that delimit blocks within a job stream. Kept in sync with
-# irma.core.engine._NJOY_MODULES; duplicated here so the tool has no import
+# irma.core.deck._NJOY_MODULES; duplicated here so the tool has no import
 # dependency on the package internals.
 NJOY_MODULES = {
     'moder', 'reconr', 'broadr', 'unresr', 'heatr', 'thermr', 'groupr',

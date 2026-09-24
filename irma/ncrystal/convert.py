@@ -1,7 +1,7 @@
 """Convention bridge: IRMA mode-2 downscatter S(α,β) → NCrystal pack convention.
 
-IRMA owns its S-convention, so this bridge lives in core and stays in lockstep
-with the engine. The engine emits S in IRMA's per-represented-atom convention on
+IRMA owns its S-convention, so this bridge is part of IRMA (irma.ncrystal) and
+stays in lockstep with the engine. The engine emits S in IRMA's per-represented-atom convention on
 a downscatter (β ≥ 0) grid in IRMA's natural ``(alpha, beta)`` orientation; this
 module maps α to NCrystal's mass-scaled units and stores the scaled-symmetric
 half-table the C++ loader reconstructs the full S from by detailed balance.

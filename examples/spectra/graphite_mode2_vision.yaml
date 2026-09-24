@@ -9,7 +9,7 @@
 # Run from this directory (examples/spectra/):
 #   python -m irma spectra run graphite_mode2_vision.yaml -o graphite_vision_mode2.csv
 #
-# Runtime: ~1-2 minutes with the quick settings below. For production, raise
+# Runtime: a few seconds with the quick settings below. For production, raise
 # mesh to [40, 40, 40] and n_directions to 10000 (the production default,
 # which matches the validation campaign's sampling).
 material:

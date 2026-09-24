@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a IRMA-reproduced TSL ENDF tape against its reference.
+"""Validate an IRMA-reproduced TSL ENDF tape against its reference.
 
 For a derived IRMA deck (see ``leapr_to_irma_input.py``) this:
 
@@ -94,8 +94,8 @@ def _mt4_S_at_temp(mt4, itemp):
     return out
 
 
-def compare_mt4(ref, thw):
-    rmt4, tmt4 = ref[7][4], thw[7][4]
+def compare_mt4(ref, got):
+    rmt4, tmt4 = ref[7][4], got[7][4]
     r_temps, t_temps = _mt4_temps(rmt4), _mt4_temps(tmt4)
     r_alpha = _d2a(rmt4["S_table"][1]["alpha"])
     t_alpha = _d2a(tmt4["S_table"][1]["alpha"])
@@ -118,7 +118,7 @@ def compare_mt4(ref, thw):
     print(f"  MT4 beta pts:  ref={len(r_beta)} irma={len(t_beta)}   "
           f"(max|d beta|={np.max(np.abs(r_beta - t_beta)) if len(r_beta)==len(t_beta) else 'n/a'})")
     print(f"  MT4 temps: ref={r_temps}")
-    print(f"             thw={t_temps}")
+    print(f"             got={t_temps}")
 
     # Principal effective temperatures (Teff0) — used by THERMR's SCT
     # extension, so zeros/garbage here corrupt downstream cross sections even
@@ -128,10 +128,10 @@ def compare_mt4(ref, thw):
     if len(r_teff) == len(t_teff) and np.all(r_teff > 0):
         teff_rel = float(np.max(np.abs(t_teff - r_teff) / r_teff))
         print(f"  MT4 Teff0 max rel diff: {teff_rel:.3e}  "
-              f"(ref[0]={r_teff[0]:.2f} K, thw[0]={t_teff[0]:.2f} K)")
+              f"(ref[0]={r_teff[0]:.2f} K, got[0]={t_teff[0]:.2f} K)")
     else:
         teff_rel = float("inf")
-        print(f"  MT4 Teff0 MISMATCH: ref={r_teff[:3]}... thw={t_teff[:3]}...")
+        print(f"  MT4 Teff0 MISMATCH: ref={r_teff[:3]}... got={t_teff[:3]}...")
 
     worst_sig = teff_rel       # Teff0 disagreement fails the same rtol gate
     worst_int = 0.0
@@ -161,11 +161,11 @@ def compare_mt4(ref, thw):
     return worst_sig, worst_int
 
 
-def compare_mt2(ref, thw):
-    if 2 not in ref[7] or 2 not in thw[7]:
+def compare_mt2(ref, got):
+    if 2 not in ref[7] or 2 not in got[7]:
         print("  MT2: absent in one tape — skipping elastic comparison")
         return
-    rmt2, tmt2 = ref[7][2], thw[7][2]
+    rmt2, tmt2 = ref[7][2], got[7][2]
     print(f"  MT2 LTHR={rmt2['LTHR']}/{tmt2['LTHR']}")
     if rmt2["LTHR"] == 1:  # coherent elastic: cumulative S(E) vs E
         rE = _d2a(rmt2["S_T0_table"]["Eint"])
