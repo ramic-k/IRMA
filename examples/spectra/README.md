@@ -9,7 +9,8 @@ cd examples/spectra
 python -m irma spectra run <config>.yaml -o <output>.csv
 ```
 
-Each YAML carries its exact run command and expected runtime in its header.
+Each YAML carries its exact run command in its header; `examples/README.md`
+gives measured runtimes.
 
 | Config | Calculation |
 |--------|-------------|
