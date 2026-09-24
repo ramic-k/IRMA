@@ -52,13 +52,12 @@ def build_pack(ev: TSLEvaluation, T: float, material_id: str,
                                         ev.beta_int)
     # scaled-sym, beta-major (loop β outer, α inner) — matches NC SCALED_SYM_SAB / irma pack
     sab_values = [sab[ai][bi] for bi in range(len(beta)) for ai in range(len(alpha_nc))]
-    # NCrystal cross sections are PER ATOM, but the C++ plugin sums every pack's
-    # channels at weight 1.0, so a naive multi-species pack yields per-FORMULA-unit
-    # cross sections (~N_atoms x too high). The converter restores the per-atom
-    # convention by scaling each pack:
+    # NCrystal cross sections are per atom, but the C++ plugin sums every pack's
+    # channels at weight 1.0, so unscaled multi-species packs would give
+    # cross sections per formula unit (about N_atoms times too high). The
+    # converter restores the per-atom convention by scaling each pack:
     #   - inelastic + incoherent elastic: * inelastic_scale (= the atom fraction f),
-    #     so sum_i f_i*sigma_i = per-atom-average. This is unambiguous: those laws
-    #     are genuinely per-species.
+    #     so sum_i f_i*sigma_i is the per-atom average; these laws are per species.
     #   - coherent Bragg edges: * coherent_scale, which build_packs sets to the
     #     atom fraction f for every coherent-bearing tape.
     # Monatomic (both scales = 1) is unchanged. The physical species bound is kept
@@ -120,10 +119,10 @@ def build_packs(specs, T: float, material_id: str):
     n_coh = sum(has_coh)
 
     if n_coh >= 2:
-        # The replicate-and-fraction-weight branch is correct ONLY if the coherent
-        # tapes carry the SAME per-atom whole-crystal edges AND their atom fractions
-        # total 1 (so sum_i f_i*sigma_coh == sigma_coh). Otherwise the weight-1.0 C++ sum yields
-        # a silent partial Bragg cross section. Verify both before trusting it.
+        # Fraction-weighting replicated edges is correct only if the coherent
+        # tapes carry the same per-atom whole-crystal edges and their atom
+        # fractions total 1 (so sum_i f_i*sigma_coh == sigma_coh); otherwise the
+        # weight-1.0 C++ sum gives a partial Bragg cross section. Check both.
         coh_frac_sum = sum(float(sp.fraction)
                            for sp, hc in zip(specs, has_coh) if hc)
         if abs(coh_frac_sum - 1.0) > 1e-6:
@@ -132,14 +131,13 @@ def build_packs(specs, T: float, material_id: str):
                 f"to {coh_frac_sum:.6g} != 1; a per-atom whole-crystal Bragg-edge "
                 "structure cannot be reconstructed by fraction-weighting a partial set "
                 "(standard ENDF replicates the per-atom edges on every principal tape).")
-        # Compare the physical coherent CROSS SECTION sigma_coh(E)=cumS(<=E)/E, NOT the
-        # raw edge arrays: independently-written tapes represent the SAME whole-crystal
-        # edges with different edge ENERGIES (ENDF rounding ~1%; e.g. SiO2-alpha Si vs O
-        # differ up to 0.7% in edge energy yet are bit-identical in sigma_coh). The raw-
-        # array comparison false-positived on that; sigma_coh is the physical quantity
-        # and is robust to edge jitter, while a genuinely PARTITIONED per-species edge set
-        # differs by O(1) (use the median over sampled energies to ignore the few
-        # samples that straddle a jittered edge).
+        # Compare the coherent cross section sigma_coh(E) = cumS(<=E)/E, not the
+        # raw edge arrays: independently written tapes can represent the same
+        # whole-crystal edges at slightly different edge energies (e.g. SiO2-alpha
+        # Si vs O differ by up to 0.7% in edge energy). sigma_coh is insensitive
+        # to that, while a per-species partitioned edge set differs by O(1). The
+        # median over the sampled energies ignores the few samples that straddle
+        # a shifted edge.
         def _sig(edges, cumS, E):
             i = bisect.bisect_right(edges, E) - 1
             return cumS[i] / E if i >= 0 else 0.0
@@ -158,7 +156,7 @@ def build_packs(specs, T: float, material_id: str):
             median = devs[len(devs) // 2] if devs else 0.0
             if median > 0.10:
                 raise ValueError(
-                    f"coherent-bearing tapes carry DIFFERENT Bragg edges (median "
+                    f"coherent-bearing tapes carry different Bragg edges (median "
                     f"sigma_coh deviation {median:.2f}); fraction-weighting assumes the "
                     "per-atom whole-crystal edge structure is replicated across principal "
                     "tapes. A "

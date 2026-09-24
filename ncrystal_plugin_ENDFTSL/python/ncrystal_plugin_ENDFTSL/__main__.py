@@ -43,7 +43,7 @@ def _validate_symbols(symbols) -> list:
     whitespace/control characters, path separators ('/', '\\', '..') and newline
     injection into generated files. Duplicates are rejected too: two species with
     the same symbol would silently overwrite one another's pack file. Called at
-    CLI entry (both modes) BEFORE any output directory or artifact is created."""
+    CLI entry (both modes) before any output directory or artifact is created."""
     seen = set()
     for sym in symbols:
         if not isinstance(sym, str) or not re.fullmatch(r"[A-Z][a-z]?", sym):

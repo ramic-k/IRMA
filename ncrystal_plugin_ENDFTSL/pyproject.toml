@@ -1,10 +1,5 @@
 [project]
 name = "ncrystal-plugin-ENDFTSL"
-# Versioning: minor for behavior changes, patch for packaging/doc-only -- see
-# RELEASING.md "Plugin subprojects". 0.1 stands in for the behavior changes
-# that shipped while the field was frozen at 0.0.1 (notably the per-atom
-# inelastic fix); 0.2.0 is the first correctly versioned state (loader
-# finiteness/NaN validation, sampler UB fix, pack-parse caching).
 version = "0.2.0"
 description = "NCrystal plugin: thermal neutron scattering straight from ENDF/TSL (MF7/MT2 + MF7/MT4) evaluations"
 readme = "README.md"
