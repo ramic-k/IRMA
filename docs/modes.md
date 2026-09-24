@@ -1,17 +1,17 @@
 # Scattering modes
 
-IRMA describes a material's thermal response with three independent
-choices: which coherent-elastic treatment to use (`iel`), which elastic
-format to write (`elastic_mode`), and which inelastic engine to run
-(`inelastic_mode`). S(α,β) is the thermal scattering law in the
-dimensionless momentum and energy transfer; the [theory page](theory.md)
-defines it and the conventions used here. The three selectors live on
-different cards (the numbered records of the LEAPR-style input file; see
-the [input file reference](input-reference.md)) and combine freely, so it
-helps to think of them as three independent axes rather than a single
-menu. This page describes each axis, shows how to read the three selectors
-off an input file, and gives guidance for picking the right combination for cubic
-versus noncubic and isotropic versus anisotropic materials.
+IRMA describes a material's thermal response with three choices: which
+coherent-elastic treatment to use (`iel`), which elastic format to write
+(`elastic_mode`), and which inelastic engine to run (`inelastic_mode`).
+S(α,β) is the thermal scattering law in the dimensionless momentum and
+energy transfer; the [theory page](theory.md) defines it and the conventions
+used here. The selectors live on different cards (the numbered records of
+the LEAPR-style input file; see the [input file reference](input-reference.md)).
+`iel` is set on Card 5. When `iel=10`, Card 6b adds the other two selectors,
+`elastic_mode` and `inelastic_mode`, which can be combined in any way. This
+page describes each selector, shows how to read them off an input file, and
+gives guidance for picking the right combination for cubic versus noncubic
+and isotropic versus anisotropic materials.
 
 ## The three axes at a glance
 
@@ -19,7 +19,7 @@ versus noncubic and isotropic versus anisotropic materials.
 |------|--------------|------------------|--------|
 | `iel` | Card 5, field 4 | Coherent-elastic (Bragg) treatment | `0` none/incoherent; `1`–`6` built-in materials; `10` generalized (any crystal) |
 | `elastic_mode` | Card 6b, field 1 (`iel=10` only) | ENDF elastic format written | `1` = SEF (single-channel elastic format); `2` = MEF |
-| `inelastic_mode` | Card 6b, field 4 (`iel=10` only) | Inelastic S(α,β) engine | `0` legacy cubic; `1` directional incoherent; `2` coherent one-phonon |
+| `inelastic_mode` | Card 6b, field 4 (`iel=10` only) | Inelastic S(α,β) engine | `0` phonon expansion from a DOS; `1` directional incoherent; `2` coherent one-phonon |
 
 `elastic_mode` and `inelastic_mode` live on Card 6b, which is present only
 when `iel=10`. For the built-in materials (`iel=1`–`6`) and for `iel=0`,
@@ -57,7 +57,7 @@ downstream codes will see.
 
 | `elastic_mode` | Name | What is written | Resulting `LTHR` |
 |----------------|------|-----------------|------------------|
-| `1` | SEF (single-channel elastic format) | One elastic component per atom, scaled to carry the total bound elastic scattering (mechanism below) | `1` (coherent) or `2` (incoherent), per atom |
+| `1` | SEF (single-channel elastic format) | One elastic component per tape (each species' tape), scaled to carry the total bound elastic scattering (mechanism below) | `1` (coherent) or `2` (incoherent), per species |
 | `2` | MEF (Mixed Elastic Format) | Every atom gets both a coherent (per-atom Bragg edges) and an incoherent part | `3` (mixed) |
 
 For a single-atom material under SEF, the component with the larger bound
@@ -82,9 +82,9 @@ supported choice.
 `inelastic_mode` (Card 6b, field 4, `iel=10` only) chooses how the
 inelastic S(α,β) is built.
 
-| `inelastic_mode` | Engine | Debye-Waller | Needs phonopy? | Reads legacy DOS cards? |
+| `inelastic_mode` | Engine | Debye-Waller | Needs phonopy? | Reads the DOS cards? |
 |------------------|--------|--------------|----------------|--------------------------|
-| `0` | Legacy cubic phonon expansion from a tabulated DOS | Isotropic (scalar) | No | Yes (Cards 11–19 / Card 6e) |
+| `0` | Phonon expansion from a tabulated DOS | Isotropic (scalar) | No | Yes (Cards 11–19 / Card 6e) |
 | `1` | Directional incoherent approximation | Directional | Yes | No |
 | `2` | Exact coherent + incoherent one-phonon, incoherent multiphonon | Directional | Yes | No |
 
@@ -92,7 +92,7 @@ inelastic S(α,β) is built.
 Debye-Waller factor and a phonon expansion built from a scalar phonon
 density of states given in the input file, with no phonopy required.
 `inelastic_mode=1` computes a directional Debye-Waller factor for the
-coherent elastic and an in-process noncubic S(α,β), using an
+coherent elastic and an S(α,β) computed in-process from the phonopy calculation, using an
 incoherent-approximation one-phonon term plus incoherent-approximation
 multiphonons. `inelastic_mode=2` is the same as mode 1 except that the
 one-phonon term is exact (coherent plus incoherent) on top of the
@@ -106,13 +106,14 @@ and the number of output energies below it.
 Even in mode 2, only the one-phonon term is coherent. The multiphonon
 orders (n ≥ 2) use the incoherent-approximation model (a per-atom self
 kernel scaled by the atom's total scattering cross section), so coherent
-interference is dropped in the tail. Runs record
-`multiphonon_model = "incoherent_approximation"` in their metadata so the
-mode-2 product is not mistaken for fully coherent multiphonon scattering.
+interference is dropped in the tail. The engine records
+`multiphonon_model = "incoherent_approximation"` in its run metadata (the
+standalone engine's JSON output and the spectra results' engine metadata);
+ENDF tapes do not carry this label.
 
-Modes 1 and 2 ignore the legacy DOS cards.
+Modes 1 and 2 ignore the DOS cards.
 `inelastic_mode=1/2` build the inelastic section (MF7/MT4) and the Debye-Waller factors entirely from
-the phonopy calculation: the legacy continuous-DOS, translational, and
+the phonopy calculation: the continuous-DOS, translational, and
 oscillator detail cards (Cards 11–19) are not read, and Card 6e partial
 spectra are rejected (`nspec` must be `0`). The input file supplies only the
 temperature cards; everything else comes from phonopy. The mixed-moderator
@@ -134,7 +135,7 @@ controls between Cards 6d and 7:
 These modes need the optional phonopy dependency:
 
 ```bash
-pip install -e ".[phonopy]"   # + the noncubic inelastic modes (inelastic_mode=1/2)
+pip install -e ".[phonopy]"   # + the phonopy-backed modes (inelastic_mode=1/2)
 ```
 
 ## Choosing a combination
@@ -155,14 +156,15 @@ direction-dependent, and the powder average of the exact directional
 factor is not the same as applying a single orientation-averaged
 (isotropic) factor.
 
-Graphite is the standard cautionary example: its perpendicular and
-in-plane Debye-Waller terms differ by roughly a factor of 6.6
-(W_c / W_ab ≈ 6.6). An isotropic treatment exponentially over-suppresses
-the one-phonon S(α,β) at high Q relative to the exact directional powder
-average. IRMA's `inelastic_mode=2` performs the directional powder average
-exactly; running `inelastic_mode=0` (isotropic Debye-Waller) on the same
-phonon calculation reproduces the over-suppressed roll-off; the
-Debye-Waller treatment is the only difference between the two runs.
+In graphite, for example, the perpendicular and in-plane Debye-Waller
+terms differ by roughly a factor of 6.6 (W_c / W_ab ≈ 6.6). An isotropic
+treatment exponentially over-suppresses the one-phonon S(α,β) at high Q
+relative to the exact directional powder average. IRMA's `inelastic_mode=2`
+performs the directional powder average exactly; `inelastic_mode=0`
+(isotropic Debye-Waller) on the same phonon calculation shows the
+over-suppressed roll-off. Mode 0 also differs from mode 2 in the one-phonon
+term itself, which it builds in the incoherent approximation from a scalar
+DOS.
 
 ![Directional vs isotropic Debye-Waller attenuation in the graphite one-phonon S(α,β) at E ≈ 2 meV](assets/validation/graphite/fig_graphite_dw_directional.png)
 
@@ -172,7 +174,7 @@ and BeO: coherent component against coherent component, the integrals of
 the symmetric S(α,β) agree to ratios of 1.00001 (graphite), 1.0002 (Be),
 and 0.9998 (BeO).
 For strongly anisotropic crystals, prefer `inelastic_mode=2`; reserve
-`inelastic_mode=0` for cubic materials or for reproducing legacy isotropic
+`inelastic_mode=0` for cubic materials or for reproducing existing isotropic
 evaluations.
 
 ## Card 6g: sampling controls
@@ -187,7 +189,7 @@ ndir  mpdir  [auto_order]  /
 | Field | Name | Meaning |
 |-------|------|---------|
 | 1 | `ndir` | One-phonon powder-average directions, for the coherent and the incoherent term (golden-spiral quadrature). Must be ≥ 1 |
-| 2 | `mpdir` | Multiphonon powder-average directions. The powder average converges by ~50–100; the recommended 1000 keeps headroom against residual azimuthal asymmetry from incomplete averaging over symmetry-equivalent directions (cost is linear in `mpdir`). Must be ≥ 1 |
+| 2 | `mpdir` | Multiphonon powder-average directions. Converges by about 50–100 directions; 1000 is recommended, and the cost grows linearly with `mpdir`. Must be ≥ 1 |
 | 3 | `auto_order` *(optional)* | `0` = honor the Card 3 `nphon` multiphonon order verbatim (default); `1` = auto-size the multiphonon order |
 
 The incoherent powder average is always the exact numerical orientational
@@ -222,7 +224,7 @@ NJOY's thermal processing module.
 
 ## Bragg-edge grouping (optional)
 
-For materials with very dense high-energy coherent-elastic edge structure,
+For materials with many closely spaced high-energy Bragg edges,
 Card 6b accepts two optional trailing fields that enable ENDF-102 §7.2.2
 Bragg-edge grouping:
 
@@ -237,10 +239,10 @@ elastic_mode  nat  nspec  inelastic_mode  [bins_per_decade]  [threshold_eV]  /
 
 Above `threshold_eV`, the dense edge steps are merged into
 `bins_per_decade` log-uniform bins per decade with structure-factor-weighted
-placement. The grouping preserves the cumulative S and the total cross
-section, so it shrinks the tape's edge list without changing the physics
-your transport code integrates. It is off by default; existing four-field
-Card 6b input files are unaffected.
+placement. Grouping keeps the cumulative S exact at every bin boundary and
+every temperature. Within a bin the edges become one step, so the pointwise
+cross section changes slightly, and more at temperatures away from the
+first; the run prints the per-temperature error. It is off by default.
 
 Grouping merges only the edges above the threshold and keeps every
 sub-threshold edge raw, whereas the ungrouped writer applies NJOY's
@@ -250,13 +252,13 @@ therefore produce a larger tape than grouping off. Use the default 1 eV
 threshold unless the dense structure you want compressed actually sits
 below it.
 
-## Putting it together: a noncubic mode-2 input file
+## Putting it together: a mode-2 input file
 
 A minimal `iel=10` / `inelastic_mode=2` Card 5–6g block looks like this
 (graphite, exact one-phonon, auto-sized multiphonon order):
 
 ```
- 11.898 4.739 1 10 0 0 /       --- Card 5: awr, spr (FREE-atom sigma), npr, iel=10, ncold=0, nsk=0
+ 11.898 4.739 1 10 0 0 /       --- Card 5: awr, spr (free-atom sigma), npr, iel=10, ncold=0, nsk=0
  0 /                            --- Card 6: nss=0 (no secondary scatterer)
  1 1 0 2 /                      --- Card 6b: SEF, nat=1, nspec=0, inelastic_mode=2
  2.464 2.464 6.711 90 90 120 / --- Card 6c: hexagonal graphite lattice
