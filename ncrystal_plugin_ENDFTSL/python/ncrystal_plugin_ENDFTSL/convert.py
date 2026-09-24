@@ -4,7 +4,7 @@ import bisect
 import math
 from dataclasses import dataclass
 from .reader import TSLEvaluation, read_tsl
-from . import physics
+from . import __version__, physics
 from .pack import ENDFTSLPack
 
 
@@ -71,7 +71,7 @@ def build_pack(ev: TSLEvaluation, T: float, material_id: str,
             "inelastic_scale": f"{inelastic_scale:.10g}",
             "coherent_scale": f"{coherent_scale:.10g}",
             "physical_bound_xs_barn": f"{law.bound_xs_barn:.10g}",
-            "converter": "ncrystal_plugin_ENDFTSL/0.0.1"}
+            "converter": f"ncrystal_plugin_ENDFTSL/{__version__}"}
     return ENDFTSLPack(
         material_id=material_id, temperature_K=float(T),
         bound_xs_barn=law.bound_xs_barn * inelastic_scale,
