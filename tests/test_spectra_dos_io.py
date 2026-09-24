@@ -38,7 +38,7 @@ def test_resamples_nonuniform_grid_to_uniform(tmp_path):
 
 
 def test_imaginary_modes_dropped_with_warning(tmp_path):
-    """QA4 F33: negative-frequency rows are DROPPED (with a warning), not
+    """Negative-frequency rows are dropped (with a warning), not
     folded onto omega=0 where interpolation would hand their weight to the
     first positive interval."""
     path = _write(tmp_path, "dos.txt", "-5 2\n0 0\n10 1\n20 2\n30 0\n")
@@ -53,7 +53,7 @@ def test_imaginary_modes_dropped_with_warning(tmp_path):
 
 
 def test_fine_grid_resample_floor(tmp_path):
-    """QA4 F35: a very finely gridded DOS (e.g. an MD/VACF export) resamples
+    """A very finely gridded DOS (e.g. an MD/VACF export) resamples
     onto a floored 0.01 meV step instead of inheriting the input spacing and
     blowing up the O(npt^2) phonon-expansion kernel."""
     rows = "".join(f"{w:.4f} {w/100.0}\n" for w in np.arange(0.0, 100.0005, 0.001))

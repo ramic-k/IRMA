@@ -101,8 +101,9 @@ def test_derived_deck_header(fname):
 
 
 @pytest.mark.parametrize("fname", sorted(EXPECTED))
-def test_derived_deck_title_is_quoted_nonempty(fname):
-    """The reconstructed title must survive as a full (non-truncated) string."""
+def test_derived_deck_title_is_nonempty(fname):
+    """Every derived deck keeps a title (quoting is covered by the
+    normalize_title tests below)."""
     h = _read_header(os.path.join(DECK_DIR, fname))
     assert h["title"].strip()
 

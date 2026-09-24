@@ -1,7 +1,7 @@
-"""irma CLI retrofit (P6) -- dispatch, flag->config sugar, guards, I/O.
+"""irma CLI -- dispatch, flag->config sugar, guards, I/O.
 
-Engine-free: no run_spectra execution. Pins (1) the legacy ENDF deck path stays
-reachable byte-for-byte (dispatch + exit codes preserved), (2) the spectra flag
+Engine-free: no run_spectra execution. Pins (1) the ENDF deck form
+(`irma <deck> <out>`) dispatches with its exit codes, (2) the spectra flag
 form builds the SAME SpectraConfig the config form loads, (3) geometry guards /
 angle+override parsing, and (4) the csv/npz/json writers.
 """
@@ -17,7 +17,7 @@ from irma.spectra.config import SpectraConfig
 from irma.spectra.forward import SpectrumResult
 
 
-# ---- backward-compat dispatch ----------------------------------------------
+# ---- deck-form dispatch ----------------------------------------------------
 def test_version(capsys):
     assert cli.main(["--version"]) == 0
     assert "IRMA v" in capsys.readouterr().out
@@ -27,11 +27,11 @@ def test_no_args_prints_help():
     assert cli.main([]) == 0
 
 
-def test_legacy_deck_missing_file():
+def test_deck_form_missing_file():
     assert cli.main(["/no/such/deck.leapr", "out.endf"]) == 1
 
 
-def test_legacy_deck_one_arg():
+def test_deck_form_one_arg():
     assert cli.main(["onlyone"]) == 1
 
 
@@ -102,7 +102,7 @@ def test_flag_form_equals_config_form(tmp_path):
 
 
 def test_mode0_flag_form_builds_dos_config(tmp_path):
-    """QA4 F2/F8: mode 0 is runnable from the flag form -- --inelastic-mode 0
+    """Mode 0 is runnable from the flag form -- --inelastic-mode 0
     plus dos=/mult=/pos= scatterer tokens and --lattice must build a config
     that validates with NO phonopy_yaml."""
     from irma.spectra.config import validate
@@ -125,14 +125,14 @@ def test_mode0_flag_form_builds_dos_config(tmp_path):
 
 
 def test_unknown_scatterer_key_fails_loudly():
-    """QA4 F19: a typo'd key=value token (dso=...) must be rejected naming the
+    """A typo'd key=value token (dso=...) must be rejected naming the
     accepted keys, never silently dropped."""
     with pytest.raises(argparse.ArgumentTypeError, match="unknown key 'dso'"):
         scli.parse_scatterer("C,5.5,11.9,dso=c.txt")
 
 
 def test_missing_config_file_is_clean_exit_2(tmp_path, capsys):
-    """QA4 F6/F0: a nonexistent config path exits 2 with one clean message,
+    """A nonexistent config path exits 2 with one clean message,
     not a traceback."""
     rc = scli.main(["run", str(tmp_path / "nope.yaml"), "-o", "o.csv"])
     assert rc == 2
@@ -149,7 +149,7 @@ def test_malformed_yaml_is_clean_exit_2(tmp_path, capsys):
 
 
 def test_provenance_handles_mode0_without_yaml(tmp_path):
-    """QA4 F0: _provenance must not crash when phonopy_yaml is None (the
+    """_provenance must not crash when phonopy_yaml is None (the
     mode-0 DOS-files case the GUI Run button funnels through)."""
     from irma.spectra.config import SpectraConfig
     cfg = SpectraConfig.from_dict({
@@ -223,7 +223,7 @@ def test_apply_overrides_dotted_and_coercion():
     assert d["grid"]["q_max_invA"] is None
 
 
-# ---- map-config honoring (audit #12 #13 + sweep-1) -------------------------
+# ---- map-config honoring ---------------------------------------------------
 class _Ins:
     output_mode = "map"
     map_mask = True

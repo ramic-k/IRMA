@@ -75,7 +75,7 @@ def test_derived_order_matches_poisson_rule():
         C_E * 12.0 ** 2 / (11.898 * KB * T_K) *
         start(np.where(np.arange(400) == 0, 0.0, sp["rho"]), 400,
               0.0005, BK * T_K, 1.0)[1], rel=1e-12)
-    # thermal carbon-like case: far below the old fixed 100
+    # thermal carbon-like case: far below a fixed order of 100
     assert 2 <= eff < 100
 
 
@@ -116,7 +116,7 @@ def test_compute_mode0_sqe_auto_shrinks_and_stays_converged():
 
 def test_hydrogen_auto_order_full_output_is_converged():
     """The risky case auto-sizing exists for: H at direct-geometry Q derives
-    an order ABOVE the old fixed 100. Derivation alone does not prove the
+    an order above 100. Derivation alone does not prove the
     derived order suffices -- pin the FULL S(Q,E) against a deliberately
     higher explicit order (+40): the integrals must agree to convergence
     noise, demonstrating the 6-sigma+2 margin rule converges hydrogen too."""
@@ -125,7 +125,7 @@ def test_hydrogen_auto_order_full_output_is_converged():
     E = np.linspace(0.0, 400.0, 120)
     auto = compute_mode0_sqe(species=[h], temperature_k=T_K,
                              q_ang_inv=Q, e_mev=E, nphon="auto")
-    assert auto["nphon_effective"] > 100          # genuinely beyond the old cap
+    assert auto["nphon_effective"] > 100          # beyond a fixed order of 100
     ref = compute_mode0_sqe(species=[h], temperature_k=T_K,
                             q_ang_inv=Q, e_mev=E,
                             nphon=int(auto["nphon_effective"]) + 40)

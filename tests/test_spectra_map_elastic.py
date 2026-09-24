@@ -137,7 +137,7 @@ def test_map_elastic_broadening_spreads_the_line_and_keeps_its_integral():
     _, diff, area = _incoherent_line(broaden=True)
     got = diff.sum(axis=1) * GRID["dE"]
     assert np.allclose(got, area, rtol=2e-2)         # the line keeps its area
-    # ... but the line is no longer a two-bin spike
+    # ... and the line is not a two-bin spike
     thresh = 1e-6 * float(np.abs(diff).max())
     assert int((np.abs(diff) > thresh).sum(axis=1).min()) > 2
 

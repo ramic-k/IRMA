@@ -166,7 +166,7 @@ def test_short_sigma_coeffs_validate_without_indexerror(coeffs):
 
 
 def test_sigma_poly_validated_over_full_gain_side_domain():
-    """QA4 (Codex): the runtime evaluates sigma at |E|, so a wide energy-gain
+    """The runtime evaluates sigma at |E|, so a wide energy-gain
     window (|e_min| > e_max) probes the poly BEYOND e_max; validation must
     cover [0, max(e_max, |e_min|)] or a negative gain-side width would be
     silently clipped to a near-zero linewidth downstream."""
@@ -197,7 +197,7 @@ def test_list_frequency_accepted():
 
 def test_chopper_rejects_lorentzian_shape():
     """chopper resolution is Gaussian by construction; pairing it with a
-    Lorentzian kernel would mis-scale the width and shape (audit sweep-4)."""
+    Lorentzian kernel would mis-scale the width and shape."""
     cfg = _direct_cfg()
     cfg.instrument.resolution_model = "chopper"
     cfg.instrument.resolution_shape = "lorentzian"
@@ -249,8 +249,8 @@ def test_spectra_config_inelastic_mode_aliases():
 # ---- run_spectra forwarding ---------------------------------------------------
 def test_run_spectra_forwards_q_cuts(monkeypatch, tmp_path):
     """The flag-form CLI has no --cut-by, so q_cuts must reach
-    compute_spectrum even with the default cut_by='angles' (it previously
-    arrived as None: --q-cuts was silently inert)."""
+    compute_spectrum even with the default cut_by='angles' (as None,
+    --q-cuts would be silently inert)."""
     import irma.spectra.forward as fwd
     import irma.spectra.config as cfgmod
     captured = {}
@@ -276,7 +276,7 @@ def test_run_spectra_forwards_q_cuts(monkeypatch, tmp_path):
     assert captured["produce_angle_spectra"] is True
 
 
-# ---- modes-1/2 species-symbol check (GUI-autofill review, NEW-1) ------------
+# ---- modes-1/2 species-symbol check ------------------------------------------
 def _species_yaml(tmp_path, symbols):
     """Minimal plain-YAML phonopy.yaml with a unit_cell points list."""
     p = tmp_path / "phonopy.yaml"

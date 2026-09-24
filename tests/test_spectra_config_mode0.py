@@ -139,7 +139,7 @@ def test_mode0_run_spectra_end_to_end(tmp_path):
 def test_mode0_elastic_without_crystal_builds_incoherent_only(tmp_path):
     """physics.elastic=True (kind 'both') but no material.lattice -> the
     incoherent line is still built lattice-free, with a NOTE that the coherent
-    Bragg peaks need the lattice (QA4 F31)."""
+    Bragg peaks need the lattice."""
     d = _mode0_dict(tmp_path, physics={"elastic": True})
     d["material"]["scatterers"][0]["sigma_inc_b"] = 80.26
     msgs = []
@@ -151,7 +151,7 @@ def test_mode0_elastic_without_crystal_builds_incoherent_only(tmp_path):
 
 
 def test_mode0_incoherent_elastic_needs_explicit_sigma_inc(tmp_path):
-    """QA4 F11: a missing sigma_inc_b must be a loud config error when the
+    """A missing sigma_inc_b must be a loud config error when the
     incoherent elastic line is requested, not a silent zero channel."""
     from irma.spectra.config import validate, SpectraConfigError
     d = _mode0_dict(tmp_path, physics={"elastic": True})     # kind 'both'
