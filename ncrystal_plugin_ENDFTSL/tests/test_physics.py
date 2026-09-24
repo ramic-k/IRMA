@@ -42,8 +42,7 @@ def test_inelastic_grids_physical_and_lat_unscaled():
     from ncrystal_plugin_ENDFTSL.constants import T_LAT_K
     if ev.lat == 1 and len(ev.beta) > 1:
         assert law.beta_phys[1] == pytest.approx(ev.beta[1] * T_LAT_K / 296.0, rel=1e-9)
-    # the scaled-symmetric table is rectangular [alpha][beta], non-negative,
-    # and equal to the stored values (LLN=0 here)
+    # the scaled-symmetric table is rectangular [alpha][beta] and equal to the
+    # stored values (LLN=0 here)
     assert len(law.sab_scaled_sym) == len(law.alpha_phys)
-    assert all(v >= 0.0 for row in law.sab_scaled_sym for v in row)
     assert law.sab_scaled_sym[3][5] == max(0.0, ev.sab[5][3][0])

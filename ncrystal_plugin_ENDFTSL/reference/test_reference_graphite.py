@@ -2,11 +2,11 @@
 
 Requires the compiled plugin installed (NCrystal auto-discovers it via
 ncrystal-pypluginmgr) plus NCrystal + endf_parserpy. Converts the vendored tape,
-loads it through NCrystal, and checks the three spec-§9 reference identities:
-  (1) coherent  sigma == the tape's own S(E)/E  (verbatim, machine precision),
+loads it through NCrystal, and checks three reference identities:
+  (1) coherent  sigma == the tape's own S(E)/E  (to 1e-6 relative),
   (2) incoherent sigma == ENDF (sb/2)(1-e^-4EW')/(2EW'),
   (3) total sigma == a vendored reference grid.
-This test suite must NOT import irma.
+This test suite must not import irma.
 """
 import json
 import math
@@ -47,7 +47,7 @@ def cfg(tmp_path_factory):
 
 
 def test_plugin_activates(cfg):
-    # the plugin's SABScatter (~0.40 b) replaces the freegas placeholder (~4.9 b)
+    # the plugin's SABScatter (about 0.5 b) replaces the freegas placeholder (~4.9 b)
     inel = NC.createScatter(cfg + ";comp=inelas").crossSectionIsotropic(0.025)
     assert 0.1 < inel < 1.0
 

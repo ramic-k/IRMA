@@ -1,12 +1,12 @@
-"""ENDFTSL polyatomic reference gate: PER-ATOM normalization through the compiled .so.
+"""ENDFTSL polyatomic reference gate: per-atom normalization through the compiled .so.
 
-The C++ plugin (NCPhysicsModel.cc createPluginProcess) sums EVERY pack's scatter
-components at weight 1.0 -- it does NOT apply the NCMAT @DYNINFO atom fractions. So
-per-atom normalization is entirely the converter's job: build_packs scales each pack
-by its atom fraction f, and sum_i f_i*sigma_i = the per-atom average. This gate proves
-that contract through the real plugin: the graphite tape baked as TWO pseudo-species at
-fraction 0.5 each must give the SAME per-atom cross section as the single-species
-graphite pack at fraction 1.0 -- not 2x (which is what a per-formula bug would yield).
+The C++ plugin (NCPhysicsModel.cc createPluginProcess) sums every pack's scatter
+components at weight 1.0; it does not apply the NCMAT @DYNINFO atom fractions. So
+per-atom normalization is the converter's job: build_packs scales each pack by its
+atom fraction f, and sum_i f_i*sigma_i is the per-atom average. This gate checks
+that through the real plugin: the graphite tape baked as two pseudo-species at
+fraction 0.5 each must give the same per-atom cross section as the single-species
+graphite pack at fraction 1.0, not twice it (the per-formula-unit result).
 
 This is the C++-side counterpart of tests/test_polyatomic.py
 (test_fraction_weighting_recovers_per_atom_all_channels), which checks the same identity

@@ -1,6 +1,5 @@
 """Zero-out coverage: a single-component-elastic tape (SEF graphite, LTHR=1)
-imports the coherent channel and cleanly OMITS the absent incoherent channel."""
-import tempfile
+imports the coherent channel and omits the absent incoherent channel."""
 from pathlib import Path
 
 import pytest
@@ -19,12 +18,12 @@ def test_coherent_only_tape_has_no_incoherent_block():
     assert pk.elastic_msd_a2 is None    # incoherent zeroed out
 
 
-def test_zero_out_end_to_end():
+def test_zero_out_end_to_end(tmp_path):
     NC = pytest.importorskip("NCrystal", exc_type=ModuleNotFoundError)
     if "ENDFTSL" not in [p[0] for p in NC.browsePlugins()]:
         pytest.skip("ENDFTSL plugin not installed/discovered")
     from ncrystal_plugin_ENDFTSL.__main__ import main as convert_main
-    out = Path(tempfile.mkdtemp())
+    out = tmp_path
     convert_main([str(TAPE), "-o", str(out), "--material-id", "graphite_cef",
                   "--symbol", "C", "--mass", "12.0107", "--density", "2.26",
                   "--temperature", "296"])

@@ -19,7 +19,7 @@ tape.endf ──python -m ncrystal_plugin_ENDFTSL──▶ <id>.endftslpack + <i
 NCrystal.createScatter("<id>.ncmat") ──▶ the C++ plugin samples:
    inelastic   → NCrystal SABScatter            (from the pack's S(α,β))
    incoherent  → NCrystal ElIncScatter          (MSD = W'·ħ²/2mₙ)
-   coherent    → NCEndfCohElasScatter (NEW)      (the tape's own S(E) Bragg edges, verbatim)
+   coherent    → NCEndfCohElasScatter            (the tape's own S(E) Bragg edges, verbatim)
 ```
 
 ## Convert a tape
