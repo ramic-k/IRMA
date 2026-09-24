@@ -55,14 +55,12 @@ jobs:
           python -m pytest -q
 
   python-latest:
-    # NEWEST STABLE CPython, whatever it is that week. The jobs above pin
+    # The newest stable CPython, whatever it is that week. The jobs above pin
     # 3.12 and vary the dependencies, so they watch dependency drift and
     # are blind to interpreter drift. Nothing stops a user from landing on
     # a Python newer than the CI matrix: pyproject declares
     # requires-python >=3.11 with no cap, so both `pip install irma` and a
-    # conda solver will happily pick the newest interpreter available
-    # (measured: a fresh conda env resolved to 3.14 the day 1.0.0 shipped,
-    # while CI covered 3.11-3.13).
+    # conda solver will pick the newest interpreter available.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
