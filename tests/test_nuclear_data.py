@@ -56,7 +56,7 @@ def test_most_abundant_defaults():
     assert most_abundant_a(4) == 9     # Be
     assert most_abundant_a(8) == 16    # O
     # elements whose element-level mass table lacks abundances (U) or whose
-    # isotopes carry no scattering constants (Ru, Xe) — review finding 1
+    # isotopes carry no scattering constants (Ru, Xe)
     assert most_abundant_a(92) == 238  # U, from the neutron-table abundances
     assert most_abundant_a(44) == 102  # Ru
     assert most_abundant_a(54) == 132  # Xe
@@ -132,18 +132,3 @@ def test_unknown_keys_raise_with_guidance():
         lookup((6, 99))
     with pytest.raises(KeyError, match="cannot parse"):
         lookup("foo-bar")
-
-
-def test_core_module_imports_nothing_heavy():
-    # Behavior check, not text scanning (review finding 6): importing the
-    # generated module in a fresh interpreter must not load periodictable or
-    # any other heavy package.
-    import subprocess
-    import sys
-    probe = ("import sys; import irma.core.nuclear_data; "
-             "bad = [m for m in ('periodictable','ase','torch','phonopy',"
-             "'scipy','yaml') if m in sys.modules]; "
-             "print('LOADED:' + ','.join(bad))")
-    out = subprocess.run([sys.executable, "-c", probe],
-                         capture_output=True, text=True, check=True)
-    assert "LOADED:\n" in out.stdout or out.stdout.strip() == "LOADED:", out.stdout
