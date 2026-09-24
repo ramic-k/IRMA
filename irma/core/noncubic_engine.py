@@ -42,11 +42,11 @@ from pathlib import Path
 
 import numpy as np
 
-# Physical unit constants. Values are identical to phonopy.units (which phonopy
-# is deprecating); hardcoded here so this module imports WITHOUT phonopy. phonopy
-# is only needed at compute time (mesh / thermal-displacement / q-point objects),
-# imported lazily in the functions that use it, so inelastic_mode=1/2 stays the
-# only path that requires it.
+# Physical unit constants: the CODATA 2018 values of irma.core.constants
+# (phonopy uses older values; the differences are below 1e-6 relative). phonopy
+# is only needed at compute time (mesh / thermal-displacement / q-point objects)
+# and is imported lazily in the functions that use it, so this module imports
+# without it.
 from irma.core.constants import (
     BK as _BK_EV_PER_K,
     AMU_KG as AMU,
