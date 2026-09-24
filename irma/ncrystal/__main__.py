@@ -1,8 +1,8 @@
 """CLI: ``python -m irma.ncrystal <config.yaml> -o <outdir>``.
 
 Exports the per-principal NCrystal scattering data (``.irmapack``) for one
-temperature and writes the ``@CUSTOM_IRMA`` NCMAT snippet that wires it into a
-material.
+temperature and writes a complete, loadable material ``.ncmat`` that references
+them in its ``@CUSTOM_IRMA`` section.
 """
 from __future__ import annotations
 
@@ -61,12 +61,13 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, OSError, ValueError) as exc:
         print(f"\nIRMA NCrystal export failed: {exc}", file=sys.stderr)
         return 3
-    print(f"\nExported {len(pack_paths)} NCrystal data file(s) + NCMAT snippet:")
+    print(f"\nExported {len(pack_paths)} NCrystal data file(s) and the material file:")
     for p in pack_paths:
         print(f"  {p}")
     print(f"  {snippet_path}")
-    print("\nAppend the snippet's @CUSTOM_IRMA block to your material's "
-          ".ncmat file and load it with the ncrystal_plugin_IRMA plugin.")
+    print(f"\nWith the ncrystal_plugin_IRMA plugin installed, load it with "
+          f"NCrystal.createScatter(\"{snippet_path};temp="
+          f"{cfg.material.temperature_K:g}K\").")
     return 0
 
 

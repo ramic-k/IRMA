@@ -3,8 +3,9 @@
 ``build_packs(cfg)`` is the one public entry. For each principal scatterer (one
 per chemical species; graphite → 1, BeO → 2) it runs the in-repo standalone
 mode-2 SAB driver, converts to the pack convention, attaches the IRMA-native
-anisotropic-DW elastic line, stamps provenance, and returns the packs plus the
-``@CUSTOM_IRMA`` NCMAT snippet that wires them into a material.
+anisotropic-DW elastic line, stamps provenance, and returns the packs plus a
+complete, loadable material ``.ncmat`` whose ``@CUSTOM_IRMA`` section references
+them.
 
 This reimplements zero physics — the S(α,β) law is exactly what
 ``run_noncubic_standalone_sab`` returns (the same engine output that feeds the
@@ -37,7 +38,7 @@ def resolve_jobs(jobs):
     """Worker count for the engine's parallel direction/shell sums.
 
     ``jobs`` unset (``None``, the config default that a blank GUI field
-    produces) means AUTO: every CPU core. An explicit value caps it — the
+    produces) means auto: every CPU core. An explicit value caps it — the
     lever for a memory-limited machine, since each worker holds its own copy
     of the phonon arrays.
     """
@@ -98,11 +99,11 @@ def _auto_beta_grid(cfg, t_ref, recoil_awr, progress=print):
     treatment every other auto-grid caller uses (the GUI deck writers and
     irma.mlip.emit). A pure-log upper tail would let a linearly-interpolated
     law overshoot the free-atom cross section at high incident energy.
-    ``recoil_awr`` must be the SMALLEST principal-species AWR in the export:
+    ``recoil_awr`` must be the smallest principal-species AWR in the export:
     the ridge beta = 4*beta_max/awr sits highest for the lightest species, so
     capping up to its ridge keeps the one shared grid safe for every species.
 
-    Returns ``(beta, preloaded_full_mesh_or_None)``. The mesh is loaded ONCE, and
+    Returns ``(beta, preloaded_full_mesh_or_None)``. The mesh is loaded once, and
     only when freq_max must be estimated -- returning it as ``preloaded_full_mesh``
     lets every per-species engine call skip a duplicate full-mesh eigensolve
     (the mesh is material-level, identical for all species). With freq_max pinned
@@ -123,8 +124,8 @@ def _auto_beta_grid(cfg, t_ref, recoil_awr, progress=print):
 
 
 def _group_grids(cfg, awr, auto_beta, t_ref):
-    """The (alpha, beta) grid for one principal species. EXPLICIT -> the config
-    grids. AUTOMATIC -> the converged ENDF-style grid: generate_alpha_grid
+    """The (alpha, beta) grid for one principal species. Explicit -> the config
+    grids. Automatic -> the converged ENDF-style grid: generate_alpha_grid
     (linear in Q at alpha_dq_invA up to alpha_qcut_invA, then a log tail) over the
     shared ``auto_beta``. alpha is awr-dependent (per species); beta is shared."""
     if cfg.grid_mode == "explicit":
@@ -210,10 +211,10 @@ def _coherent_bearing_index(groups: list[PrincipalGroup]) -> int:
 
     The coherent structure factor F(hkl)=Σ_sites b_coh·e^{-W}·e^{iφ} is a single
     crystal-wide quantity; to avoid double-counting when packs are summed, the
-    full Bragg-edge structure lives in exactly ONE pack — the species with the
-    largest coherent weight n·b_coh² — and the others contribute only their
-    incoherent DW line.  (Monoatomic → the single pack.)  See the overnight
-    decision log: the alternative is a per-species principal-xs-weighted split.
+    whole elastic block (the Bragg edges and the incoherent Debye-Waller line
+    of every site) lives in exactly one pack, the species with the largest
+    coherent weight n·b_coh². The other packs carry no elastic block.
+    (Monatomic: the single pack.)
     """
     weights = [len(g.site_indices) * g.b_coh_fm ** 2 for g in groups]
     return int(np.argmax(weights)) if weights else 0
@@ -235,7 +236,7 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
     """
     # Pin native (BLAS/OMP) threads to 1 up front, EXPLICITLY -- exactly as the
     # engine's compute_from_args does. The auto-grid path runs a phonopy mesh
-    # eigensolve IN THIS (parent) process before the engine's jobs>1 fork; a
+    # eigensolve in this (parent) process before the engine's jobs>1 fork; a
     # multi-threaded BLAS pool spun up there would leave idle pthreads that the
     # fork inherits (the fork-after-threads deadlock hazard). Do not rely on the
     # import-time setdefault firing first or on threadpoolctl being installed.
@@ -244,7 +245,7 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
 
     (groups, site_groups, site_b_coh_ang, site_sigma_inc,
      symbols) = resolve_principal_groups(cfg)
-    # 'exact-total' gives every per-principal pack the WHOLE-crystal coherent
+    # 'exact-total' gives every per-principal pack the whole-crystal coherent
     # one-phonon total; with >1 group, summing the packs over-counts that channel
     # by the number of species. Only valid for a single principal group.
     if cfg.coherent_partition_mode == "exact-total" and len(groups) > 1:
@@ -270,7 +271,7 @@ def build_packs(cfg: NCrystalExportConfig, *, pack_path_prefix=None,
     # with the lin-lin (iint=1) treatment — NCrystal interpolates linearly in
     # beta, so the tail carries the DELTA_BETA_MAX_LINLIN recoil-ridge cap. The
     # grid is shared across species (the per-species alpha is generated in the
-    # loop), so the cap is sized to the LIGHTEST species' recoil ridge — the
+    # loop), so the cap is sized to the lightest species' recoil ridge — the
     # highest one — which covers every heavier species too. lat=1 anchors the
     # grid units at THERM=0.0253 eV (grid_reference_temperature_K), exactly as
     # the deck writer does. Skipped for an explicit grid so an explicit export
@@ -410,14 +411,13 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
                       f"nlog={cfg.alpha_nlog}")),
         })
 
-    # Per-atom normalization: NCrystal cross sections are PER ATOM, but the C++
-    # plugin sums the per-principal packs at weight 1.0, so a naive multi-species
-    # material reads per-formula-unit (~N_atoms x too high). Scale this pack's
+    # Per-atom normalization: NCrystal cross sections are per atom, but the C++
+    # plugin sums the per-principal packs at weight 1.0, so unscaled
+    # multi-species packs would read per formula unit (~N_atoms x too high). Scale this pack's
     # inelastic bound_xs by the species atom fraction (sites in this group / total
     # cell atoms) so sum_i f_i*sigma_inel,i = per-atom-average. The coherent F(hkl)
     # is already a per-atom whole-crystal quantity (built in C++ from b_coh + the
     # full cell), so only the inelastic bound_xs is scaled. Monatomic -> fraction=1.
-    # (atom_fraction computed above, next to the normalization note.)
     pack = pack_from_irma_sab(
         material_id=f"{cfg.material_id}__{group.symbol}",
         temperature_K=float(mat.temperature_K),
@@ -429,7 +429,7 @@ def _build_pack_for_group(cfg, group_index, group, site_groups, site_b_coh_ang,
         sab_asym_downscatter=sab_downscatter,
         metadata=meta)
 
-    # Elastic block: the coherent-bearing pack holds the FULL primitive-cell
+    # Elastic block: the coherent-bearing pack holds the full primitive-cell
     # anisotropic U-tensor set, from which the C++ plugin builds the coherent
     # structure factor F(hkl) over all sites (so cross-species interference is
     # exact) AND the per-site incoherent DW. The full physical elastic line
@@ -476,7 +476,8 @@ def write_packs(cfg: NCrystalExportConfig, outdir: str | Path, *,
     Returns ``(pack_paths, ncmat_path)``. The ``.ncmat`` is loadable as-is
     (``NCrystal.createScatter("<material_id>.ncmat;temp=<bakeT>")`` with the IRMA
     plugin installed): it carries the phonopy structure + ``@CUSTOM_IRMA``
-    referencing the pack files (relative names; they sit beside it in ``outdir``).
+    referencing the pack files by absolute path (the NCMAT loads from any
+    working directory, but not after ``outdir`` is moved).
     Pass ``;temp=`` equal to ``cfg.material.temperature_K`` (the pack bake
     temperature); the plugin rejects a temperature mismatch and does not
     interpolate. Without ``;temp=`` NCrystal defaults to 293.15 K, which only

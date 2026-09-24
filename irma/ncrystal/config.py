@@ -85,13 +85,13 @@ class NCrystalExportConfig:
     coherent_partition_mode: str = "principal-xs-weighted"
     incoherent_elastic_mode: str = "isotropic"
     # S(alpha,beta) grid (ENDF dimensionless convention, lat=1 -> 0.0253 eV ref).
-    # TWO ways to set it, mirroring the ENDF-evaluation side EXACTLY:
-    #   EXPLICIT  -> give BOTH alpha_grid and beta_grid (dimensionless, lat units).
-    #   AUTOMATIC -> omit both; the SAME converged grid the ENDF evaluator builds
+    # Two ways to set it, as on the ENDF-evaluation side:
+    #   explicit  -> give both alpha_grid and beta_grid (dimensionless, lat units).
+    #   automatic -> omit both; the same converged grid the ENDF evaluator builds
     #                (irma.core.grids.generate_beta_grid / generate_alpha_grid) is
     #                generated from the phonon spectrum. freq_max_eV is auto-derived
     #                from the phonopy mesh when omitted; the other knobs default to
-    #                the ENDF-grid defaults. (NOT a uniform Q/E grid -- that under-
+    #                the ENDF-grid defaults. (Not a uniform Q/E grid -- that under-
     #                integrates the thermal cross section; see generate_alpha_grid.)
     alpha_grid: Optional[list] = None
     beta_grid: Optional[list] = None
@@ -169,8 +169,8 @@ class NCrystalExportConfig:
         # alpha/beta grids are all-or-nothing: both (explicit) or neither (auto).
         if (self.alpha_grid is None) != (self.beta_grid is None):
             raise SpectraConfigError(
-                "provide BOTH export.alpha_grid and export.beta_grid for an "
-                "explicit grid, or NEITHER for the automatic Q/E grid")
+                "provide both export.alpha_grid and export.beta_grid for an "
+                "explicit grid, or neither for the automatic Q/E grid")
         # explicit grids: >= 2 points, finite, strictly increasing
         if self.alpha_grid is not None:
             for name, grid, lower in (("alpha_grid", self.alpha_grid, "positive"),
@@ -308,7 +308,7 @@ class NCrystalExportConfig:
     def effective_multiphonon_max_order(self) -> int:
         """Starting ``multiphonon_max_order`` handed to the engine (``auto`` → 100).
 
-        With ``auto_multiphonon_order`` set, this 100 is the FLOOR, not a cap: the
+        With ``auto_multiphonon_order`` set, this 100 is the floor, not a cap: the
         engine sizes the order up toward high-Q convergence, bounded only by its
         internal safety cap (2000)."""
         return 100 if self.auto_multiphonon_order else int(self.multiphonon_max_order)
