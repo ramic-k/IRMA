@@ -38,8 +38,10 @@ def grid_reference_temperature_K(lat, first_temperature_K):
     exactly x*0.0253 eV at every temperature, and the designed freq_max /
     beta_max / dQ / q_cut are honored exactly. Generating at temps[0] instead
     rescales the whole layout by kT(T0)/THERM -- exact only at 293.6 K, 3.8x
-    too coarse at 77 K, 0.59x truncated at 500 K. ``lat=0`` stores values in
-    kT(T0) units, so there temps[0] is the correct anchor.
+    too coarse at 77 K, 0.59x truncated at 500 K. ``lat=0`` stores alpha and
+    beta in units of kT at each evaluation temperature; the grid is laid out
+    at temps[0], where the designed spacing holds exactly, and scales with T
+    elsewhere.
     """
     return THERM / BK if int(lat) == 1 else float(first_temperature_K)
 
@@ -91,7 +93,10 @@ def linlin_fine_beta_limit(beta_max, awr, freq_max_eV, temperature_K,
     sqrt(2 alpha T_eff(T)/T_grid) with T_eff(T) = T times
     ``effective_temperature_bound_ratio``, and it grows with T, so the limit
     is taken at the hottest of ``evaluation_temperatures_K`` (default: the
-    grid temperature itself).
+    grid temperature itself). The T/T_grid factor is for lat=1 grids, whose
+    stored units are fixed. A lat=0 grid is stored in kT at each temperature,
+    where the factor would be 1; since deck temperatures ascend, T_grid =
+    temps[0] is the coldest and the limit errs on the wide side.
     """
     alpha_max = 4.0 * float(beta_max) / float(awr)
     t_grid = float(temperature_K)
