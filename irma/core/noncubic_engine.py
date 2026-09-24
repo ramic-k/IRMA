@@ -496,10 +496,10 @@ def compute_from_args(
         # meV per THz: times mev_to_joule in the prefactor it is h * 1 THz, the
         # hbar that phonopy's DSF unit factor 1/(AMU (2 pi THz)^2) leaves out, so
         # a line weighs b^2 |Q.e|^2 hbar (n+1) / (2 M omega).
-        one_phonon_energy_jacobian_mev_per_thz = THzToEv * 1000.0
+        one_phonon_mev_per_thz = THzToEv * 1000.0
         one_phonon_principal_site_normalization = 1.0 / float(represented_principal_site_count)
         one_phonon_creation_scale = (
-            one_phonon_energy_jacobian_mev_per_thz * one_phonon_principal_site_normalization
+            one_phonon_mev_per_thz * one_phonon_principal_site_normalization
         )
         incoherent_one_phonon_q_weight_norm = float(np.sum(incoherent_one_phonon_mesh_weights))
         incoherent_one_phonon_hist_lookup = precompute_histogram_lookup(
@@ -1118,7 +1118,7 @@ def compute_from_args(
             "multiphonon_model": "incoherent_approximation",
             "max_mode_energy_meV": max_mode_energy_mev,
             "needed_multiphonon_beta_support": needed_multiphonon_beta_support,
-            "one_phonon_energy_jacobian_meV_per_THz": one_phonon_energy_jacobian_mev_per_thz,
+            "one_phonon_meV_per_THz": one_phonon_mev_per_thz,
             "represented_principal_site_count": represented_principal_site_count,
             "one_phonon_principal_site_normalization": one_phonon_principal_site_normalization,
             "one_phonon_creation_scale": one_phonon_creation_scale,
@@ -1128,6 +1128,12 @@ def compute_from_args(
             "site_group_sizes": [int(len(group)) for group in site_groups],
             "group_coherent_weights": [float(w) for w in group_coherent_weights],
             "coherent_interference_pair_weighting": "w_p/(w_p+w_o) per pair",
+            # what the coherent_diagonal arrays hold in this partition mode
+            "coherent_diagonal_term": (
+                "per-site self term sum_d |A_d|^2"
+                if coherent_partition_mode == "exact-total" else
+                "principal-group self term |F_p|^2, including the "
+                "interference between the group's sites"),
             "output_units": "barn / sr / meV",
             "sab_output": {
                 "coherent_sigma_b_barn": sigma_coh_barn,
