@@ -112,6 +112,7 @@ def test_run_builds_leapr_argv(monkeypatch):
     assert seen["label"] == "Input deck error"   # LEAPR runs ARE deck errors
 
 
+@pytest.mark.skipif(os.name != "posix", reason="process-group kill is POSIX")
 def test_cancel_terminates_forked_workers():
     prog = (
         "import multiprocessing as mp, time, os\n"
