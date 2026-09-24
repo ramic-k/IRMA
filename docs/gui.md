@@ -22,9 +22,9 @@ The IRMA graphical interface has four top-level tabs:
   [its own section below](#mlip-phonon-models-tab); the full reference is the
   [MLIP phonon calculations](mlip.md) page.
 
-The defining behavior of every tab is *progressive disclosure*: a field appears only when the mode that reads it is selected, so you never stare at controls that have no effect on your calculation. Importing an existing input file reveals exactly the sections it uses.
+The defining behavior of every tab is *progressive disclosure*: a field appears only when the mode that reads it is selected, so every visible control affects the calculation. Importing an existing input file reveals exactly the sections it uses.
 
-The second rule is what a fresh form does and does not claim: **everything you should not have to think about is filled in, everything only you can know is empty.** Method settings (mesh, `ndir`/`mpdir`, the automatic-grid knobs, the multiphonon order, the elastic format) ship at the recommended production values, so a first evaluation needs no tuning to be taken seriously. Material *identity* ships blank: `ZA`, `MAT`, `AWR`, `sigma_free` (all defined in the Scattering part below), the lattice parameters, the Card 6d atom types, and the per-element scatterer tables on the other tabs. IRMA cannot know your material, and a plausible-but-wrong prefill is worse than an empty field: someone evaluating BeO would see graphite's numbers, not recognize them, and ship a tape for the wrong material. Each blank group carries a gray hint naming the ways to fill it: **Import Input File**, a committed input file under `examples/`, **Fill structure from phonopy.yaml** (ENDF, modes 1/2), **Fill AWR + sigma_free from ZA**, or **Auto-fill elements from phonopy.yaml** (Neutron Scattering tab). This page describes each part in turn and calls out the pitfalls worth knowing before your first run.
+The second rule is what a fresh form does and does not claim: **everything you should not have to think about is filled in, everything only you can know is empty.** Method settings (mesh, `ndir`/`mpdir`, the automatic-grid knobs, the multiphonon order, the elastic format) ship at the recommended production values, so a first evaluation needs no tuning. Material *identity* ships blank: `ZA`, `MAT`, `AWR`, `sigma_free` (all defined in the Scattering part below), the lattice parameters, the Card 6d atom types, and the per-element scatterer tables on the other tabs. IRMA cannot know your material, and a plausible-but-wrong prefill is worse than an empty field: someone evaluating BeO would see graphite's numbers, not recognize them, and ship a tape for the wrong material. Each blank group carries a gray hint naming the ways to fill it: **Import Input File**, a committed input file under `examples/`, **Fill structure from phonopy.yaml** (ENDF, modes 1/2), **Apply ZA**, or **Auto-fill elements from phonopy.yaml** (Neutron Scattering tab). This page describes each part in turn and calls out the pitfalls worth knowing before your first run.
 
 ## Launching
 
@@ -158,7 +158,7 @@ The **Bragg-edge grouping** checkbox is **on by default** (compact tapes); unche
 
 | Field | Default | Meaning |
 |-------|---------|---------|
-| Bragg-edge grouping (checkbox) | **on** | Group dense high-energy edges. Uncheck to write every edge (the former default). |
+| Bragg-edge grouping (checkbox) | **on** | Group dense high-energy edges. Uncheck to write every edge. |
 | bins/decade | `50` | Above the threshold, the energy axis is split into this many log-uniform bins per decade; all edges in a bin merge into one step at the structure-factor-weighted log-mean energy. |
 | above (eV) | `1.0` | Energy above which grouping may occur. Edges at or below it are always kept individually. |
 
@@ -266,7 +266,7 @@ Set `nss` to **1 — One secondary scatterer** to reveal the secondary-species f
 
 Choosing `b7 = 0` also reveals the **Secondary phonon model (b7 = 0 two-pass only)** panel (its own DOS spacing/values, translational weights, and oscillator energies/weights), which IRMA emits as a complete second pass through the temperature block (the secondary species' own spectrum and weights) and merges with bound-cross-section weighting. The two-pass merge exists only with the classic elastic options: with generalized elastic (`iel = 10`) a bound `b7 = 0` secondary is rejected at parse time (use `b7 = 1`/`2` or `nss = 0`).
 
-For most polyatomic materials, evaluators generate a separate table per species (`nss = 0`) instead of using the mixed-moderator approach. A secondary scatterer is not supported with `inelastic_mode=1/2`, and combining `ncold`/`nsk` with the two-pass case is input-file-only.
+For most polyatomic materials, evaluators generate a separate table per species (`nss = 0`) instead of using the mixed-moderator approach. A secondary scatterer is not supported with `inelastic_mode=1/2`. `nsk` combined with the two-pass secondary is input-file-only; `ncold` > 0 with a two-pass secondary is rejected (the two-pass merge keeps only the symmetric law).
 
 ---
 
@@ -299,10 +299,10 @@ The beta grid has three regions: a logarithmic low-β tail, a linear phonon regi
 
 | Field | Default | Meaning |
 |-------|---------|---------|
-| Max phonon freq | `0.20` | Upper bound of the linear region (eV). The **Detect from DOS** and **Detect from phonopy.yaml** buttons fill this in for you. |
+| Max phonon freq | blank | Upper bound of the linear region (eV). The **Detect from DOS** and **Detect from phonopy.yaml** buttons fill it in; an automatic grid needs a value. |
 | N lower (log) | `15` | Logarithmic points in the low-β (thermal quasi-elastic) tail. |
 | N phonon (linear) | `300` | Linear points across [0, freq_max], where phonon features live. |
-| N upper (log) | `80` | Logarithmic points in the high-β multiphonon tail. 80 is conservative: it keeps the high-β step fine enough that lin-lin (INT=2) interpolation does not overshoot the free-atom limit at high incident energy. Fewer (~20) suffice for log-lin or thermal-only runs; verify grid convergence for your energy range and adjust up or down. |
+| N upper (log) | `80` | Density of the logarithmic high-β multiphonon tail. On a lin-lin (INT=2) grid the tail near the recoil ridge is protected by the step cap whatever this value is (see [Automatic grids](grids.md#the-upper-tail-on-lin-lin-int2-grids)); `n_upper` sets the density of the log tail beyond it. For log-lin grids fewer points (~20) suffice. |
 | Beta max | `5.0` | Maximum energy transfer (eV) for the upper tail. Hydrogen may need 10 eV or more. |
 
 #### Automatic alpha controls
@@ -435,9 +435,11 @@ recommended), **min phonon energy** (blank; a positive value removes the
 modes at or below it from every term, see the ENDF part's field of the
 same name), and for modes 1/2 the powder-average **directions**,
 **multiphonon dirs**, and worker **jobs**, plus the **elastic line** switch,
-**elastic kind** (`both`, `coherent`, `incoherent`), and two toggles:
-**include energy-gain side** (anti-Stokes by detailed balance, on by default)
-and **kinematic kf/ki** (multiply by the flux factor to get the
+**elastic kind** (`both`, `coherent`, `incoherent`), the
+**include energy-gain side** toggle (on by default) with, beneath it, the
+**gain-side method**: *direct (explicit Bose factors)*, the default, or
+*detailed balance (mirror)* (see `gain_side` on the
+[spectra page](spectra.md)), and the **kinematic kf/ki** toggle (multiply by the flux factor to get the
 double-differential cross section, off by default). The elastic line is
 computed directly, with no ENDF file involved, from the same Debye-Waller
 factors as the inelastic part.
@@ -492,8 +494,9 @@ file and overlays them on the 1-D plot.
 
 ## NCrystal plugin tab
 
-This tab writes the per-temperature material data files (`.irmapack` plus the
-`@CUSTOM_IRMA` NCMAT snippet) that the companion transport plugin samples; the
+This tab writes the per-temperature material data files (`.irmapack`) plus a
+complete, loadable NCMAT with the `@CUSTOM_IRMA` section, which the companion
+transport plugin samples; the
 data format, the conventions, and the plugin side are documented on the
 [NCrystal data exporter](ncrystal-plugin.md) page. The form is the same
 material block as the other tabs: **phonopy.yaml** (plus optional **BORN** /
@@ -601,8 +604,8 @@ conservative-force rule, and the disordered workflow, and
 
 A minimal pass down the form for a crystalline-graphite evaluation:
 
-1. **Material**: keep `iel = 10` and `inelastic_mode = 0`, then describe the crystal: lattice `2.4612 2.4612 6.7079 90 90 120`, and one atom line `6 0 11.898 6.646 0.001 4  0.0 0.0 0.25  0.0 0.0 0.75  0.333333 0.666667 0.25  0.666667 0.333333 0.75`. (Both are blank on a fresh form; `examples/tsl/graphite_iel10_classic.input` is exactly this input file if you would rather import it.)
-2. **Scattering**: enter `ZA = 6000`, press **Fill AWR + sigma_free from ZA** (or type `AWR = 11.898`, `sigma_free = 4.739180`, the free-atom value; IRMA derives the bound normalization itself), and give the evaluation a `MAT` number, e.g. `30`.
+1. **Material**: keep `iel = 10` and `inelastic_mode = 0`, then describe the crystal: lattice `2.4612 2.4612 6.7079 90 90 120`, and one atom line `6 0 11.898 6.646 0.001 4  0.0 0.0 0.25  0.0 0.0 0.75  0.333333 0.666667 0.25  0.666667 0.333333 0.75`. (Both are blank on a fresh form; `examples/tsl/graphite_iel10_classic.input` carries this structure, with 10 temperatures and an explicit grid, if you would rather import it.)
+2. **Scattering**: enter `ZA = 6000`, press **Apply ZA** (or type `AWR = 11.898`, `sigma_free = 4.739180`, the free-atom value; IRMA derives the bound normalization itself), and give the evaluation a `MAT` number, e.g. `30`.
 3. **Grids**: enter `296.0`, leave LAT = 1, keep the automatic grid (click **Detect from DOS** to set Max phonon freq), and **Preview Grid Sizes**.
 4. **Phonon**: point **From phonopy total_dos.dat** at your own phonopy `total_dos.dat` for graphite (two columns: frequency in THz and DOS, as written by `phonopy -p mesh.conf`; IRMA converts THz→eV on load).
 5. **Run**: choose an output `.endf` path and click **Run Calculation**.
