@@ -120,8 +120,8 @@ the reduction of Bragg intensity in a real crystallite: once a beam is
 strongly Bragg-scattered it is depleted before it can scatter again, so
 measured peaks fall below the ideal kinematic values (the
 [extinction page](../extinction.md) has the physics). The models are
-ported from CrysXT, the NCrystal extinction plugin of Kittelmann et
-al. (references on the extinction page). The port was verified in two stages. At the kernel
+ported from the NCrystal CrysXT plugin (D. D. DiJulio), which implements
+the Kittelmann et al. recipes (references on the extinction page). The port was verified in two stages. At the kernel
 level, IRMA reproduces CrysXT within rounding (0.000%) for nine reference
 cases spanning the five extinction models; the frozen cases are regression
 references, so the test requires neither NCrystal nor CrysXT at test time.
