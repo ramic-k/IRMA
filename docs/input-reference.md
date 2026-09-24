@@ -361,7 +361,7 @@ extinction <model> l=<Å> g=<rad⁻¹> L=<Å> [dist=<...>] [rec=cls|std] [rmse_t
 |-------|---------|-------------|
 | `<model>` | — | `Sabine_uncorr`, `Sabine_corr`, `BC_pure`, `BC_mix`, `BC_mod`. `BC_mix`/`BC_mod` require `l>0`, `g>0` and `L>0`. |
 | `l` | `0` | Crystallite size [Å] (primary extinction). |
-| `g` | `0` | Mosaic spread [rad⁻¹] (secondary). |
+| `g` | `0` | Mosaic-distribution parameter [rad⁻¹], inversely proportional to the mosaic spread (secondary). |
 | `L` | `0` | Grain size [Å] (secondary). |
 | `dist` | `Gauss`/`rect` | `Gauss`/`Lorentz`/`Fresnel` (BC) or `rect`/`tri` (Sabine). |
 | `rec` | `std` | Becker-Coppens recipe `std` (BC2025) or `cls` (BC1974). |

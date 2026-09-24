@@ -63,7 +63,7 @@ The coherent comparison for BeO is made in the beryllium-principal
 convention: α is computed with the beryllium mass ratio and the result is
 normalized per atom, so whole-cell references can be overlaid on the sum of
 IRMA's principal components. The Euphonic reference was regenerated for a
-one-to-one comparison, with the same golden-sphere powder sampling (10000
+one-to-one comparison, with the same golden-spiral powder sampling (10000
 directions), the same 40³ Debye-Waller mesh, and the material per-atom
 normalization. The scattering-cross-section-weighted sum of IRMA's
 beryllium and oxygen coherent components matches the Euphonic whole-cell

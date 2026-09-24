@@ -46,15 +46,17 @@ was derived from and the reference tape it reproduces:
 | `tsl-HinCH2.input` | `iel=0` with an analytic **free-gas secondary scatterer** (`nss=1`, `b7=1`) |
 | `tsl-BeO.input` | **two-pass bound secondary** (`b7=0`): oxygen gets a full second phonon-spectrum pass |
 | `tsl-l-CH4.input` | liquid methane: **translational diffusion + discrete oscillators** + free-gas secondary |
-| `tsl-ortho-H.input`, `tsl-para-H.input` | **cold hydrogen** (`ncold`) ortho/para statistics + **Sköld** correction (`nsk=2`, S(κ) table) + per-temperature spectra |
+| `tsl-ortho-H.input`, `tsl-para-H.input` | **cold hydrogen** (`ncold`) ortho/para statistics with an S(κ) table (`nsk=2`; with `ncold` > 0 the table feeds the cold-hydrogen spin correlations and the Sköld step itself does not run) + per-temperature spectra |
 
 ```bash
 python -m irma tests/native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-HinCH2.input ch2.endf
 ```
 
-All of these import cleanly into the GUI via **File ▸ Import Input File...** —
-the conditional sections (secondary scatterer, S(κ) tables, ...) reveal
-themselves automatically.
+The six shared-spectrum decks import into the GUI via **File ▸ Import Input
+File...**, and the conditional sections (secondary scatterer, S(κ) tables,
+...) reveal themselves automatically. `tsl-ortho-H` and `tsl-para-H` supply
+a spectrum at every temperature, which the GUI does not support; edit them
+as files.
 
 ## 3. Phonopy-backed noncubic law (`inelastic_mode=1/2`) — `graphite_mode2.input`
 
@@ -103,7 +105,7 @@ Card 7). Extinction is a **sample** property: `l` = crystallite size [Å] (prima
 `g` = mosaic [rad⁻¹] and `L` = grain size [Å] (secondary) — fit them to
 transmission or take them from microstructure; omit the card for the ideal tape.
 Five models are available (`Sabine_uncorr/Sabine_corr`, `BC_pure/BC_mix/BC_mod`,
-the last two requiring `g>0` and `L>0`).
+the last two requiring `l>0`, `g>0` and `L>0`).
 
 ```bash
 python -m irma examples/tsl/be_iel10_extinction.input be_extinction.endf   # repo root

@@ -38,8 +38,10 @@ small, slightly misoriented perfect blocks:
 The dimensionless argument `x` (the extinction strength the model
 computes from `l`, `g`, `L`, and the wavelength) grows with wavelength (`x ∝ λ²` and
 higher powers), so extinction is strongest at long wavelengths (low
-energies) and dies out above ~0.1 eV. Above that cutoff `σ_ext = σ_kin`,
-so the high-energy edges are unchanged.
+energies) and dies out above a sample-dependent cutoff (about 0.1 eV for
+the Be example). IRMA finds the cutoff in each run (30% above the highest
+edge whose extinction correction exceeds the table tolerance) and writes `σ_ext = σ_kin` above it, so the
+high-energy edges are unchanged.
 
 Extinction is a property of the specimen, not
 of the material: `l`, `g`, and `L` describe a particular specimen. They
@@ -114,7 +116,7 @@ Fields:
 |-------|---------|---------|
 | `<model>` | one of the five models above (required) | — |
 | `l` | crystallite (block) size [Å], primary | `0` (off) |
-| `g` | mosaic spread [rad⁻¹] (the Becker-Coppens mosaic-distribution parameter; it scales as the inverse of the mosaic angular spread), secondary | `0` (off) |
+| `g` | mosaic-distribution parameter [rad⁻¹] (inversely proportional to the mosaic spread), secondary | `0` (off) |
 | `L` | grain size [Å], secondary | `0` (off) |
 | `dist` | tilt distribution | `Gauss` (BC) / `rect` (Sabine) |
 | `rec` | BC recipe `std`/`cls` | `std` |
@@ -165,7 +167,7 @@ regardless of the interpolation flag, so tabulating for that step, and
 labeling it INT=1, is both smaller and more faithful than a lin-lin
 table that gets read as a staircase anyway. No NJOY patch is needed.
 
-Extinction adds nodes only below ~0.1 eV; a typical run adds a few
+Extinction adds nodes only below its cutoff; a typical run adds several
 hundred points to the table (e.g. Be: ~2.5k vs ~1.7k). `rmse_tol` trades
 node count for fidelity (default `1e-3` ≈ 0.04% RMSE on the
 reconstructed cross section).
