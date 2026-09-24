@@ -122,8 +122,9 @@ def convol(t1, tlast, n1, nl, nn, delta):
 
     Returns tnext array and normalization check ckk.
     The loop runs over the n1 axis and broadcasts over k; the sums differ
-    from NJOY's order at ~1e-15, below the written digits. An FFT would
-    perturb them.
+    from NJOY's order at ~1e-15 relative, below the written digits. An FFT
+    is not used: its rounding error is absolute, a fraction of the peak, so
+    the small tail values would lose their relative precision.
     """
     tiny = 1.0e-30
     tnext = np.zeros(nn)
@@ -225,7 +226,7 @@ def contin(ssm_slice, alpha, beta, nalpha, nbeta, lat, arat, tev,
 
     # NJOY divergence: NJOY applies this monotonicity clamp only when
     # iprint != 0 (leapr.f90:566-571); IRMA always applies it (the NJOY
-    # reference tapes were made with iprint=1).
+    # reference tapes were made with iprint != 0).
     for k in range(1, nbeta):
         if maxt[k] > maxt[k - 1]:
             maxt[k] = maxt[k - 1]
@@ -256,7 +257,7 @@ def mean_tbar(dos_sites, energy_grid_ev, tev, tbeta):
 def besk1(x):
     """Modified Bessel function K1(x).
 
-    For x <= 1 returns K1(x) directly. For x > 1 returns the EXP-SCALED value
+    For x <= 1 returns K1(x) directly. For x > 1 returns the exp-scaled value
     exp(x) * K1(x) (the exp(-x) asymptotic factor is omitted to avoid underflow at
     large x); a caller that needs the bare K1(x) multiplies by exp(-x). Mirrors
     NJOY's besk1 (leapr.f90)."""
@@ -401,7 +402,7 @@ def trans(ssm_slice, alpha, beta, nalpha, nbeta, lat, arat, tev,
             nbt = nsd
             n_pts = 2 * nbt - 1
 
-            # Precompute log(ap) and interpolation slopes ONCE per alpha
+            # Precompute log(ap) and interpolation slopes once per alpha
             log_ap = np.full(nbeta, slim)
             pos_mask = ap > 0.0
             log_ap[pos_mask] = np.log(ap[pos_mask])
@@ -535,8 +536,9 @@ def bfact(x, dwc, betai):
     bn[~np.isfinite(bn)] = 0.0
     bn[bn < tiny] = 0.0
 
-    # NJOY divergence: terms whose exponential would overflow (arg > 709) are
-    # zero here; NJOY computes Inf * 0 = NaN (docs/njoy.md).
+    # A term whose exponential would overflow (arg > 709) stays zero, because
+    # math.exp raises there (NJOY's Fortran gives Inf). Not reached for
+    # physical decks: bn(i) falls below tiny first.
     bplus = np.zeros(imax)
     bminus = np.zeros(imax)
     xoff = 0.0 if y <= 1.0 else x       # the y > 1 bessel values are exp(-x)-scaled
@@ -903,10 +905,9 @@ def sumh(j, jp, y):
         sum1 = 0.0
         # Bessel orders |j-jp| .. j+jp, truncated to at most 10 terms
         # (orders |j-jp| .. |j-jp|+9), exactly as NJOY's sumh
-        # (leapr.f90: imk..ipk with n1=n-1). The truncation branch is
-        # unreachable for cold H2/D2 (coldh's jterm=3 keeps
-        # min(j,jp) <= 3 while truncation needs >= 5), so the
-        # ortho/para-H2 expected tapes are insensitive to it.
+        # (leapr.f90: imk..ipk with n1=n-1). The truncation needs
+        # min(j,jp) >= 5, which coldh reaches only at j=5 (ortho-H2,
+        # law 2; para-D2, law 5), whose population is negligible.
         imk = abs(j - jp)
         top = j + jp
         if top - imk > 9:
@@ -974,7 +975,7 @@ def _sint_batch_exact(x_arr, bex, rdbex, sex, log_sex, nbx, alph, wt,
     np.clip(k3, 1, nbx - 1, out=k3)
     k1 = k3 - 1
 
-    # Exact INTERIOR grid hits return the raw table value (matching the
+    # Exact interior grid hits return the raw table value (matching the
     # bisection's early exit); endpoint hits interpolate like the scalar.
     left = np.searchsorted(bex[:nbx], xs, side='left')
     hit = (left < nbx) & (bex[np.minimum(left, nbx - 1)] == xs)
@@ -1071,7 +1072,7 @@ def coldh(ssm_slice, ssp_slice, alpha, beta, nalpha, nbeta, lat, arat, tev,
 
         # The rotational machinery — statistical weights bt_stat(j, x), the
         # Bessel/Clebsch-Gordan sums sumh(j, jp, y), and the rotational
-        # energy shifts betap — depends only on alpha (through y), NOT on
+        # energy shifts betap — depends only on alpha (through y), not on
         # beta. Precompute the (betap, weight) table once per alpha instead
         # of once per (alpha, beta): identical values and identical
         # accumulation order, ~600x fewer sumh evaluations.
@@ -1199,11 +1200,10 @@ def sigfig(x, ndig, idig):
     scaled = x * 10.0**ipwr + 10.0**(ndig - 11)
     ii = int(np.round(scaled))
     # Match NJOY util.f90 sigfig exactly: the digit-carry renormalization uses
-    # the SIGNED comparison (ii.ge.10**ndig), not abs(ii). For every IRMA call
-    # site x is non-negative (S(a,b), alpha/beta/energy grids, temperatures, DW
-    # factors, Bragg edges), so ii>=0 and this is byte-identical to the old
-    # abs() form; the signed test only matters for negative x where NJOY does
-    # NOT renormalize at the ii ~ -10**ndig boundary.
+    # the signed comparison (ii.ge.10**ndig), not abs(ii). Every IRMA call
+    # site passes non-negative x (S(a,b), alpha/beta/energy grids,
+    # temperatures, DW factors, Bragg edges); for negative x NJOY does not
+    # renormalize at the ii ~ -10**ndig boundary.
     if ii >= 10**ndig:
         ii = ii // 10
         ipwr = ipwr - 1
