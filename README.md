@@ -5,26 +5,23 @@
 IRMA turns one phonon calculation into three outputs that usually require
 three separate tool chains: an evaluated nuclear data file, predicted
 neutron scattering spectra, and scattering kernels for direct use in
-Monte Carlo neutron transport codes. The three outputs draw on a single, consistent description
-of the material, so the evaluation, the spectroscopy that can validate
-it, and the transport that uses it always agree about the physics.
+Monte Carlo neutron transport codes. The three outputs are computed from
+one description of the material, so the evaluation, the spectra that can
+validate it, and the transport kernels that use it carry the same physics.
 
 **Nuclear data.** IRMA writes ENDF-6 File 7 thermal scattering
 evaluations on automatically constructed (α, β) grids (α and β are the
 dimensionless momentum and energy transfer of the thermal scattering
-law S(α,β), with β = E/kT). This part
-reimplements and generalizes NJOY's LEAPR, the standard module for
-generating thermal scattering law data: IRMA's reimplementation of the
-LEAPR algorithms, the classic kernels, reproduces freshly generated
-NJOY2016 tapes digit for digit and published reference tapes to 7e-5
-(the maximum relative difference in significant S values; a tape is an
-ENDF output file, the historical name used throughout),
-and the generalized modes, selected with extension cards in the same
-input file, add
-the exact coherent one-phonon term, anisotropic Debye-Waller tensors,
-coherent elastic for arbitrary crystals, and a per-species partition
-for polyatomic materials. The tapes feed NJOY, AMPX, FUDGE, and every
-transport code downstream of them.
+law S(α,β), with β = E/kT). IRMA reimplements NJOY's LEAPR, the standard
+module for generating thermal scattering law data. Its classic kernels
+reproduce freshly generated NJOY2016 tapes digit for digit, and published
+reference tapes to a maximum relative difference of 7e-5 in significant
+S values. (A tape is an ENDF output file, the historical name used
+throughout.) Extension cards in the same input file select generalized
+modes that add the exact coherent one-phonon term, anisotropic
+Debye-Waller tensors, coherent elastic for arbitrary crystals, and a
+per-species partition for polyatomic materials. NJOY, AMPX and FUDGE
+process the tapes for transport codes.
 
 **Neutron spectroscopy.** The `irma.spectra` forward model projects
 the same physics onto an instrument's kinematics and resolution: INS
@@ -42,8 +39,8 @@ so McStas, OpenMC, and other NCrystal-aware codes sample the same
 physics. The exported kernels carry the per-site anisotropic
 Debye-Waller tensors, keeping directional coherent-elastic physics
 that NCrystal's standard scalar treatment does not represent. With the
-same physics inside a transport code, an entire beamline becomes a
-virtual experiment: IRMA's end-to-end validation ran a custom McStas
+same physics inside a transport code, a full instrument can be
+simulated: IRMA's end-to-end validation ran a custom McStas
 implementation of the ARCS spectrometer, assembled from the existing
 McVine and McStas models, against measured data.
 
@@ -68,11 +65,11 @@ separately.
 
 - **Phonon expansion** of incoherent inelastic scattering to arbitrary order
 - **Generalized coherent elastic** (Bragg edges) for any crystal structure
-- **Noncubic inelastic workflows** (`inelastic_mode=1/2`) for noncubic
-  crystals, including per-species principal-scatterer evaluations of
-  polyatomic crystals such as BeO, with directional Debye-Waller treatment
-  and S(alpha,beta) computed from a phonopy calculation
-- **Automatic alpha/beta grid generation** with user-controllable density
+- **Phonopy-backed inelastic modes** (`inelastic_mode=1/2`): directional
+  Debye-Waller factors and S(α,β) computed from a phonopy calculation;
+  mode 2 adds the exact coherent one-phonon term. Polyatomic crystals such
+  as BeO get one principal-scatterer evaluation per species
+- **Automatic α/β grid generation** with user-controllable density
   in logarithmic and linear regions
 - **Graphical interface** (tkinter) for easy configuration and execution
 - **Command-line interface** for scripting and batch processing
@@ -105,23 +102,27 @@ separately.
   materials with very dense high-energy edge structure
 - **Validated**, with committed, rerunnable harnesses under `tests/`:
   - the classic kernels reproduce published ENDF/B-VIII.1 reference tapes
-    to 7e-5 (graphite/Fe/Al/CH2) and freshly generated NJOY2016 tapes
-    exactly (liquid CH4, ortho/para-H2, ortho/para-D2, and two-pass BeO,
-    covering the translational, discrete-oscillator,
-    cold-hydrogen/deuterium, Sköld, and mixed-moderator kernels)
+    to 7e-5 (graphite, Fe, Al, H in CH2) and freshly generated NJOY2016.78
+    tapes exactly (liquid CH4, ortho/para-H2, two-pass BeO), covering the
+    translational, discrete-oscillator, cold-hydrogen, and mixed-moderator
+    kernels; fast-suite minitapes pin cold deuterium and the Sköld
+    correction against NJOY byte for byte
   - the mode-2 coherent one-phonon law agrees with Euphonic to
     shared-domain integral ratios of 1.00001 (graphite), 1.0002
     (beryllium), and 0.9998 (BeO), with median per-Q differences of
     0.18% and 0.005% for graphite and beryllium
   - the full S(α,β) matches OCLIMAX to integral ratios of 0.96-0.99
     (graphite, beryllium, BeO)
-- **Production defaults**: a setting you omit gets the validation
-  campaign's value (sampling, mesh density, grids) on every surface;
-  the committed examples also include clearly labeled quick variants
-  for fast exploration
-- Friendly input validation: errors name the card, the expected/found
-  values, and the input line
-- Save/load configurations as JSON
+- **Production defaults**: the GUI form, `irma mlip emit`, and the spectra
+  and NCrystal configurations default to the validation campaign's values
+  (sampling, mesh density, grids). In a hand-written input file, Card 6g's
+  `auto_order` defaults to 0; set it to 1 for production. The committed
+  examples also include clearly labeled quick variants for fast
+  exploration
+- Input validation: errors name the card, the expected and found values,
+  and the input line
+- The GUI imports and exports input files, and saves and loads the
+  spectra and NCrystal configurations as YAML
 
 ## Installation
 
@@ -136,6 +137,9 @@ separately.
   and by `irma.spectra` for inelastic modes 1/2 and `dos_source: phonopy`
 - scipy + PyYAML are optional (`pip install -e ".[spectra]"`): required only
   by the `irma.spectra` forward model
+- the NCrystal exporter (`irma ncrystal`) needs both `[phonopy]` and
+  `[spectra]` (it exports modes 1/2 from a YAML config); the C++ plugins
+  are built separately (below)
 - ase + phonopy + PyYAML are optional (`pip install -e ".[mlip]"`): required
   only by the `irma mlip` phonon front end; the pretrained potentials are
   never installed with IRMA: `irma mlip env create <potential>` builds each
@@ -179,7 +183,7 @@ effect without reinstalling):
 git clone https://github.com/ramic-k/IRMA.git
 cd IRMA
 pip install -e .              # core (the classic kernels, iel=0-6 and iel=10 mode 0)
-pip install -e ".[phonopy]"   # + the noncubic inelastic modes (inelastic_mode=1/2)
+pip install -e ".[phonopy]"   # + the phonopy-backed modes (inelastic_mode=1/2)
 pip install -e ".[spectra]"   # + the neutron scattering forward model (irma spectra)
 pip install -e ".[mlip]"      # + the MLIP phonon front end (irma mlip)
 ```
@@ -220,17 +224,17 @@ documents its build environment and reference tests.
 python -m pytest              # fast regression suite (no phonopy needed)
 ```
 
-Validation harnesses live under `tests/` and are run manually
-(not in CI):
+Three validation harnesses live under `tests/` and are run manually
+(not in CI); the manual's
+[installation page](https://ramic-k.github.io/IRMA/installation/#developer-install-and-running-the-tests)
+describes each:
 
-- `tests/native_LEAPR_NJOY_ENDF_validation/`: reproduces NJOY-LEAPR
-  reference ENDF tapes (graphite, Fe, Al, polyethylene to 7e-5; liquid
-  methane and ortho-/para-hydrogen exactly, covering trans/discre/coldh/
-  skold); fully self-contained.
-- `tests/mode2_euphonic_n1_validation/`: cross-validates the mode-2 exact
-  one-phonon law against Euphonic (graphite, Be). The frozen Euphonic
-  reference is committed; regenerating it (only needed if the phonon
-  calculation changes) requires the `euphonic` package.
+- `tests/native_LEAPR_NJOY_ENDF_validation/`: the classic kernels against
+  reference ENDF tapes.
+- `tests/mode2_euphonic_n1_validation/`: the mode-2 exact one-phonon law
+  against Euphonic (graphite, Be, BeO).
+- `tests/mode0_validation/`: the mode-0 (DOS) spectrum against mode 1 for
+  graphite at VISION.
 
 ## Documentation
 
@@ -239,15 +243,12 @@ quickstart, three end-to-end tutorials (one per output), the GUI tour, the full 
 behind each mode, the validation record, and the MLIP, spectra, and
 NCrystal-plugin guides.
 
-The manual and this README were drafted with Anthropic's Claude Code
-(the Claude Fable 5 model), working under the author's direction and
-review, and they are revised continuously as the project evolves. If a
-passage reads oddly, or you find an error, please open an issue;
-documentation reports are as welcome as code bugs.
+If a passage in the manual reads oddly, or you find an error, please open
+an issue; documentation reports are as welcome as code bugs.
 
 ## Usage
 
-### Graphical Interface
+### Graphical interface
 
 ```bash
 python -m irma --gui
@@ -261,18 +262,18 @@ This opens the IRMA GUI where you can:
 4. Specify phonon data (from phonopy or manual entry)
 5. Run the calculation and monitor progress
 
-Configurations can be saved/loaded as JSON files via the File menu.
-Existing IRMA/LEAPR input files (`.input` or `.leapr`) can be imported
-via File > Import Input File to populate all GUI fields.
+File > Export Input File writes the form as an input file, and
+File > Import Input File reads an existing IRMA/LEAPR input file
+(`.input` or `.leapr`) back into the form.
 
-### Command Line
+### Command line
 
 ```bash
 python -m irma input_file output_file
 ```
 
 The IRMA input file uses a card-based format derived from the LEAPR module
-of NJOY. See the input card documentation below for details.
+of NJOY; see [Input file reference](#input-file-reference) below.
 
 ### MLIP phonon calculations
 
@@ -300,8 +301,8 @@ The forward model has its own CLI (`pip install -e ".[spectra]"` first):
 ```bash
 # VISION spectrum from a phonopy calculation (inelastic mode 1 or 2).
 # --scatterer decodes as: symbol, bound cross section [b], atomic weight
-# ratio, b_coh [fm], sigma_inc [b]; IRMA's built-in nuclear-data table
-# supplies these values from a ZA (the GUI fills them automatically):
+# ratio, b_coh [fm], sigma_inc [b]. The CLI does not look these up, so
+# pass all five; the GUI fills them from IRMA's nuclear-data table:
 python -m irma spectra vision --phonopy-yaml phonopy.yaml --inelastic-mode 2 \
     --scatterer "C,5.551,11.898,6.646,0.001" --temperature 300 -o vision.csv
 
@@ -327,7 +328,7 @@ The exporter that writes per-temperature `.irmapack` files (plus a loadable
 
 ```bash
 irma ncrystal -o outdir config.yaml          # subcommand form
-python -m irma.ncrystal -o outdir config.yaml   # module form (unchanged)
+python -m irma.ncrystal -o outdir config.yaml   # module form
 ```
 
 See the manual's [NCrystal plugin](https://ramic-k.github.io/IRMA/ncrystal-plugin/) page for the
@@ -344,14 +345,14 @@ Real, validated input files ship with the repository:
   sits next to the NJOY LEAPR input file it was derived from and the
   reference tape it reproduces (the multi-MB companions are
   repository-only).
-- **Noncubic mode 2** (`iel=10`, phonopy-backed exact coherent one-phonon +
+- **Mode 2** (`iel=10`, phonopy-backed exact coherent one-phonon +
   incoherent-approximation multiphonon):
   `examples/tsl/graphite_mode2.input`, a production-style input file with
   auto-sized multiphonon order and the documented sampling standard; see
   `examples/tsl/README.md` for the run command. (The
   `tests/mode2_euphonic_n1_validation/*/irma_mode2_n1.input.template` files
-  are the cross-code validation harness: they deliberately compute the
-  one-phonon term ONLY and are not production tapes.)
+  are the cross-code validation harness: they deliberately compute only
+  the one-phonon term and are not production tapes.)
 
 ```bash
 python -m irma tests/native_LEAPR_NJOY_ENDF_validation/leapr_decks/tsl-crystalline-graphite.input graphite.endf
@@ -362,7 +363,7 @@ located automatically), and
 `tests/native_LEAPR_NJOY_ENDF_validation/leapr_to_irma_input.py` converts
 an NJOY LEAPR input file into a standalone IRMA input file.
 
-## Automatic Grid Generation
+## Automatic grid generation
 
 IRMA can automatically generate alpha and beta grids optimized for the
 phonon spectrum of your material, in the GUI (the Grids part of the ENDF form) or via the
@@ -380,83 +381,20 @@ The alpha grid is linear in momentum transfer Q (alpha quadratic): a
 dQ = 0.05 1/Angstrom segment up to Q = 12 covers the thermal scattering
 window, and a logarithmic tail extends to the beta grid's kinematic
 reach (alpha_max = 4*beta_max/A). The thermal-energy cross section is
-controlled by S(alpha, beta) at small alpha, where this layout resolves
-the upscatter windows that a beta-mirrored (recoil-relation) alpha grid
-under-samples.
+controlled by S(α,β) at small alpha, where this layout resolves
+the upscatter windows that an alpha grid built by mirroring the beta grid
+through the recoil relation under-samples.
 
-## Input Cards Reference
+## Input file reference
 
 The IRMA input file format is NJOY free-format (values separated by spaces,
 each card terminated by `/`) and follows the LEAPR card structure. Malformed
-input files are rejected with the offending card, the expected/found values,
-and the input line number.
-
-### Control cards (every input file)
-
-| Card | Fields | Notes |
-|------|--------|-------|
-| 1 | `nout` | Output unit, kept for LEAPR compatibility (IRMA writes the file named on the command line) |
-| 2 | `'title'` | Quoted title string |
-| 3 | `ntempr iprint nphon` | Temperature count, print level, phonon-expansion order (`nphon` is also the multiphonon maximum order for `inelastic_mode=1/2`) |
-| 4 | `mat za isabt ilog smin` | ENDF MAT/ZA, S(α,−β) output flag, log-storage flag, minimum stored S. For `iel=10` the ZA must encode the physical nuclide (1000·Z+A) so the principal scatterer can be matched to a Card 6d atom |
-| 5 | `awr spr npr iel ncold nsk` | Principal scatterer: mass ratio, free-atom cross section, atom count (≥ 1), elastic option, cold-hydrogen option (0–4), pair-correlation option (0 = none, 1 = Vineyard, 2 = Sköld; only Sköld modifies the law). `iel`: 0 = none/incoherent, 1–6 = built-in coherent elastic (graphite, Be, BeO, Al, Pb, Fe), 10 = generalized (any crystal, Cards 6b–6g follow). `ncold`/`nsk` are not available with `inelastic_mode=1/2` |
-| 6 | `nss b7 aws sps mss` | Secondary scatterer: count (0 or 1), type (`b7`: 0 = SCT, where a second full temperature block follows the principal's; 1 = free gas; 2 = diffusion), mass ratio (> 0), cross section (> 0), atom count (≥ 1). Not available with `inelastic_mode=1/2`. The GUI supports all three `b7` models; for the two-pass case it authors the secondary's phonon input with the shared-spectrum convention (first temperature positive, the rest negative), and `ncold`/`nsk` combined with two-pass remains input-file-only |
-| 7 | `nalpha nbeta lat` | Grid sizes; `lat=1` = grids given at 0.0253 eV reference temperature |
-| 8 | α grid | `nalpha` values, strictly increasing, > 0 (may span lines; one `/` ends the card) |
-| 9 | β grid | `nbeta` values, strictly increasing, from ≥ 0 |
-
-### Generalized-elastic cards (only when `iel=10`, between Cards 6 and 7)
-
-| Card | Fields | Notes |
-|------|--------|-------|
-| 6b | `elastic_mode nat nspec inelastic_mode [bins_per_decade] [threshold_eV]` | `elastic_mode`: 1 = SEF (single-channel elastic format, designated-coherent atom), 2 = MEF (LTHR=3 mixed). `inelastic_mode`: see below. Optional fields 5–6 enable ENDF-102 §7.2.2 Bragg-edge grouping: above `threshold_eV` (default 1 eV) the dense edge steps are merged into `bins_per_decade` log-uniform bins per decade with structure-factor-weighted placement; cumulative S and the total cross section are preserved. 0/absent = off |
-| 6c | `a b c alpha beta gamma` | Lattice constants [Å] and angles [°] |
-| 6d | `Z A awr b_coh sigma_inc npos` + `npos` fractional positions | Repeated `nat` times. `b_coh` in fm, `sigma_inc` in barns. For `inelastic_mode=1/2` the positions must match the phonopy primitive cell |
-| 6e | `Z A delta ni` + `ni` rho values | Repeated `nspec` times (mode 0 only: per-species Debye-Waller spectra). For modes 1/2 `nspec` must be 0 and Card 6e omitted (input error otherwise) |
-| 6f | `'phonopy.yaml path'` then `mesh_nx mesh_ny mesh_nz ncpu use_born` (then BORN path if `use_born=1`) | Modes 1/2 only. Force constants are read from the yaml itself if embedded, otherwise discovered next to it (`force_constants.hdf5`, `FORCE_CONSTANTS`, `FORCE_SETS`, in that order; nothing found = error; the working directory is never consulted). `ncpu` = worker-process count for the in-process SAB calculation; `use_born=1` applies the non-analytical-term correction (LO-TO splitting) to both the MT2 directional Debye-Waller factors and every MT4 mode sum (unreadable BORN file = error). With `use_born=0`, NAC embedded in the named phonopy.yaml is still honored, but a `BORN` file in the working directory is never auto-read |
-| 6g | `ndir mpdir [auto_order]` | Modes 1/2 only. `ndir` = one-phonon powder-average directions, coherent and incoherent (golden-spiral quadrature). `mpdir` = multiphonon powder-average directions (converged by ~50–100; production default 1000, the validation-campaign sampling; cost is linear). `auto_order`: 0 = honor Card 3 `nphon` verbatim (default), 1 = auto-size the multiphonon order. Transfers beyond the tabulated law are covered downstream by the short-collision-time extension of THERMR, NJOY's thermal processing module (driven by the tape's effective temperature) |
-
-### Temperature cards (Card 10 onward)
-
-For each of the `ntempr` temperatures, one temperature card, then (for the
-classic kernels and `inelastic_mode=0`) the scattering-law detail block:
-
-| Card | Fields | Notes |
-|------|--------|-------|
-| 10 | `T` | Temperature [K]. **A negative value reuses the previous temperature's entire detail block** (the LEAPR shared-DOS convention: one spectrum, many temperatures); no detail cards follow it |
-| 11 | `delta ni` | Continuous-spectrum energy spacing [eV] and point count |
-| 12 | `rho(1..ni)` | Phonon density of states on the equidistant grid |
-| 13 | `twt c tbeta` | Translational weight, diffusion constant (0 = free gas), continuous weight |
-| 14 | `nd` | Number of discrete oscillators |
-| 15/16 | oscillator energies [eV] / weights | Only if `nd > 0` |
-| 17/18 | `nka dka` / `S(κ)` values | Only if `nsk > 0` or `ncold > 0` |
-| 19 | `cfrac` | Only if `nsk > 0` |
-
-`inelastic_mode=1/2` input files supply **only** the temperature cards: the
-inelastic law comes from the phonopy calculation, and the detail block is not read.
-
-After the last temperature block: optional quoted comment cards (one per
-line) become the ENDF MF1/MT451 description; a bare `/` ends the section.
-
-### The `inelastic_mode` workflows (Card 6b, `iel=10`)
-
-- `inelastic_mode=0`: isotropic Debye-Waller + cubic inelastic from the
-  input file's tabulated DOS (no phonopy needed)
-- `inelastic_mode=1`: directional DW for the coherent elastic + in-process
-  noncubic S(α,β): incoherent-approximation one-phonon plus
-  incoherent-approximation multiphonons
-- `inelastic_mode=2`: directional DW + in-process noncubic S(α,β): **exact**
-  one-phonon (coherent + incoherent) plus incoherent-approximation
-  multiphonons
-
-For the noncubic modes: put the full primitive cell in Card 6d (all atom
-types of a mixed material); keep one principal scatterer per input file
-(Card 4 ZA / Card 5 select it; for BeO run two input files); the exported MT4 is the
-principal-scatterer law. Mode 1 keeps principal self-terms only; mode 2
-assigns cross-group coherent interference to the principal with
-coherent-strength weighting. Parallelism is controlled by Card 6f `ncpu`
-(native BLAS/OpenMP threads are intentionally pinned to 1, measured to be
-the optimum; see CONTRIBUTING.md).
+input files are rejected with the offending card, the expected and found
+values, and the input line number. The card-by-card reference, including
+the `iel=10` cards (Cards 6b-6g), is the manual's
+[Input file reference](https://ramic-k.github.io/IRMA/input-reference/)
+page; the [Scattering modes](https://ramic-k.github.io/IRMA/modes/) page
+explains `elastic_mode` and `inelastic_mode`.
 
 ## AI-assistant skill
 
@@ -562,8 +500,9 @@ IRMA builds upon algorithms and methods from the following projects:
 
 IRMA's development also relied on two AI coding assistants, Anthropic's
 Claude Code and OpenAI's Codex, which were used throughout for
-implementation, testing, code review, and documentation. The physics
-decisions, the validation record, and the released code were directed
+implementation, testing, code review, and documentation (the manual and
+this README were drafted with Claude Code). The physics decisions, the
+validation record, the documentation, and the released code were directed
 and reviewed by the author.
 
 IRMA development was supported by the DOE/NRC Collaboration for
