@@ -58,9 +58,9 @@ BARN_PER_M2 = 1e28
 def limit_native_threads_to_one() -> None:
     """Pin native thread pools to IRMA_WORKER_THREADS threads (default 1).
 
-    Sets the environment variables (setdefault, so a caller's choice wins) and,
-    when threadpoolctl is installed, clamps pools an earlier numpy import
-    already started.
+    Sets the environment variables (setdefault, so a caller's choice wins) and
+    clamps, through threadpoolctl (a required dependency), pools an earlier
+    numpy import already started.
     """
     limit = _worker_thread_limit()
     for name in NATIVE_THREAD_ENV_VARS:
@@ -403,7 +403,10 @@ def share_worker_state(state: dict):
 
 
 def release_shared_state(shm_handles) -> None:
-    """Close and unlink the parent's shared-memory blocks after pool shutdown.
+    """Close and unlink the parent's shared-memory blocks of one stage.
+
+    Called after every stage (run_blocks' finally block) while the pool stays
+    alive; the workers re-attach on the next stage's new generation.
 
     unlink() marks the segment for removal on POSIX; on Windows it is a
     no-op and the segment disappears when the last handle closes. Errors are
@@ -422,7 +425,7 @@ def release_shared_state(shm_handles) -> None:
 
 
 # Attached segments in a worker process, replaced wholesale on each state
-# generation swap. numpy views into a SharedMemory buffer do NOT keep the
+# generation swap. numpy views into a SharedMemory buffer do not keep the
 # SharedMemory object alive; if it were garbage collected the buffer would be
 # unmapped under the arrays' feet, so the handles live here for exactly as
 # long as WORKER_STATE points into them.
@@ -565,9 +568,14 @@ def _batched_qpoints_eigh(dynamical_matrix, qpoints, factor_to_thz):
 def accumulate_coherent_block(indices: np.ndarray) -> np.ndarray:
     """Accumulate coherent one-phonon S(Q,E) and its diagonal/interference split.
 
-    This is the exact harmonic coherent ``n=1`` term: we sum atom amplitudes
-    first and square afterward. The diagonal and interference pieces are stored
-    separately so the user can inspect the coherent decomposition explicitly.
+    The harmonic coherent ``n=1`` term: atom amplitudes are summed first and
+    squared afterward. With ``coherent_partition_mode='exact-total'`` the total
+    is the whole-cell term, the diagonal the per-site sum of ``|A_d|^2`` and
+    the interference the rest. In the principal-xs-weighted mode the total is
+    the principal's share (``principal_weighted_coherent_partition``): the
+    diagonal is the principal group's ``|F_p|^2``, which includes the
+    interference between sites of that group, and the interference is its
+    weighted share of the cross-group terms.
     """
 
     state = WORKER_STATE
