@@ -336,7 +336,7 @@ class PhonopyMeshData:
     masses_amu: np.ndarray      # (N_atoms,) atomic masses in amu
     atom_symbols: List[str]     # e.g. ['C', 'C', 'C', 'C']
     atom_positions: np.ndarray  # (N_atoms, 3) fractional coords in primitive cell
-    min_phonon_energy_mev: float = 0.0  # user cutoff; 0 preserves legacy floors
+    min_phonon_energy_mev: float = 0.0  # user cutoff; 0 keeps the automatic floors only
     phonopy_mesh_object: object = field(default=None, repr=False, compare=False)
     lattice_ang: np.ndarray = None  # (3, 3) primitive lattice rows [Angstrom]
 
@@ -481,9 +481,9 @@ def format_phonon_cutoff_summary(summary):
     s = summary
     lines = [
         f"Phonon-energy cutoff {s['min_phonon_energy_meV']:g} meV at "
-        f"{s['temperature_K']:g} K: {s['imaginary_modes']} imaginary mode(s) and "
-        f"{s['baseline_floor_excluded_modes']} mode(s) under the automatic floors "
-        f"were already excluded; the cutoff removes {s['cutoff_removed_modes']} more "
+        f"{s['temperature_K']:g} K: {s['baseline_floor_excluded_modes']} mode(s) "
+        f"were already excluded by the automatic floors ({s['imaginary_modes']} of "
+        f"them imaginary); the cutoff removes {s['cutoff_removed_modes']} more "
         f"of {s['mode_count']} modes ({100.0 * s['cutoff_removed_weight_fraction']:.4f}% "
         f"of the mode weight). Per-atom DOS trace 3 -> "
         + ", ".join(f"{3.0 - d:.6f}" for d in s["dos_trace_deficit_per_atom"])
@@ -516,7 +516,7 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
         Monkhorst-Pack mesh dimensions, e.g. [40, 40, 40].
     born_path : str or None
         Path to BORN file for non-analytical correction (NAC).
-        If None, no NAC is applied.
+        If None, NAC embedded in the yaml is applied (never ./BORN).
     force_constants_filename, force_sets_filename : str or None
         Explicit force-constants / force-sets file; overrides the
         yaml-adjacent discovery, but not force constants embedded in the
@@ -534,7 +534,8 @@ def load_phonopy_mesh(phonopy_yaml_path, mesh_dim, born_path=None,
                           force_sets_filename=force_sets_filename)
     except ImportError:
         raise ImportError(
-            "phonopy is required for non-cubic inelastic calculations. "
+            "phonopy is required for phonopy-backed calculations (inelastic_mode "
+            "1/2, the phonopy spectra paths, the NCrystal export). "
             "Install with: pip install phonopy")
 
     # The full mesh: an irreducible q-point stands for one star member only,
