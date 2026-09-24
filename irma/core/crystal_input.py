@@ -1,20 +1,20 @@
 """Species -> Card 6d crystal-input helpers, shared by every prefill path.
 
-A phonon model names ELEMENTS, not isotopes: a phonopy.yaml (or an MLIP
+A phonon model names elements, not isotopes: a phonopy.yaml (or an MLIP
 bundle structure) records the symbol ``C``, never ``12-C``, and it says
-nothing about enrichment. The honest default identity for a prefilled
-Card 6d row is therefore the natural element, which ENDF codes as A = 0,
+nothing about enrichment. The default identity for a prefilled Card 6d row
+is therefore the natural element, which ENDF codes as A = 0,
 with that same table entry's natural-abundance constants -- identity and
 physics then come from one entry and cannot disagree. This mirrors what
 ``irma mlip emit`` writes for an un-``--nuclide``d species.
 
 Nuclides whose tabulated scattering length the source table marks
-ENERGY-DEPENDENT (resonance-region values, not static constants) are
+energy-dependent (resonance-region values, not static constants) are
 refused: silently prefilling them would put a number in the deck that is
 only valid at one energy.
 
 Everything here is Tk-free and side-effect-free. Advisories are returned
-as DATA (``warnings`` lists) so the caller -- CLI progress line, GUI
+as data (``warnings`` lists) so the caller -- CLI progress line, GUI
 dialog, or a test -- decides how to show them; core never prints.
 """
 from __future__ import annotations
@@ -102,8 +102,8 @@ def species_from_sites(symbols: Sequence[str],
         if symbol == "H":
             # A phonon model cannot distinguish the two: deuterated samples
             # are routinely modelled with the symbol H, and the natural-H
-            # constants (b_coh = -3.74 fm, sigma_inc = 80.3 b) are wildly
-            # wrong for D (6.67 fm, 2.05 b).
+            # constants (b_coh = -3.74 fm, sigma_inc = 80.3 b) differ strongly
+            # from the D values (6.67 fm, 2.05 b).
             warnings.append(
                 "H: a phonon model labels deuterium as H; if these sites are "
                 "deuterium, replace the row's A and constants with the 2-H "
