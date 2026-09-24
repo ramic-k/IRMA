@@ -246,11 +246,10 @@ def contin(ssm_slice, alpha, beta, nalpha, nbeta, lat, arat, tev,
     return f0, tbar, deltab
 
 
-def cubic_trace_tbar(dos_tensor_sites, energy_grid_ev, tev, tbeta):
-    """Mean tbar over sites from rho_iso = Tr[rho]/3, and the beta spacing."""
+def mean_tbar(dos_sites, energy_grid_ev, tev, tbeta):
+    """Mean tbar over sites from their per-atom DOS, and the beta spacing."""
     delta_ev = energy_grid_ev[1] - energy_grid_ev[0]
-    rho_iso = np.trace(dos_tensor_sites, axis1=1, axis2=2) / 3.0
-    tbars = [start(r, len(r), delta_ev, tev, tbeta)[2] for r in rho_iso]
+    tbars = [start(r, len(r), delta_ev, tev, tbeta)[2] for r in dos_sites]
     return float(np.mean(tbars)), delta_ev / tev
 
 

@@ -16,7 +16,7 @@ from irma.core.deck import (
     _read_temperature_detail_cards,
 )
 from irma.core.kernels import (
-    contin, cubic_trace_tbar, trans, discre, coldh, skold_approx,
+    contin, mean_tbar, trans, discre, coldh, skold_approx,
 )
 from irma.core.crystal import (
     compute_bragg_edges_general, coher,
@@ -27,9 +27,9 @@ from irma.core.crystal_cards import _parse_crystal_cards
 from irma.core.endf_writer import write_endf_output
 
 
-def _noncubic_dos_tensor(nc_mesh):
-    """Stability warnings, then the DOS tensor for the mode-1/2 T_eff record."""
-    from irma.core.phonopy_io import compute_dos_tensor, warn_dynamic_instability
+def _noncubic_atom_dos(nc_mesh):
+    """Stability warnings, then the per-atom DOS for the mode-1/2 T_eff record."""
+    from irma.core.phonopy_io import compute_atom_dos, warn_dynamic_instability
     warn_dynamic_instability(nc_mesh.frequencies_ev, nc_mesh.qpoints)
     freq_max_ev = float(np.max(nc_mesh.frequencies_ev))
     if freq_max_ev <= 0.0:
@@ -38,13 +38,13 @@ def _noncubic_dos_tensor(nc_mesh):
             "meV); check the force constants")
     freq_max_ev *= 1.1  # 10% headroom
     n_freq = max(500, min(1000, int(round(freq_max_ev / 0.001)) + 1))
-    print(f"    Non-cubic DOS tensor: freq_max={freq_max_ev*1000:.1f} meV, "
+    print(f"    Non-cubic DOS: freq_max={freq_max_ev*1000:.1f} meV, "
           f"n_freq={n_freq}")
-    return compute_dos_tensor(nc_mesh, freq_max_ev, n_freq)
+    return compute_atom_dos(nc_mesh, freq_max_ev, n_freq)
 
 
 def _noncubic_mt4_step(crystal_info, ssm, itemp, alpha, beta, nalpha, nbeta,
-                       lat, tev, temperature_k, awr, nphon, dos_tensor_all,
+                       lat, tev, temperature_k, awr, nphon, atom_dos,
                        energy_grid_ev):
     """One temperature of the mode-1/2 path: compute the in-process
     noncubic SAB and inject it into ssm[:, :, itemp]. Returns (f0, tbar,
@@ -64,8 +64,8 @@ def _noncubic_mt4_step(crystal_info, ssm, itemp, alpha, beta, nalpha, nbeta,
     F_matrix_all = thermal_displacements_to_f_matrix(
         thermal_mats_all, crystal_info['nc_awr_by_atom'], tev)
     # tbar and deltab for the SCT/Teff records.
-    tbar, deltab = cubic_trace_tbar(
-        dos_tensor_all[principal_site_indices], energy_grid_ev, tev, 1.0)
+    tbar, deltab = mean_tbar(
+        atom_dos[principal_site_indices], energy_grid_ev, tev, 1.0)
     f0 = float(np.mean([
         np.trace(F_matrix_all[d_idx]) / 3.0
         for d_idx in principal_site_indices
@@ -363,7 +363,7 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
 
     phonopy_mt4 = iel == 10 and crystal_info['inelastic_mode'] in (1, 2)
     if phonopy_mt4:
-        dos_tensor_all, energy_grid_ev = _noncubic_dos_tensor(
+        atom_dos, energy_grid_ev = _noncubic_atom_dos(
             crystal_info['nc_mesh_data'])
 
     # A bound (b7 <= 0) secondary scatterer is a second pass over the
@@ -429,7 +429,7 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
                 f0, tbar, deltab, F_matrix_all = _noncubic_mt4_step(
                     crystal_info, ssm, itemp, alpha, beta, nalpha, nbeta,
                     lat, tev, tempr_arr[itemp], awr, nphon,
-                    dos_tensor_all, energy_grid_ev)
+                    atom_dos, energy_grid_ev)
                 _store_directional_species_dw(crystal_info, itemp, ntempr,
                                               F_matrix_all)
             else:

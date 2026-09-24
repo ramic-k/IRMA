@@ -5,7 +5,7 @@ import pytest
 
 from irma.core.phonopy_io import (
     PhonopyMeshData,
-    compute_dos_tensor,
+    compute_atom_dos,
     mode_floor_mask,
     compute_thermal_displacement_matrices,
 )
@@ -38,12 +38,10 @@ def _synthetic_mesh(cutoff):
 
 def test_dos_and_debye_waller_use_the_same_cutoff(capsys):
     mesh = _synthetic_mesh(0.5)
-    dos, _ = compute_dos_tensor(mesh, 0.002, 101, sigma_ev=1.0e-5)
+    dos, _ = compute_atom_dos(mesh, 0.002, 101)
     log = capsys.readouterr().out
     assert "2 valid modes" in log  # only the two 1-meV modes survive
-    assert np.allclose(dos[0, 0], 0.0)
-    assert np.allclose(dos[0, 1], 0.0)
-    assert np.max(dos[0, 2, 2]) > 0.0
+    assert np.flatnonzero(dos[0]).tolist() == [50]    # the 1 meV bin
 
     u = compute_thermal_displacement_matrices(mesh, 296.0)
     assert u[0, 0, 0] == 0.0

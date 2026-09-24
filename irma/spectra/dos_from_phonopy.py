@@ -7,9 +7,8 @@ calculation can run the lightweight isotropic-DW incoherent-approximation kernel
 without first exporting DOS files -- and without the heavier mode-1/2 eigenvector
 engine.
 
-Per-atom scalar DOS is the trace of IRMA's anisotropic DOS tensor,
-``g_d(eps) = (1/3) Tr rho_{d,ij}(eps)`` (``irma.core.phonopy_io.compute_dos_tensor``),
-which integrates to 1 per atom -- exactly the ``tbeta=1`` normalization
+The per-atom DOS is ``irma.core.phonopy_io.compute_atom_dos``, a histogram
+of the mesh modes that integrates to 1 per atom -- exactly the ``tbeta=1`` normalization
 ``compute_mode0_sqe`` expects. Atoms of the same symbol are averaged into one
 per-species partial DOS (still normalized to 1 per atom) on the kernel's uniform
 omega grid (eV, starting at 0).
@@ -18,7 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from irma.core.phonopy_io import load_phonopy_mesh, compute_dos_tensor
+from irma.core.phonopy_io import load_phonopy_mesh, compute_atom_dos
 from irma.spectra.elastic import _group_atoms_by_symbol
 
 
@@ -37,7 +36,7 @@ def partial_dos_from_phonopy(phonopy_yaml, mesh, *, born_path=None,
         phonons in every inelastic mode).
 
     The DOS grid runs from 0 to 1.05 x the max mesh frequency with a 0.5 meV
-    spacing and compute_dos_tensor's default smearing.
+    spacing.
 
     Returns a list of per-species dicts ``{symbol, omega_ev, rho, multiplicity}``
     in first-appearance order -- ready to merge with the per-species scattering
@@ -53,9 +52,7 @@ def partial_dos_from_phonopy(phonopy_yaml, mesh, *, born_path=None,
         raise ValueError(f"{phonopy_yaml}: mesh has no positive phonon frequencies")
     e_max_ev = w_max * 1.05
     n_freq = max(int(round(e_max_ev * 1000.0 / 0.5)) + 1, 16)
-    dos_tensor, omega_ev = compute_dos_tensor(mesh_data, e_max_ev, n_freq)
-    # scalar per-atom DOS g_d = (1/3) Tr rho_{d,ij}  -> (n_atoms, n_freq), int = 1
-    g_atom = np.einsum("diik->dk", dos_tensor) / 3.0
+    g_atom, omega_ev = compute_atom_dos(mesh_data, e_max_ev, n_freq)
 
     omega_ev = np.ascontiguousarray(omega_ev, dtype=float)
     out = []

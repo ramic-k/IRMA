@@ -61,7 +61,7 @@ from irma.core.deck import (
 # sigfig is unused inside engine.py but re-exported via this facade (several
 # tests import it from irma.core.engine).
 from irma.core.kernels import (
-    contin, cubic_trace_tbar, trans, discre, coldh, skold_approx,
+    contin, trans, discre, coldh, skold_approx,
     sigfig,
 )
 from irma.core.crystal import (

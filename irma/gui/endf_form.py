@@ -486,8 +486,9 @@ class EndfFormMixin:
         self.nc_mesh_nz.pack(side=tk.LEFT, padx=(0, 8))
         InfoLabel(mesh_row, "Mesh Dimensions",
                   "Monkhorst-Pack mesh dimensions: how finely the Brillouin "
-                  "zone is sampled to compute the phonon DOS tensor.\n\n"
-                  "Larger meshes give smoother DOS tensors but require more "
+                  "zone is sampled for the phonon DOS and the Debye-Waller "
+                  "tensors.\n\n"
+                  "Larger meshes give a smoother DOS but require more "
                   "memory and time to load. Typical values:\n"
                   "  Light test:  10×10×10\n"
                   "  Production:  40×40×40 (the default; used throughout "
