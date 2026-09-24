@@ -1,9 +1,8 @@
-"""Regression tests for compute_bragg_edges_general (coherent-elastic Bragg edges),
-including the emax-endpoint fix (flat, zero-increment extension to emax) and the
-oblique-cell (triclinic/rhombohedral) reciprocal-metric fix: the general branch
-of _get_reciprocal_lattice_matrix used 2π·L⁻¹ instead of 2π·L⁻ᵀ, giving wrong
-d-spacings for every cell that doesn't hit an orthogonal/hexagonal/monoclinic
-special case."""
+"""compute_bragg_edges_general (coherent-elastic Bragg edges): the flat,
+zero-increment endpoint at emax, and correct d-spacings for oblique
+(triclinic, rhombohedral) cells, which take the general branch of
+_get_reciprocal_lattice_matrix (2π·L⁻ᵀ), checked against a brute-force
+enumeration and against the hexagonal special case."""
 import numpy as np
 from math import sqrt
 

@@ -3,7 +3,7 @@
 eigenvector engine (mode 1, incoherent approximation) on graphite.
 
 Both are the INCOHERENT APPROXIMATION and both are normalized PER REPRESENTED
-ATOM (decision D5), so they should agree in ABSOLUTE scale -- the integral ratio
+ATOM, so they should agree in ABSOLUTE scale -- the integral ratio
 mode0/mode1 should be ~ 1. The one understood difference is the Debye-Waller:
 mode 0 is ISOTROPIC (one scalar lambda_s per species from the DOS), mode 1 is
 ANISOTROPIC (per-atom U tensors from phonopy). Graphite is strongly anisotropic,
@@ -62,22 +62,18 @@ def main():
 
     E = r0.E
     I0, I1 = np.asarray(r0.I_inelastic, float), np.asarray(r1.I_inelastic, float)
-    # integral (trapezoid) ratio pins the per-cell vs per-atom scale
+    # integral (trapezoid) ratio pins the absolute (per-atom) scale
     A0, A1 = np.trapezoid(I0, E), np.trapezoid(I1, E)
     scale = A0 / A1 if A1 else float("nan")
     # shape agreement after removing the global scale: cosine similarity
     n0 = I0 / (np.linalg.norm(I0) or 1.0)
     n1 = I1 / (np.linalg.norm(I1) or 1.0)
     cos = float(n0 @ n1)
-    # peak energies
-    def peak(E, I):
-        return float(E[int(np.argmax(I))])
     summary = {
         "mesh": MESH, "T_K": T_K, "n_atoms_cell": 4,
         "integral_mode0": float(A0), "integral_mode1": float(A1),
         "integral_ratio_mode0_over_mode1": float(scale),
         "shape_cosine_similarity": cos,
-        "peak_meV_mode0": peak(E, I0), "peak_meV_mode1": peak(E, I1),
     }
     with open(os.path.join(HERE, "mode0_vs_mode1_graphite.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
@@ -90,7 +86,7 @@ def main():
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
         ax1.plot(E, I0, label="mode 0 (DOS, isotropic DW)")
         ax1.plot(E, I1, label="mode 1 (engine, anisotropic DW)")
-        ax1.set_xlabel("E (meV)"); ax1.set_ylabel("I_inel (per-cell / per-atom)")
+        ax1.set_xlabel("E (meV)"); ax1.set_ylabel("I_inel (per atom)")
         ax1.set_title("graphite VISION -- absolute"); ax1.legend()
         ax2.plot(E, I0 / (A0 or 1.0), label="mode 0")
         ax2.plot(E, I1 / (A1 or 1.0), label="mode 1")
