@@ -9,8 +9,8 @@ from irma.core.constants import BK
 
 
 def test_discre_cold_high_energy_oscillator_stays_finite():
-    """A high-energy oscillator (0.5 eV) at 4 K gives bdeln/2 ~ 725 > 709.
-    Pre-fix: OverflowError. Now: finite (cold coth limit)."""
+    """A high-energy oscillator (0.5 eV) at 4 K gives bdeln/2 ~ 725 > 709;
+    the result stays finite (the cold coth limit) instead of overflowing."""
     nalpha, nbeta = 4, 3
     alpha = np.array([0.1, 0.5, 1.0, 2.0])
     beta = np.array([0.0, 1.0, 2.0])
