@@ -485,7 +485,7 @@ def _cmd_build(args) -> int:
     from irma.mlip.bundle import write_bundle
     bundle = write_bundle(
         args.outdir, phonon_result=pr, relax_result=rr,
-        calc_meta=calc_meta, args_used=vars(args) | {"argv": "irma mlip"},
+        calc_meta=calc_meta, args_used=vars(args),
         mesh=mesh, input_structure_path=args.structure,
         born_path=args.born, disordered=args.disordered,
         overwrite=args.overwrite)
@@ -594,6 +594,8 @@ def main(argv=None) -> int:
             args = parser.parse_args(argv)
         except SystemExit as exc:
             return int(exc.code or 0)
+        import shlex
+        args.argv = "irma mlip " + shlex.join(argv)   # recorded in the manifest
         try:
             if args.command == "build":
                 return _cmd_build(args)
@@ -613,7 +615,10 @@ def main(argv=None) -> int:
                 raise                     # genuinely unexpected: traceback
 
             # every expected failure surfaces as a clean message, never a
-            # traceback: usage/validation/execution problems are exit 2
+            # traceback: usage/validation/execution problems are exit 2. A
+            # bare KeyError or TypeError message ('fingerprint') needs its type.
+            if isinstance(exc, (KeyError, TypeError)):
+                return _err(f"{type(exc).__name__}: {exc}")
             return _err(str(exc))
     except KeyboardInterrupt:
         print("\ninterrupted (cached forces are kept; rerun to resume)",
