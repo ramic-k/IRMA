@@ -261,7 +261,7 @@ def _build_parser():
 
 def _do_emit(bundle, targets, args) -> int:
     from irma.mlip.emit import (
-        emit_endf_decks, emit_ncrystal_yaml, emit_spectra_yaml)
+        _emit_mesh, emit_endf_decks, emit_ncrystal_yaml, emit_spectra_yaml)
     unknown = sorted(set(targets) - {"endf", "spectra", "ncrystal"})
     if unknown:
         return _err(f"unknown emit target(s) {unknown}; choose from "
@@ -274,6 +274,10 @@ def _do_emit(bundle, targets, args) -> int:
     overrides = _parse_species(args.species)
     out_dir = getattr(args, "out_dir", None) or bundle.path
     min_e = float(getattr(args, "min_phonon_energy", 0.0))
+    emitted = "x".join(str(n) for n in _emit_mesh(bundle))
+    built = "x".join(str(int(n)) for n in bundle.manifest["phonons"]["mesh"])
+    print(f"  emitted inputs use the phonon mesh {emitted} (the bundle's "
+          f"quick-look mesh is {built})")
 
     produced = []
     if "endf" in targets:
