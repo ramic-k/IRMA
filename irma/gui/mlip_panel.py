@@ -72,7 +72,7 @@ def bundle_species(bundle_dir):
 
 
 # ---------------------------------------------------------------------------
-# Per-field help text (the '?' buttons).
+# Per-field help text (the 'i' help icons).
 # ---------------------------------------------------------------------------
 HELP = {
     "structure": (
@@ -120,8 +120,9 @@ HELP = {
     "supercell": (
         "Supercell used for the "
         "finite-displacement force constants: an explicit 'n1 n2 n3', or a "
-        "single number meaning the minimum lattice-parameter length in "
-        "Angstrom (the default corresponds to 12).\n\nA bigger supercell "
+        "single number Lmin in Angstrom: each supercell edge is made at least "
+        "this long (ceil(Lmin/a) repeats along each axis); the default is "
+        "12.\n\nA bigger supercell "
         "captures longer-ranged force constants and costs more. Blank = "
         "the default (1 1 1 when 'disordered' is set)."),
     "mesh": (
@@ -129,8 +130,8 @@ HELP = {
         "bundle's DOS (density of states) and its census of imaginary "
         "modes.\n\n"
         "Blank = an automatic density (the Gamma point when 'disordered' "
-        "is set). The validation campaign used 40 40 40 for production "
-        "comparisons."),
+        "is set). The emitted inputs use their own production mesh, "
+        "int(98/a)+1 points along each axis."),
     "delta": (
         "Finite-displacement amplitude in Angstrom: how far each atom is "
         "displaced when the forces are sampled.\n\nDefault 0.03, the value "
@@ -234,7 +235,7 @@ HELP = {
         "constants are that element's natural-abundance values, from the "
         "same table entry.\n"
         "  isotope   choose one of the element's isotopes; the identity "
-        "AND the constants both switch to it.\n"
+        "and the constants both switch to it.\n"
         "  custom    type b_coh_fm and sigma_inc_b (and awr) yourself. "
         "sigma_bound_b is always derived from b_coh_fm and sigma_inc_b, "
         "never entered.\n\n"
@@ -270,7 +271,7 @@ HELP = {
         "species.\n"
         "  sef (single-channel elastic format): the complete coherent "
         "component assigned to the designated-coherent (DC) atom.\n\n"
-        "An EXPLICIT value, even 'mef', which names the default, is a "
+        "An explicit value, even 'mef', which names the default, is a "
         "crystal-input selector and is rejected for disordered bundles, so "
         "'default' and 'mef' are distinct choices here."),
     "material_id": (
@@ -455,10 +456,8 @@ class MlipPanel(RunPanel):
                                  help_text=HELP["mats"])
         self.mats.pack(fill=tk.X, pady=2)
 
-        # Per-species nuclear-data editor (the --nuclide / --species
-        # mini-languages, made visible). It replaces two free-text fields
-        # that required knowing both syntaxes and showed nothing of what
-        # would actually be emitted.
+        # Per-species nuclear-data editor: the table behind the --nuclide
+        # and --species flags, showing the constants that will be emitted.
         self.species_frame = ttk.Frame(g)
         self.species_frame.pack(anchor=tk.W, fill=tk.X, pady=(6, 0))
         hdr = ttk.Frame(self.species_frame)
@@ -640,13 +639,11 @@ class MlipPanel(RunPanel):
         jobs = parse_int("jobs", self.jobs.get() or "1")
         if jobs != 1:
             cmd += ["--jobs", str(jobs)]
-        # Only the thread field the jobs value makes LIVE is parsed and
-        # forwarded, the same rule _sync_thread_rows uses to show it:
-        # threads/worker for jobs > 1, serial threads for jobs = 1. The CLI
-        # reads --threads for the parent relaxation whatever jobs says, so a
-        # stale value left in the hidden field used to cap the relaxation
-        # silently (and a nonnumeric one blocked Build from a field the user
-        # could not reach).
+        # Only the thread field that jobs makes visible is parsed and
+        # forwarded (threads/worker for jobs > 1, serial threads for
+        # jobs = 1, as in _sync_thread_rows): the CLI reads --threads for
+        # the relaxation whatever jobs says, so a hidden field must not
+        # reach it.
         if jobs > 1:
             wt = parse_int("threads/worker", self.worker_threads.get() or "1")
             if wt != 1:
@@ -671,25 +668,13 @@ class MlipPanel(RunPanel):
     def _nuclear_data_args(self):
         """``[(flag, value), ...]`` from the per-species nuclear-data table.
 
-        The CLI is untouched, so this is a pure assembly of the two flags
-        the free-text fields used to carry:
-
-        * ``natural`` (the default of every row) contributes NOTHING. A
-          table nobody edited therefore produces an argv with neither
-          ``--nuclide`` nor ``--species``, which is byte-for-byte the
-          emission the CLI already performed.
-        * ``isotope`` contributes ``--nuclide SYM=<A>-SYM``; the CLI takes
-          the identity and the constants from that one table entry.
-        * ``custom`` contributes ``--species SYM:field=value,...`` over the
-          non-empty boxes, in the emitter's own field order. A custom row
-          that also carries an isotope (the energy-dependent recovery keeps
-          the identity the user picked) contributes both flags, which is
-          exactly how the CLI composes them: identity from the isotope,
-          constants from the override.
-
-        The two refusals mirror ``irma.mlip.emit.resolve_species`` so the
-        form reports them before the subprocess starts, in the language of
-        the row rather than of a flag.
+        A ``natural`` row adds nothing; an ``isotope`` row adds
+        ``--nuclide SYM=<A>-SYM``; a ``custom`` row adds
+        ``--species SYM:field=value,...`` over its non-empty boxes, plus
+        ``--nuclide`` when it also carries an isotope (identity from the
+        isotope, constants from the override). The two refusals mirror
+        ``irma.mlip.emit.resolve_species``, so the form reports them before
+        the subprocess starts.
         """
         args = []
         for row in self.species_table.nuclide_rows():
@@ -704,8 +689,8 @@ class MlipPanel(RunPanel):
             fields = [(k, row[k]) for k in CUSTOM_FIELDS if row[k]]
             for key, value in fields:
                 # the group syntax is comma- and colon-delimited, so a
-                # non-numeric entry has to be caught by NAME here rather
-                # than reaching the CLI as a malformed group
+                # non-numeric entry is caught here, by name, rather than
+                # reaching the CLI as a malformed group
                 parse_float(f"species {sym} {key}", value)
             if row["flagged"] and not row["complete"]:
                 raise ValueError(
@@ -725,12 +710,10 @@ class MlipPanel(RunPanel):
     def emit_command(self):
         """Assemble the `irma mlip emit` argv from the current widgets.
 
-        Only the fields the SELECTED targets read are parsed and forwarded,
-        mirroring the disclosure rules of _sync_emit_rows exactly (MAT
-        numbers, inelastic mode and elastic format: endf; material id:
-        ncrystal). A hidden field is neither validated nor emitted, so a
-        leftover MAT from an earlier ENDF emit cannot block an
-        NCrystal-only emit through a check whose control is off screen.
+        Only the fields the selected targets read are parsed and forwarded,
+        as in _sync_emit_rows (MAT numbers, inelastic mode and elastic
+        format: endf; material id: ncrystal), so a hidden field cannot block
+        an emit.
         """
         bundle = self.bundle.get().strip()
         if not bundle:
@@ -750,9 +733,8 @@ class MlipPanel(RunPanel):
         if self.temperature.get().strip() not in ("", "296"):
             cmd += ["--temperature", self.temperature.get().strip()]
         # 'default' omits the flag (CLI default); explicit values are
-        # forwarded verbatim -- including an explicit 'mef', which the CLI
-        # distinguishes from the absent flag (rejected on disordered
-        # bundles, exactly like --inelastic-mode).
+        # forwarded verbatim, including an explicit 'mef', which the CLI
+        # rejects on disordered bundles, like --inelastic-mode.
         if "endf" in targets:
             if self.emit_inelastic_mode.get() != "default":
                 cmd += ["--inelastic-mode", self.emit_inelastic_mode.get()]
