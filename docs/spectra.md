@@ -2,7 +2,7 @@
 
 An ENDF tape (a nuclear data file; "tape" is the historical name) tells
 a transport code such as MCNP or OpenMC how a material scatters; it does not tell
-*you* what your instrument will measure. IRMA's forward model closes that gap.
+*you* what your instrument will measure. IRMA's forward model computes that measurement.
 It takes the same phonon physics the ENDF side evaluates and turns it into the
 quantities an instrument records, an instrument-resolved 1-D inelastic neutron
 scattering (INS) spectrum or a dense 2-D `S(Q,E)` powder map, with no ENDF
@@ -20,7 +20,7 @@ The physics level is the same `inelastic_mode` as on the ENDF side (see
 [Scattering modes](modes.md)):
 mode `0` builds `S(Q,E)` straight from a phonon density of states (DOS), with
 no eigenvectors (see [DOS-based spectra (mode 0)](spectra-mode0.md) for that
-whole workflow), while modes `1` and `2` run the noncubic engine (the
+whole workflow), while modes `1` and `2` run the phonopy-backed engine (the
 incoherent approximation, or the exact coherent one-phonon term) on a
 `phonopy.yaml` plus force constants ([Preparing a phonopy
 calculation](phonopy-input.md) covers producing one). The model covers VISION, generic
@@ -28,7 +28,7 @@ indirect, and direct (chopper) geometries, with an automatic chopper
 resolution model validated against PyChop. Install the extra first:
 `pip install -e ".[spectra]"` (plus `[phonopy]` for modes 1/2).
 
-## An end-to-end example: graphite, mode 2, two instruments
+## An end-to-end example: graphite, two instruments
 
 The committed examples are the fastest orientation. From `examples/spectra/`
 (the configs use paths relative to that directory), the highest-fidelity 1-D
@@ -42,7 +42,8 @@ python -m irma spectra run graphite_mode2_vision.yaml -o graphite_vision.csv
 
 and the same phonon calculation becomes a direct-geometry ARCS `S(Q,E)` map, with
 the chopper resolution computed automatically and the map masked to the
-detector coverage:
+detector coverage (the ARCS config runs mode 1 for speed; set
+`inelastic_mode: 2` for the exact coherent one-phonon term):
 
 ```bash
 python -m irma spectra map graphite_arcs_map.yaml -o graphite_arcs.npz
@@ -54,10 +55,11 @@ to CSV/npz):
 
 ![A finished VISION run: the 45-degree and 135-degree bank spectra of graphite, mode 2](assets/gui/gui_ns_plot_vision.png)
 
-![A finished ARCS run: the mode-2 S(Q,E) map on a log scale, masked to the accessible (Q,E) arch, kinematic envelope overlaid](assets/gui/gui_ns_plot_map.png)
+![A finished ARCS run: the S(Q,E) map on a log scale, masked to the accessible (Q,E) arch, kinematic envelope overlaid](assets/gui/gui_ns_plot_map.png)
 
 The rest of this page is the reference for driving the model: the CLI
-subcommands, every flag, and the config-file schema. The GUI face of the same
+subcommands, the common flags (`irma spectra <subcommand> --help` lists them
+all), and the config-file schema. The GUI face of the same
 model is the **Neutron Scattering Experiments** tab, covered in
 [the GUI guide](gui.md#neutron-scattering-experiments-tab).
 
@@ -221,6 +223,7 @@ built-in values; in mode 0 only for the elastic line that uses them), and mode-0
 |-----|---------|---------|
 | `e_min_meV` / `e_max_meV` / `de_meV` | 0 / 250 / 0.5 | energy-transfer grid (negative `e_min` includes energy gain) |
 | `dq_max_invA` | 0.05 | `S(Q,E)` Q-support spacing |
+| `q_pad_invA` | 0.5 | margin added to the instrument locus's Q range when the Q support is built |
 | `q_max_invA` | — | 2-D map Q-axis maximum (1-D runs derive Q from the instrument) |
 
 ### `instrument`
@@ -232,12 +235,12 @@ built-in values; in mode 0 only for the elastic line that uses them), and mode-0
 | `angles_deg` | preset | detector angles (deg) |
 | `q_cuts` | — | constant-\|Q\| cuts (1/Å); honored whenever supplied, alongside the angle/bank spectra |
 | `bank_halfwidth_deg` | 5 | detector-bank angular half-width |
-| `sigma_coeffs` | preset | resolution width polynomial σ(E) = c0 + c1·|E| + c2·E² (meV) |
+| `sigma_coeffs` | per geometry | resolution width polynomial σ(E) = c0 + c1·|E| + c2·E² (meV); default: the VISION polynomial for `vision` and `indirect`, a constant 0.02·Ei for `direct` |
 | `resolution_shape` / `resolution_model` | gaussian / poly | line shape; `poly` or `chopper` |
 | `chopper_spec` | — | `{instrument, package, frequency}` for `resolution_model: chopper` |
 | `combine` | mean | combine detector banks by `mean` or `sum` |
 | `output_mode` / `cut_by` | cuts / angles | `cuts` (1-D spectra) or `map` (dense 2-D `S(Q,E)`, any geometry); `cut_by` (direct geometry only): `angles` (bank spectra, plus any `q_cuts`) or `q` (constant-Q cuts only) |
-| `cut_dq_invA` | — | constant-Q cut band width (None → thin slice) |
+| `cut_dq_invA` | — | half-width of the constant-Q cut band: each cut averages \|Q\| over Q0 ± `cut_dq_invA` (None → thin slice) |
 | `map_coverage_deg` / `map_mask` | — / true | 2-D map kinematic envelope band + masking |
 | `export_components` | false | also write the inelastic + elastic breakdown (else total only) |
 
@@ -251,9 +254,8 @@ one-phonon term is built from them).
 #### Which chopper was in the beam? (finding `chopper_spec`)
 
 `resolution_model: chopper` needs the Fermi chopper package and frequency
-that were actually in the beam for the run you are modeling. It is important
-to note that these must come from the data, not from the nominal beam-time
-request: the two can differ, and the choice matters, since a 0.5 mm versus a
+that were actually in the beam for the run you are modeling. Take these from
+the run's data files, not from the beam-time request: the two can differ, and the choice matters, since a 0.5 mm versus a
 1.5 mm slit package changes the elastic width by roughly 2×. On ARCS (SNS),
 the in-beam Fermi package is recorded in the raw NeXus file as the DAS log
 `BL18:Chop:InUse:ChopperId`, and the Fermi speed is in the chopper-frequency
@@ -318,8 +320,10 @@ way: IRMA for the phonon physics, a McStas virtual experiment for the
 instrument and multiple scattering.
 
 One caveat when reading such an overlay: the Monte Carlo sample kernel and
-IRMA may not use the same inelastic physics. The McStas/NCrystal graphite
-kernel used here, for example, evaluates the inelastic scattering in the
-incoherent approximation, whereas IRMA mode 2 computes the coherent
-one-phonon term, so where the two inelastic continua differ, part of the
-difference is the scattering model itself, not multiple scattering alone.
+IRMA may not use the same inelastic physics. The stock NCrystal graphite
+kernel, for example, evaluates the inelastic scattering in the incoherent
+approximation, whereas IRMA mode 2 computes the coherent one-phonon term, so
+where the two inelastic continua differ, part of the difference is the
+scattering model itself, not multiple scattering alone. The graphite
+validation also ran McStas with the IRMA plugin's mode-2 kernel, which
+removes that difference.
