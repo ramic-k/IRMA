@@ -3,7 +3,8 @@
 ``tests/data/extinction_crysxt_expected.npz`` freezes the Be Bragg planes, an
 energy grid, and the CrysXT plugin's coherent-elastic sigma for nine
 model/recipe/distribution cases (regenerate with
-``tests/data/regenerate_crysxt_expected.py`` in mantid_env). This test recomputes the same
+``tests/data/regenerate_crysxt_expected.py``, which needs NCrystal and the
+CrysXT plugin). This test recomputes the same
 sigma from :func:`irma.core.extinction.extinction_factor` on the frozen planes
 and asserts it reproduces CrysXT — pinning the IRMA port to the reference so any
 drift in the extinction models is caught in CI.
@@ -70,8 +71,8 @@ def test_port_reproduces_crysxt(expected, label):
                        expected["V"], expected["N"], expected["WL2EKIN"], expected["E"], kw)
     m = cx > 1e-3 * cx.max()
     rel = np.abs(mine[m] - cx[m]) / cx[m]
-    # the port reproduces CrysXT essentially exactly; a 0.5% gate flags real drift
-    assert rel.max() < 5e-3, (
+    # the port reproduces CrysXT to about 1e-13 in every case
+    assert rel.max() < 1e-10, (
         f"{label}: port deviates from CrysXT by {100 * rel.max():.3f}% (max)")
 
 
