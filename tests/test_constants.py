@@ -50,3 +50,13 @@ def test_mode_floor_mask_two_tier():
                             np.array([[0.25, 0.0, 0.0]]), n_branches=4)
     assert list(keep0) == [False, False, False, True]
 
+
+def test_modules_use_the_shared_constants():
+    """Modules that convert units import them from irma.core.constants
+    instead of keeping their own copies."""
+    from irma.mlip import bundle
+    from irma.spectra import dos_io
+    assert bundle.THZ_TO_MEV == c.THZ_TO_EV * 1.0e3
+    assert dos_io._TO_EV["thz"] == c.THZ_TO_EV
+    assert dos_io._TO_EV["cm-1"] == c.PLANCK_J_S * c.CLIGHT / c.ECHARGE_C
+

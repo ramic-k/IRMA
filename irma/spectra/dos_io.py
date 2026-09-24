@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import numpy as np
 
+from irma.core.constants import CLIGHT, ECHARGE_C, PLANCK_J_S, THZ_TO_EV
+
 # frequency-unit -> eV
+_HC_EV_CM = PLANCK_J_S * CLIGHT / ECHARGE_C      # hc/e [eV cm]
 _TO_EV = {
     "ev": 1.0,
     "mev": 1.0e-3,
-    "cm-1": 1.239841984e-4,     # hc/e in eV*cm
-    "cm^-1": 1.239841984e-4,
-    "thz": 4.135667696e-3,      # h*1e12/e
+    "cm-1": _HC_EV_CM,
+    "cm^-1": _HC_EV_CM,
+    "thz": THZ_TO_EV,           # h*1e12/e
 }
 
 
