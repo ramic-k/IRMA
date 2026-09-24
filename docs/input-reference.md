@@ -74,7 +74,7 @@ read only for the classic kernels and `inelastic_mode=0`.
 | **1** | `nout` | — | Output unit. Kept for LEAPR compatibility; IRMA writes the file named on the command line and ignores this value. |
 | **2** | `'title'` | empty | Quoted title string. A numeric or unquoted token is stringified (this card is free text). |
 | **3** | `ntempr iprint nphon` | `1 1 100` | Temperature count (`≥ 1`), print level, and phonon-expansion order (`≥ 1`). For `inelastic_mode=1/2`, `nphon` is also the multiphonon maximum order. |
-| **4** | `mat za isabt ilog smin [iint]` | `0 0 0 0 1.0e-75 0` | ENDF `MAT` (`≥ 1`; the material number that labels the evaluation in a library, yours to assign) and `za`; `isabt` (0/1) selects S(α,−β) storage; `ilog` (0/1) selects log storage; `smin` is the minimum stored S; optional `iint` (0/1) selects the MF7/MT4 interpolation scheme (see below, default 0). `isabt=1` writes S for both signs of β; THERMR cannot process such tapes, so use it for diagnostics only. **For `iel=10`, `za` must encode the physical nuclide as `1000·Z + A`** so the principal scatterer can be matched to a Card 6d atom (`A = 0` names the natural element on both cards, e.g. `za = 6000` matching a Card 6d row with `A = 0`). |
+| **4** | `mat za isabt ilog smin [iint nver lrel]` | `0 0 0 0 1.0e-75 0 8 1` | ENDF `MAT` (`≥ 1`; the material number that labels the evaluation in a library, yours to assign) and `za`; `isabt` (0/1) selects S(α,−β) storage; `ilog` (0/1) selects log storage; `smin` is the minimum stored S; optional `iint` (0/1) selects the MF7/MT4 interpolation scheme (see below, default 0); optional `nver` and `lrel` are the library version and release written to MF1/MT451 (ENDF/B-VIII.1 is `8 1`, the default; to set them, give `iint` too). `isabt=1` writes S for both signs of β; THERMR cannot process such tapes, so use it for diagnostics only. **For `iel=10`, `za` must encode the physical nuclide as `1000·Z + A`** so the principal scatterer can be matched to a Card 6d atom (`A = 0` names the natural element on both cards, e.g. `za = 6000` matching a Card 6d row with `A = 0`). |
 | **5** | `awr spr npr iel ncold nsk` | `0 0 0 0 0 0` | Principal scatterer (the atom species the evaluation is written for): mass ratio `awr` (`> 0`), free-atom cross section `spr` (`> 0`), atom count `npr` (`≥ 1`), elastic option `iel`, cold-hydrogen option `ncold` (0–4), pair-correlation option `nsk` (0–2). See the `iel` table below. |
 | **6** | `nss b7 aws sps mss` | `0 0 0 0 0` | Secondary scatterer: count `nss` (0 or 1); `b7` selects the secondary type; mass ratio `aws` (`> 0`), cross section `sps` (`> 0`), atom count `mss` (`≥ 1`). Fields 2–5 are validated only when `nss > 0`. A bound two-pass secondary (`nss=1`, `b7=0`) is rejected with `iel=10` (see the `b7` table below). |
 
@@ -420,7 +420,27 @@ inelastic S(α,β) comes from the phonopy calculation, so those input files supp
 the temperature cards (Card 10), and Cards 11–19 are not read.
 
 After the last temperature block, optional quoted comment cards (one per line)
-become the ENDF MF1/MT451 description. A bare `/` ends the comment section.
+become the ENDF MF1/MT451 text records. A bare `/` ends the comment section.
+The records follow the ENDF-6 layout:
+
+| Card | MF1/MT451 record |
+|---|---|
+| 1 | `ZSYMAM` (columns 1-11), `ALAB` (12-22), `EDATE` (23-32), `AUTH` (34-66) |
+| 2 | `REF` (2-22), `DDATE` (23-32), `RDATE` (34-43), `ENDATE` (56-63) |
+| 3-5 | `HSUB`, the three sub-library identification lines |
+| 6 and later | free-text description |
+
+When cards 3-5 are absent or blank, IRMA writes the standard ENDF/B thermal
+lines for the Card 4 `nver` and `lrel`, for example:
+
+```text
+----ENDF/B-VIII.1     MATERIAL   37
+-----THERMAL NEUTRON SCATTERING DATA
+------ENDF-6 FORMAT
+```
+
+MF1/MT451 `EMAX` is the upper energy of the MF7/MT4 table, the same value as
+its B(4) entry.
 
 ## End-to-end example: classic input file (`iel=1`, graphite)
 

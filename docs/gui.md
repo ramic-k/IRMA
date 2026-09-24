@@ -361,7 +361,7 @@ The final part sets the output destination, optional ENDF documentation, and lau
 ![The Run part: a completed graphite iel=10 mode-2 calculation with the streaming log](assets/gui/gui_run.png)
 
 - **Output ENDF file**: destination for the ENDF-6 tape (S(α,β) in MF7/MT4, plus MF7/MT2 Bragg edges when `iel > 0`). This tape is what NJOY's THERMR and ACER modules process downstream into transport-ready data.
-- **ENDF Comment Cards (MF1/MT451)**: free-text box; each line becomes one comment record (truncated to 66 characters). Document the method and references here.
+- **ENDF Comment Cards (MF1/MT451)**: NVER and LREL, the library version and release (ENDF/B-VIII.1 is 8 and 1, the default), written to Card 4; three HSUB fields, the sub-library identification lines, written as comment cards 3-5 (left blank, the standard ENDF/B thermal lines for NVER and LREL are written); and a free-text box whose first two lines are header records 1-2 and whose remaining lines are the description (each line truncated to 66 characters). Document the method and references here.
 - **Run Calculation**: generates the input file from the current fields and runs it, streaming progress into the **Log** pane with an indeterminate progress bar, a status label, and a live phase readout showing the engine's current stage. **Cancel** terminates a running calculation; **Clear Log** empties the pane.
 - **Export Input File...**: writes the generated input file to a `.input`/`.leapr` file without running, so you can inspect, archive, or hand it to the command-line tool.
 
