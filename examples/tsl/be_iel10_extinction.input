@@ -165,18 +165,22 @@ extinction BC_mix l=8550 g=170 L=75750 dist=Gauss rec=std rmse_tol=1e-3 /  $ opt
 0.000000E+00/
 0. 0. 1. 0./
 0/
-' Beryllium (hcp) iel=10 mode-0 + crystalline EXTINCTION (example)'/
-'                                                                 '/
-' This deck adds the OPTIONAL extinction card (line ~11):         '/
-'   extinction BC_mix l=8550 g=170 L=75750 dist=Gauss rec=std ... '/
-' which applies a Becker-Coppens extinction reduction to the      '/
-' coherent-elastic Bragg comb (MF7/MT2). Extinction is a SAMPLE   '/
-' property: l=crystallite size [A], g=mosaic [rad^-1], L=grain    '/
-' size [A] come from a fit-to-transmission or microstructure, not '/
-' from the material. Omit the card for the ideal-crystal tape.    '/
-'                                                                 '/
-' Models/recipes are ported from the NCrystal CrysXT plugin;      '/
-' see Kittelmann et al. Acta Cryst. (2026) A82 163 and Xu et al.  '/
-' J. Appl. Cryst. (2025) 58 1957. The cell matches Be_sg194.ncmat.'/
-' --------------------------------------------------------------- '/
+' beryllium IRMA       EVAL-SEP26 IRMA example (not an evaluation) '/
+'                                                                  '/
+'                                                                  '/
+'                                                                  '/
+'                                                                  '/
+' Beryllium (hcp) iel=10 mode-0 + crystalline extinction (example) '/
+'                                                                  '/
+' This deck adds the optional extinction card (line ~11):          '/
+'   extinction BC_mix l=8550 g=170 L=75750 dist=Gauss rec=std ...  '/
+' which applies a Becker-Coppens extinction reduction to the       '/
+' coherent-elastic Bragg comb (MF7/MT2). Extinction is a sample    '/
+' property: l=crystallite size [A], g=mosaic [rad^-1], L=grain     '/
+' size [A] come from a fit-to-transmission or microstructure, not  '/
+' from the material. Omit the card for the ideal-crystal tape.     '/
+'                                                                  '/
+' Models/recipes are ported from the NCrystal CrysXT plugin;       '/
+' see Kittelmann et al. Acta Cryst. (2026) A82 163 and Xu et al.   '/
+' J. Appl. Cryst. (2025) 58 1957. The cell matches Be_sg194.ncmat. '/
 /
