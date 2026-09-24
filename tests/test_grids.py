@@ -8,12 +8,11 @@ layout).
 import numpy as np
 import pytest
 
+from irma.core.constants import HBAR2_OVER_2MN_MEV_A2 as HB2
 from irma.core.grids import (generate_beta_grid, generate_alpha_grid,
                                DELTA_BETA_MAX_LINLIN)
 
 KB = 8.617333262e-5
-
-from irma.core.constants import HBAR2_OVER_2MN_MEV_A2 as HB2  # noqa: E402
 
 
 def test_beta_grid_structure_defaults():
@@ -46,8 +45,6 @@ def test_beta_grid_no_tails():
     assert np.all(np.diff(beta) > 0.0)
 
 
-
-
 def test_beta_grid_dropped_tail_warns_but_grid_is_unchanged():
     """beta_max_eV at or below the linear region's end: the grid keeps the
     whole linear phonon region (the cap is not enforced there) and the
@@ -70,10 +67,6 @@ def test_beta_grid_dropped_tail_warns_but_grid_is_unchanged():
         warnings.simplefilter("error")
         beta_tail = generate_beta_grid(0.45, 296.0, beta_max_eV=5.0)
     assert beta_tail[-1] == pytest.approx(5.0 / kT, rel=1e-12)
-
-
-
-
 
 
 def test_beta_grid_recoil_ridge_coarsens_deep_tail():
@@ -121,7 +114,7 @@ def test_beta_grid_heavy_atom_no_duplicate_seam():
     below the phonon region end, the whole upper tail is off-ridge and the
     grid falls back to the pure-log tail."""
     from irma.core.grids import linlin_fine_beta_limit
-    kT = 8.617333262e-5 * 296.0
+    kT = KB * 296.0
     heavy = generate_beta_grid(0.2, 296.0, n_upper=20, iint=1,
                                awr=300.0)  # 4*beta_max/300 < beta_lin_end
     assert np.all(np.diff(heavy) > 0.0), "duplicate/non-monotonic node at seam"
@@ -133,8 +126,6 @@ def test_beta_grid_heavy_atom_no_duplicate_seam():
     very_heavy = generate_beta_grid(0.2, 296.0, n_upper=20, iint=1, awr=3000.0)
     assert linlin_fine_beta_limit(5.0 / kT, 3000.0, 0.2, 296.0) < beta_lin_end
     np.testing.assert_array_equal(very_heavy, generate_beta_grid(0.2, 296.0))
-
-
 
 
 def test_alpha_grid_linear_q_layout():
@@ -177,28 +168,19 @@ def test_alpha_grid_short_beta_is_linear_only():
     assert np.all(np.diff(alpha) > 0.0)
 
 
-
-
 def test_alpha_grid_rejects_all_zero_beta():
     """An all-zero beta grid must fail loudly, not yield a zero-length alpha."""
     with pytest.raises(ValueError, match="no positive values"):
         generate_alpha_grid(np.array([0.0, 0.0]), 11.898, 296.0)
 
 
-
-
-
-
 def test_generate_beta_grid_validates_inputs():
-    from irma.core.grids import generate_beta_grid
     with pytest.raises(ValueError, match="n_phonon"):
         generate_beta_grid(0.2, 296.0, n_phonon=1)
     with pytest.raises(ValueError, match="freq_max"):
         generate_beta_grid(0.0, 296.0)
     with pytest.raises(ValueError, match="temperature"):
         generate_beta_grid(0.2, 0.0)
-
-
 
 
 # ---- knob validation ---------------------------------------------------------
@@ -213,25 +195,7 @@ def test_alpha_grid_rejects_degenerate_log_tail():
             generate_alpha_grid(beta, 11.898, 296.0, n_log=n_log)
 
 
-
-
-
-
 # ---- the lin-lin (iint=1) beta grid ----------------------------------------
-
-
-def test_linlin_beta_grid_caps_tail():
-    # iint=1 wires the step cap: no upper-tail step below the recoil ridge
-    # exceeds DELTA_BETA_MAX_LINLIN
-    beta = generate_beta_grid(0.2, 296.0, iint=1, awr=11.898)
-    kT = 8.617333262e-5 * 296.0
-    beta_lin_end = (0.2 / kT) * (1.0 - 1.0 / 300.0)
-    beta_ridge = 4.0 * beta[-1] / 11.898
-    tail = beta[(beta > beta_lin_end) & (beta <= beta_ridge)]
-    if tail.size > 1:
-        assert np.max(np.diff(tail)) <= DELTA_BETA_MAX_LINLIN * (1 + 1e-12)
-    with pytest.raises(ValueError, match="iint"):
-        generate_beta_grid(0.2, 296.0, iint=3, awr=11.898)
 
 
 # ---- lat=1 auto-grids anchored at THERM/BK -----------------------------------
@@ -258,7 +222,7 @@ def test_effective_temperature_bound_limits():
     # classical limit: T_eff -> T when kT is far above the phonon cutoff
     assert effective_temperature_bound_ratio(0.001, 3000.0) == pytest.approx(1.0, rel=1e-3)
     # low-temperature limit of a single mode at the cutoff: T_eff -> E_max / 2k
-    x_max = 0.2 / (8.617333262e-5 * 10.0)
+    x_max = 0.2 / (KB * 10.0)
     assert effective_temperature_bound_ratio(0.2, 10.0) == pytest.approx(x_max / 2.0, rel=1e-6)
     # it bounds a Debye spectrum with the same cutoff (whose T_eff/T is the
     # integral of 3x^2/x_max^3 (x/2)coth(x/2))
@@ -271,7 +235,7 @@ def test_effective_temperature_bound_limits():
 
 def test_linlin_fine_limit_sits_past_the_back_scatter_alpha():
     from irma.core.grids import linlin_fine_beta_limit, RIDGE_MARGIN_SIGMAS
-    kT = 8.617333262e-5 * 296.0
+    kT = KB * 296.0
     beta_max = 5.0 / kT
     alpha_max = 4.0 * beta_max / 11.898
     limit = linlin_fine_beta_limit(beta_max, 11.898, 0.2, 296.0)
@@ -295,7 +259,7 @@ def test_linlin_fine_limit_sits_past_the_back_scatter_alpha():
 
 def test_linlin_grid_fine_step_reaches_the_limit():
     from irma.core.grids import linlin_fine_beta_limit
-    kT = 8.617333262e-5 * 296.0
+    kT = KB * 296.0
     beta = generate_beta_grid(0.2, 296.0, iint=1, awr=11.898)
     limit = linlin_fine_beta_limit(beta[-1], 11.898, 0.2, 296.0)
     beta_lin_end = (0.2 / kT) * (1.0 - 1.0 / 300.0)
@@ -309,6 +273,8 @@ def test_linlin_grid_fine_step_reaches_the_limit():
     # above the limit the coarse log tail resumes: at least one wider step
     coarse = beta[beta >= limit]
     assert np.max(np.diff(coarse)) > DELTA_BETA_MAX_LINLIN
+    with pytest.raises(ValueError, match="iint"):
+        generate_beta_grid(0.2, 296.0, iint=3, awr=11.898)
 
 
 def test_linlin_cap_scales_with_the_lowest_temperature():
@@ -317,7 +283,7 @@ def test_linlin_cap_scales_with_the_lowest_temperature():
     warm = generate_beta_grid(0.2, t_ref, iint=1, awr=11.898)
     cold = generate_beta_grid(0.2, t_ref, iint=1, awr=11.898,
                               evaluation_temperatures_K=[77.0])
-    kT = 8.617333262e-5 * t_ref
+    kT = KB * t_ref
     beta_lin_end = (0.2 / kT) * (1.0 - 1.0 / 300.0)
     ridge = 4.0 * cold[-1] / 11.898
     cold_fine = cold[(cold > beta_lin_end) & (cold <= ridge)]
