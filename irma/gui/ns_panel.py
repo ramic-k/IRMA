@@ -4,8 +4,8 @@ A self-contained controller for IRMA's second capability: it binds field-for-
 field to a :class:`~irma.spectra.config.SpectraConfig`, so Save/Open are exactly
 ``config.dump`` / ``config.load`` and the GUI run is the same ``run_spectra`` the
 CLI drives (via the shared :class:`~irma.gui.runner.ComputationRunner`, routed
-to this panel's log). Three geometry sub-tabs (VISION / generic indirect /
-generic direct) share one material + physics + grid form.
+to this panel's log). Two geometry sub-tabs (Indirect, with VISION defaults,
+and Direct) share one material + physics + grid form.
 
 ``build_config()`` / ``load_config()`` are pure widget<->config mappings (no
 event loop needed), so they are unit-testable against a withdrawn Tk root.
@@ -92,13 +92,13 @@ class _CoeffFields:
 
     (evaluated at |E|, so the energy-gain side mirrors the loss-side fit),
     interpreted as the Gaussian sigma (shape=gaussian) or the Lorentzian HWHM
-    (shape=lorentzian). Each coefficient gets its own labelled entry + '?'
-    button so the user can set and understand them independently instead of
-    typing one opaque comma-separated string.
+    (shape=lorentzian). Each coefficient gets its own labelled entry and
+    help icon.
 
     Config mapping (``instrument.sigma_coeffs``):
 
-    * all three blank  -> ``None`` (use the VISION preset polynomial);
+    * all three blank  -> ``None`` (the geometry's preset: the VISION
+      polynomial for indirect, a constant 0.02*Ei for direct);
     * any non-blank    -> blanks read as ``0.0``; trailing blanks are dropped so
       a short coefficient list (e.g. ``[c0, c1]``) round-trips to itself exactly.
     """
@@ -134,15 +134,15 @@ class _CoeffFields:
 
 
 # ---------------------------------------------------------------------------
-# Per-field help text (the '?' buttons). Each explains what the field is, its
+# Per-field help text (the 'i' help icons). Each explains what the field is, its
 # units, how to choose it, and what the pre-filled default means.
 # ---------------------------------------------------------------------------
 HELP = {
     "phonopy_yaml": (
         "The phonopy.yaml from your phonon calculation (phonons are the "
-        "lattice vibrations that produce inelastic scattering). Use the FULL "
+        "lattice vibrations that produce inelastic scattering). Use the full "
         "file that carries the supercell and force-constant context, the one "
-        "phonopy writes with FORCE_CONSTANTS/FORCE_SETS. Do NOT use a "
+        "phonopy writes with FORCE_CONSTANTS/FORCE_SETS. Do not use a "
         "primitive-cell mesh.yaml dump: it fails with a 'FORCE_CONSTANTS "
         "inconsistent / p2s_map' error.\n\nThis file defines the lattice, "
         "atom positions and force constants from which S(Q,E) and the "
@@ -180,23 +180,23 @@ HELP = {
         "(room temperature). Use the actual experiment temperature, for "
         "example 5 K for a cryogenic VISION run."),
     "inelastic_mode": (
-        "Fidelity of the inelastic (phonon) calculation, for the Phonopy-model "
-        "input.\n\n"
-        "  1 = incoherent approximation (default): each atom is treated as "
-        "scattering independently. Fast, phonon-DOS-like; the standard choice "
-        "for most materials and surveys.\n"
-        "  2 = coherent one-phonon + incoherent-approximation multiphonon: the "
-        "exact one-phonon dispersion with an incoherent-approximation "
-        "multiphonon tail. Needed for strong coherent scatterers (graphite, "
-        "Be, ...) where "
-        "the dispersion structure matters; several times slower.\n"
+        "Physics level of the inelastic (phonon) calculation, for the "
+        "Phonopy-model input.\n\n"
+        "  2 = coherent one-phonon + incoherent-approximation multiphonon "
+        "(default): the exact one-phonon dispersion with an "
+        "incoherent-approximation multiphonon tail. Needed for strong "
+        "coherent scatterers (graphite, Be, ...) where the dispersion "
+        "structure matters; several times slower than mode 1.\n"
+        "  1 = incoherent approximation: each atom is treated as scattering "
+        "independently. Fast, phonon-DOS-like; suited to incoherent "
+        "scatterers and surveys.\n"
         "  0 = DOS + isotropic Debye-Waller: the lightweight incoherent-"
         "approximation phonon expansion, with the partial phonon density of "
         "states (DOS) derived from this phonopy calc (no eigenvector engine). "
-        "Cheapest; per-atom normalized like modes 1/2. (To feed your OWN DOS "
+        "Cheapest; per-atom normalized like modes 1/2. (To feed your own DOS "
         "files instead, switch 'phonon input' to 'DOS files'.)"),
     "lattice": (
-        "Unit cell for the inelastic-mode-0 COHERENT-elastic Bragg peaks (the "
+        "Unit cell for the inelastic-mode-0 coherent-elastic Bragg peaks (the "
         "iel=10 analogue): "
         "a,b,c,alpha,beta,gamma (Angstrom, degrees), comma- or space-"
         "separated. Used only by mode 0 (modes 1/2 read the cell from "
@@ -220,13 +220,13 @@ HELP = {
         "in the yaml are dropped. Energy-dependent nuclides (B, Cd, Gd, ...) "
         "stay blank; enter their constants by hand."),
     "elements": (
-        "One row per DISTINCT scattering element. Build the list with "
+        "One row per distinct scattering element. Build the list with "
         "'+ Add element' (each row is an element; the per-row DOS Browse picks "
         "that element's DOS file in DOS-files mode).\n\n"
         "Columns:\n"
         "  Sym            element symbol; must match the atoms in your model.\n"
-        "  sigma_bound_b  bound cross section [barn] (~ coh + inc).  REQUIRED.\n"
-        "  AWR            atomic weight ratio A = M/m_n.             REQUIRED.\n"
+        "  sigma_bound_b  bound cross section [barn] (~ coh + inc).  Required.\n"
+        "  AWR            atomic weight ratio A = M/m_n.             Required.\n"
         "  b_coh_fm       coherent scattering length [fm] (can be < 0); drives\n"
         "                 the coherent-elastic Bragg peaks. Optional.\n"
         "  sigma_inc_b    incoherent bound cross section [barn]; drives the\n"
@@ -238,11 +238,11 @@ HELP = {
         "  positions      (mode-0 coherent elastic) fractional sites, flat\n"
         "                 'x1 y1 z1 x2 y2 z2 ...' (same format as the ENDF deck);\n"
         "                 the number of triplets must equal 'mult'.\n\n"
-        "The FIRST row is the principal scatterer (sets the overall normalization "
+        "The first row is the principal scatterer (sets the overall normalization "
         "for the engine modes 1/2)."),
     "dos_format": (
         "DOS file (phonon density of states): 2 columns, frequency and DOS "
-        "intensity. Whitespace OR "
+        "intensity. Whitespace or "
         "comma separated. Lines starting with '#' (and non-numeric header "
         "lines) are skipped. Intensity units are arbitrary (renormalized "
         "internally). The frequency unit of column 1 is chosen per element "
@@ -258,7 +258,7 @@ HELP = {
         "cost."),
     "min_phonon_energy": MIN_PHONON_ENERGY_HELP,
     "n_directions": (
-        "Number of powder-average sampling directions for the ONE-phonon term "
+        "Number of powder-average sampling directions for the one-phonon term "
         "(the spectrum is averaged over crystal orientations).\n\nMore "
         "directions give a smoother spectrum and less "
         "orientational sampling noise, at more cost (roughly linear). Default "
@@ -266,14 +266,14 @@ HELP = {
         "campaign used, and the NCrystal exporter default); drop to ~1000 for "
         "a quick look."),
     "mp_directions": (
-        "Number of powder-average directions for the MULTIPHONON background. "
+        "Number of powder-average directions for the multiphonon background. "
         "Each direction is cheaper here than in the one-phonon term.\n\n"
         "Default "
         "1000 (converged by ~50-100). The multiphonon part is smooth, so it "
         "needs far fewer directions than the one-phonon term."),
     "jobs": (
         "Number of worker processes for the parallel direction/shell sums.\n\n"
-        "Default: blank = use ALL CPU cores. Enter a number to limit it (e.g. to "
+        "Default: blank = use all CPU cores. Enter a number to limit it (e.g. to "
         "leave cores free for other work)."),
     "elastic": (
         "Whether to add an elastic line at zero energy transfer (scattering in "
@@ -291,7 +291,7 @@ HELP = {
         "  incoherent: Debye-Waller line only (needs sigma_inc_b), for example "
         "for amorphous or purely-incoherent scatterers with no Bragg peaks."),
     "incoherent_elastic_mode": (
-        "Debye-Waller treatment of the INCOHERENT elastic line.\n\n"
+        "Debye-Waller treatment of the incoherent elastic line.\n\n"
         "  isotropic (default): scalar exponent from the trace/3 of each "
         "species' displacement tensor (the ENDF-convention form).\n"
         "  directional: powder average of the full anisotropic exponential "
@@ -301,13 +301,13 @@ HELP = {
         "The coherent Bragg peaks are unaffected (already directional per "
         "reflection). The ENDF tape path cannot represent this option."),
     "include_gain": (
-        "Add the energy-GAIN (anti-Stokes, E < 0) side, where the neutron "
+        "Add the energy-gain (anti-Stokes, E < 0) side, where the neutron "
         "takes energy from the material instead of depositing it.\n\n"
         "Default: on, giving a physical double-differential spectrum with both "
         "energy-loss and energy-gain. Turn off for energy-loss only.\n\n"
         "How the gain side is computed is set by 'gain-side method' below."),
     "gain_side": (
-        "How the energy-GAIN (E < 0) side, where the neutron takes energy from "
+        "How the energy-gain (E < 0) side, where the neutron takes energy from "
         "the material, is computed when 'include energy-gain' is on.\n\n"
         "'direct (explicit Bose factors)': evaluate the gain side from first "
         "principles with explicit Bose phonon-annihilation factors. This is "
@@ -317,13 +317,13 @@ HELP = {
         "energy-loss side, S(-E) = exp(-E/kT) S(E) (the classic LEAPR-style "
         "approximation; equals the direct result only as dE/kT -> 0)."),
     "kinematic": (
-        "Multiply by the kinematic factor kf/ki so the result is the DOUBLE-"
-        "DIFFERENTIAL scattering cross section d2sigma/dOmega/dE', what a "
+        "Multiply by the kinematic factor kf/ki so the result is the double-"
+        "differential scattering cross section d2sigma/dOmega/dE', what a "
         "detector actually records (a count rate), rather than the bare "
         "S(Q,omega).\n\n"
         "The measured double-differential cross section is\n"
         "  d2sigma/dOmega/dE' = (kf/ki) * (sigma_b/4pi) * S(Q,omega),\n"
-        "and IRMA stores the (sigma_b/4pi) S(Q,omega) part WITHOUT the kf/ki "
+        "and IRMA stores the (sigma_b/4pi) S(Q,omega) part without the kf/ki "
         "flux factor. Turning this on applies that kf/ki (kf = final, ki = "
         "incident wavevector), giving the full d2sigma/dOmega/dE'.\n\n"
         "Default: off, matching the OCLIMAX S(Q,omega) convention. Turn on to "
@@ -331,7 +331,7 @@ HELP = {
     "e_min": (
         "Lowest energy transfer in the output spectrum [meV] (negative "
         "values mean the neutron gains energy).\n\nDefault 0.0 (energy-loss "
-        "side only). Use a NEGATIVE value (e.g. -50) to include the "
+        "side only). Use a negative value (e.g. -50) to include the "
         "energy-gain side in the output window (requires 'include "
         "energy-gain')."),
     "e_max": (
@@ -348,14 +348,13 @@ HELP = {
     "dq": (
         "Spacing [1/A] of the momentum-transfer support for the "
         "underlying S(Q,E).\n\nSmaller means finer Q sampling along the "
-        "instrument locus, at more cost. Default 0.05 1/A. This is the ONE "
-        "meaning of dQ (the S(Q,E) shell spacing); it is not the per-shell "
-        "sub-sampling."),
+        "instrument locus, at more cost. Default 0.05 1/A. dQ always means "
+        "this S(Q,E) shell spacing; it is not the per-shell sub-sampling."),
     "q_max": (
-        "Optional hard cap on the Q-support [1/A] (Q is the momentum "
-        "transfer).\n\nDefault: blank "
-        "= derive the Q range from the instrument locus over the chosen energy "
-        "range. Set a value only to truncate it."),
+        "Maximum Q [1/A] of the Direct 2-D map's Q axis (Q is the momentum "
+        "transfer).\n\nDefault: blank = cover the kinematic envelope of the "
+        "map's detector coverage. The 1-D spectra and cuts do not use it: they "
+        "take their Q range from the instrument locus."),
     "ind_ef": (
         "Fixed final energy Ef [meV] for an indirect-geometry instrument (a "
         "crystal analyzer selects Ef, the energy neutrons leave with; the "
@@ -369,7 +368,7 @@ HELP = {
         "'30:150:30'). One spectrum is computed per bank (each bank keeps its "
         "own curve).\n\nDefault '45,135' = the VISION forward/backward banks."),
     "dir_ei": (
-        "Fixed INCIDENT energy Ei [meV] for a direct-geometry instrument (Ei "
+        "Fixed incident energy Ei [meV] for a direct-geometry instrument (Ei "
         "is set by a chopper; the final energy is measured).\n\nNote: E max "
         "must be "
         "below Ei; the defaults (Ei = 300 meV, E max = 250 meV) already "
@@ -381,17 +380,17 @@ HELP = {
     "q_cuts": (
         "Optional constant-|Q| cuts (Q is the momentum transfer): a comma "
         "list of Q values [1/A] "
-        "(e.g. '2.0,4.0,6.0'). For each Q you get I(E) at that FIXED |Q|, a "
+        "(e.g. '2.0,4.0,6.0'). For each Q you get I(E) at that fixed |Q|, a "
         "vertical slice through S(Q,E), which reads off the vibrational modes "
         "living at that Q.\n\n"
-        "This is a DIRECT-geometry product (hence it lives on the Direct tab): "
+        "This is a direct-geometry product (hence it lives on the Direct tab): "
         "a direct instrument spans a broad Q-E region, so a fixed-|Q| slice is "
         "meaningful. An indirect instrument instead samples a fixed Q(E) locus "
         "per detector bank, where a constant-Q cut has no instrument meaning, "
         "so it is not offered for indirect geometry.\n\nDefault: blank = no "
         "Q-cuts. The S(Q,E) support is auto-extended to cover the ones you list."),
     "output_mode": (
-        "What the Run button computes for this DIRECT-geometry instrument.\n\n"
+        "What the Run button computes for this direct-geometry instrument.\n\n"
         "  fixed cuts: 1-D spectra, either along detector-angle loci or as "
         "constant-|Q| slices (pick which below). Writes to the 'output' file.\n"
         "  2-D map: the dense 2-D S(Q,E) heat-map, shown in the Plot "
@@ -409,7 +408,7 @@ HELP = {
         "For an arbitrary angle- or Q-integration not covered here, compute the "
         "2-D map and post-process it yourself."),
     "cut_dq": (
-        "Half-width [1/A] over which each constant-Q cut is AVERAGED. A real "
+        "Half-width [1/A] over which each constant-Q cut is averaged. A real "
         "measurement integrates a finite band of momentum transfer |Q|, not an "
         "infinitely-thin line. The cut at Q0 averages S(Q,E) over |Q| in "
         "[Q0 - dQ, Q0 + dQ].\n\n"
@@ -420,16 +419,19 @@ HELP = {
         "detectors can actually reach. Enter as 'min,max' (e.g. '3,135').\n\n"
         "Pre-filled from the selected real instrument's detector span (ARCS "
         "~2.4-136, MARI ~3.4-134, SEQUOIA ~2-62, ...; the PyChop tthlims). Edit "
-        "it for a custom range. Blank = the full map (no kinematic mask), which "
-        "is the natural choice for the generic 'width polynomial' model."),
+        "it for a custom range. Blank: the map uses the selected instrument's "
+        "span, or, with the 'width polynomial' model, the minimum and maximum "
+        "of the detector-angle list (30 to 120 deg by default)."),
     "map_mask": (
-        "Blank the 2-D map (and its export) OUTSIDE the detector coverage band "
+        "Blank the 2-D map (and its export) outside the detector coverage band "
         "above: show only the kinematically accessible region (the "
         "Euphonic-style arch, the region the instrument's detectors can reach) "
         "rather than the full computed S(Q,E) surface with the envelope drawn "
         "over it.\n\n"
-        "On by default for a real instrument; off (full map) for the generic "
-        "model. The Plot tab also has a live toggle to flip the view after a run."),
+        "Changing the resolution model sets it: on for a real instrument, off "
+        "(full map) for the 'width polynomial' model; a fresh panel starts "
+        "with it on. The Plot tab also has a live toggle to flip the view "
+        "after a run."),
     "resolution_shape": (
         "Instrument energy-resolution line shape (the blurring the instrument "
         "applies to every peak), applied by convolving the spectrum with a "
@@ -440,28 +442,30 @@ HELP = {
         "  lorentzian: a Cauchy peak with heavier tails (for spectrometers whose "
         "resolution is Lorentzian-tailed); the width polynomial is then the "
         "Lorentzian HWHM(E).\n\n"
-        "Both use the SAME width polynomial c0,c1,c2 below; only the peak shape "
+        "Both use the same width polynomial c0,c1,c2 below; only the peak shape "
         "(and tail weight) differ."),
     "sigma_c0": (
-        "c0, the CONSTANT term of the resolution-width polynomial sigma(E) = "
+        "c0, the constant term of the resolution-width polynomial sigma(E) = "
         "c0 + c1*E + c2*E^2, in meV.\n\n"
         "It is the width at zero energy transfer (E=0), the elastic-line "
         "resolution: the Gaussian sigma (shape=gaussian) or Lorentzian HWHM "
         "(shape=lorentzian). This sets how sharp the elastic peak is and is the "
         "dominant term for an indirect spectrometer like VISION.\n\n"
         "Units: meV.  VISION value: 0.31.\n"
-        "Leave ALL THREE coefficients blank to use the VISION preset "
-        "(0.31, 0.005, 8.1e-7). If you set any one, blank fields read as 0."),
+        "Leave all three coefficients blank to use the geometry's preset: the "
+        "VISION polynomial (0.31, 0.005, 8.1e-7) on the Indirect tab, a "
+        "constant 2% of Ei on the Direct tab. If you set any one, blank "
+        "fields read as 0."),
     "sigma_c1": (
-        "c1, the LINEAR coefficient of sigma(E) = c0 + c1*E + c2*E^2.\n\n"
-        "The width grows by c1 per meV of energy transfer E, so a larger c1 "
+        "c1, the linear coefficient of sigma(E) = c0 + c1*E + c2*E^2.\n\n"
+        "The width changes by c1 per meV of energy transfer E, so a larger c1 "
         "means the resolution broadens faster as you move away from the elastic "
-        "line. For a direct-geometry instrument the width typically grows "
-        "roughly linearly with energy transfer, so c1 carries most of that "
-        "energy dependence.\n\n"
+        "line. For a direct-geometry chopper instrument the width usually "
+        "falls as the energy transfer rises (c1 negative); the 'chopper' "
+        "resolution model computes it from the instrument instead.\n\n"
         "Units: dimensionless (meV of width per meV of E).  VISION value: 0.005."),
     "sigma_c2": (
-        "c2, the QUADRATIC coefficient of sigma(E) = c0 + c1*E + c2*E^2.\n\n"
+        "c2, the quadratic coefficient of sigma(E) = c0 + c1*E + c2*E^2.\n\n"
         "A small curvature term: it adds c2*E^2 to the width, fine-tuning the "
         "broadening at large energy transfer. Usually very small (often "
         "negligible); raise it only if the resolution clearly curves upward at "
@@ -469,10 +473,11 @@ HELP = {
         "Units: 1/meV (meV of width per meV^2 of E).  VISION value: 8.1e-7 "
         "(0.00000081)."),
     "resolution_model": (
-        "How the DIRECT-geometry energy resolution (the instrument's "
+        "How the direct-geometry energy resolution (the instrument's "
         "energy-dependent blurring) is determined.\n\n"
-        "  width polynomial: use the shared 'resolution width c0,c1,c2' below "
-        "(a Gaussian sigma polynomial); the simple generic option.\n"
+        "  width polynomial: use the 'resolution width c0,c1,c2' below (the "
+        "Gaussian sigma or Lorentzian HWHM, per 'resolution shape'); the "
+        "simple generic option.\n"
         "  chopper (auto, real instrument): pick a real direct-geometry "
         "spectrometer + chopper package + frequency, and IRMA computes the "
         "physical, energy-dependent resolution from the moderator + chopper + "
@@ -480,9 +485,9 @@ HELP = {
         "PyChop instruments are built in: the Fermi-chopper machines ARCS, "
         "SEQUOIA, MAPS, MARI, MERLIN, HYSPEC and the disk-chopper machines CNCS "
         "and LET. The width is derived from the Ei field above; no manual "
-        "numbers needed. RECOMMENDED for a real direct-geometry instrument.\n\n"
-        "Both feed a Gaussian kernel; only the WIDTH source differs. This "
-        "selector is direct-geometry only."),
+        "numbers needed. Recommended for a real direct-geometry instrument.\n\n"
+        "The chopper model gives a Gaussian width; the polynomial can be "
+        "Gaussian or Lorentzian. This selector is direct-geometry only."),
     "chop_instrument": (
         "Direct-geometry chopper spectrometer to model. The flight paths, "
         "chopper packages, moderator pulse model and detector geometry are "
@@ -507,14 +512,14 @@ HELP = {
     "output": (
         "Output file for the computed spectrum.\n\nThe extension picks the "
         "format: .csv (default; E + one column per cut), .npz (NumPy arrays), or "
-        ".json. By default each cut writes only its TOTAL; tick 'inelastic / "
+        ".json. By default each cut writes only its total; tick 'inelastic / "
         "elastic breakdown' below to also keep the component columns."),
     "export_components": (
-        "Whether to keep the INELASTIC and ELASTIC breakdown of each cut, or just "
-        "the TOTAL.\n\n"
-        "  OFF (default): the saved file and the 1-D plot show only each cut's "
-        "TOTAL; the lean, uncluttered default for both a single cut and many.\n"
-        "  ON: each cut additionally carries its inelastic and elastic scattering "
+        "Whether to keep the inelastic and elastic breakdown of each cut, or just "
+        "the total.\n\n"
+        "  off (default): the saved file and the 1-D plot show only each cut's "
+        "total.\n"
+        "  on: each cut additionally carries its inelastic and elastic scattering "
         "components, written to the file (extra columns/arrays) and overlaid on "
         "the plot.\n\n"
         "Read when you press Run, so it governs the saved file; it also toggles "
@@ -522,15 +527,15 @@ HELP = {
         "The 2-D map is a single S(Q,E) surface and is unaffected by this."),
 }
 
-# The scatterer list is MATERIAL IDENTITY: a prefilled carbon row is IRMA
-# asserting a material it cannot know, and a plausible-but-wrong row survives
-# review far more easily than an empty one. Everything else on this panel
-# (mesh, directions, Ef, angles, grids) is methodology and stays prefilled.
+# The scatterer list is the material's identity, which IRMA cannot know, and
+# a plausible but wrong prefilled row is easy to miss, so it starts empty.
+# Everything else on this panel (mesh, directions, Ef, angles, grids) stays
+# prefilled.
 IDENTITY_HINT_ELEMENTS = (
-    "Blank on purpose — the scatterers describe YOUR material. Type a symbol "
+    "Blank on purpose: the scatterers describe YOUR material. Type a symbol "
     "(the nuclear constants autofill), press 'Auto-fill elements from "
-    "phonopy.yaml', or load a config with Open Config... (see the committed "
-    "examples/spectra configs).")
+    "phonopy.yaml', or load a config with Open Config... (see the example "
+    "configs in examples/spectra of the IRMA repository).")
 
 
 class NSPanel(RunPanel):
@@ -809,7 +814,7 @@ class NSPanel(RunPanel):
         self.q_max.pack(fill=tk.X, pady=2)
 
     def _build_geometry(self, parent):
-        """Build the geometry tabs (VISION / indirect / direct)."""
+        """Build the geometry tabs (Indirect with VISION defaults, Direct)."""
         g = form_section(parent, "Instrument geometry")
         self.geom_nb = ttk.Notebook(g)
         self.geom_nb.pack(fill=tk.X)
@@ -869,8 +874,9 @@ class NSPanel(RunPanel):
         coeffs = _CoeffFields(parent)
         ttk.Label(
             parent, text="sigma(E) = c0 + c1*E + c2*E^2 (meV).  Leave all three "
-                         "blank = VISION (0.31, 0.005, 8.1e-7).  See each ? for "
-                         "what the term does.",
+                         "blank = the preset: VISION (0.31, 0.005, 8.1e-7) on the "
+                         "Indirect tab, a constant 2% of Ei on the Direct tab.  "
+                         "See each (i) for what the term does.",
             foreground="gray", wraplength=320, justify=tk.LEFT).pack(anchor=tk.W)
         return shape, coeffs
 
@@ -1183,9 +1189,8 @@ class NSPanel(RunPanel):
         src = self.input_source.get()
         mode = self._mode()
         is_dos_file = (src == "dos_files")
-        # Mode 0 emits the crystal (lattice + per-row positions) whenever it is
-        # non-blank: gating on the elastic toggle made Save destructive (an
-        # elastic-'off' save silently erased the crystal from the file).
+        # Mode 0 always emits the crystal (lattice + per-row positions) when it
+        # is non-blank, so an elastic-off Save keeps it.
         want_crystal = (mode == 0)
 
         scat = [self._row_to_scatterer(r, is_dos_file, want_crystal)
@@ -1199,9 +1204,7 @@ class NSPanel(RunPanel):
         else:
             material.update(phonopy_material(self))
         if want_crystal and self.lattice.get().strip():
-            # comma- OR space-separated, matching the field help and the mesh
-            # field; parse_float raises ValueError (caught by the handlers),
-            # unlike the cli parsers' argparse.ArgumentTypeError.
+            # comma- or space-separated, like the mesh field
             material["lattice"] = [parse_float("lattice", x)
                                    for x in self.lattice.get().replace(",", " ").split()]
 
@@ -1274,13 +1277,9 @@ class NSPanel(RunPanel):
                     "package": self.chop_package.get(),
                     "frequency": parse_float("frequency (Hz)",
                                              self.chop_frequency.get())}
-        # Constant-|Q| cuts are emitted for EVERY geometry: the CLI attaches
-        # --q-cuts geometry-independently and run_spectra honours q_cuts the
-        # same way, so a CLI-authored vision/indirect config carrying
-        # instrument.q_cuts must survive Run/Save, not be silently dropped.
-        # (The editing widgets live on the Direct tab; emitted in BOTH cut
-        # modes -- _sync_cut_by keeps a non-empty entry visible so it never
-        # feeds the run unseen.)
+        # Constant-|Q| cuts are emitted for every geometry, since the CLI and
+        # run_spectra honour them regardless (_sync_cut_by keeps a non-empty
+        # entry visible).
         if self.q_cuts.get().strip():
             instrument["q_cuts"] = parse_coeffs(self.q_cuts.get())
         if self.cut_dq.get().strip():
@@ -1362,9 +1361,9 @@ class NSPanel(RunPanel):
         self.de.set(g.de_meV); self.dq.set(g.dq_max_invA)
         self.q_max.set("" if g.q_max_invA is None else g.q_max_invA)
 
-        # The GUI has two geometry tabs (indirect / direct); a legacy 'vision'
-        # config maps onto the indirect tab with the VISION banks, since VISION
-        # IS indirect geometry with Ef=3.5 and the 45/135 banks.
+        # The GUI has two geometry tabs (indirect / direct); a 'vision' config
+        # maps onto the indirect tab with the VISION banks, since VISION is
+        # indirect geometry with Ef=3.5 and the 45/135 banks.
         if ins.geometry == "direct":
             self.geom_nb.select(1)
             self.dir_ei.set(ins.e_fixed_meV)
@@ -1379,17 +1378,15 @@ class NSPanel(RunPanel):
                 self.chop_package.set(ins.chopper_spec.get("package", ""))
                 self.chop_frequency.set(ins.chopper_spec.get("frequency", 600.0))
             self._sync_res_model()
-            # direct output mode + its fields. Set AFTER the chopper sync so an
-            # explicit stored coverage wins over the instrument-default pre-fill;
-            # a None stored coverage keeps the pre-fill (chopper) or blank (poly).
+            # direct output mode + its fields, set after the chopper sync so a
+            # stored coverage wins over the instrument pre-fill
             self.dir_output.set(_OUTPUT_REV.get(ins.output_mode, "fixed cuts"))
             self.dir_cut_by.set(_CUT_BY_REV.get(ins.cut_by, "detector angles"))
             if ins.map_coverage_deg:
                 self.map_coverage.set(",".join(str(a) for a in ins.map_coverage_deg))
             elif not (ins.resolution_model == "chopper" and ins.chopper_spec):
-                # No stored coverage + generic model -> full map: clear the
-                # field rather than inherit the previously loaded config's
-                # band (chopper re-seeded it from the instrument above).
+                # no stored coverage and the generic model: clear the field
+                # instead of keeping the previous config's band
                 self.map_coverage.set("")
             self.dir_map_mask.set(bool(ins.map_mask))
             self._sync_output()
@@ -1405,7 +1402,7 @@ class NSPanel(RunPanel):
         self.q_cuts.set("" if not ins.q_cuts
                         else ",".join(str(q) for q in ins.q_cuts))
         self.cut_dq.set("" if ins.cut_dq_invA is None else ins.cut_dq_invA)
-        # Resolution shape + width live on BOTH geometry tabs (indirect; direct
+        # Resolution shape + width live on both geometry tabs (indirect; direct
         # 'width polynomial' branch); populate both so a tab switch is
         # consistent. build_config reads whichever is active.
         self.ind_resolution_shape.set(ins.resolution_shape)
@@ -1479,7 +1476,7 @@ class NSPanel(RunPanel):
         fh = tempfile.NamedTemporaryFile(suffix=".npz", delete=False)
         fh.close()
         self._pending_map = fh.name
-        # the map's accessible band comes from the detector COVERAGE (explicit
+        # the map's accessible band comes from the detector coverage (explicit
         # field -> selected instrument's span -> detector angles as a fallback).
         cov = cfg.instrument.map_coverage_deg
         if not cov and cfg.instrument.chopper_spec:
@@ -1490,10 +1487,9 @@ class NSPanel(RunPanel):
         th_min, th_max = float(cov[0]), float(cov[1])
         # the Plot-tab view toggle starts from the config's mask preference
         self.map_mask.set(bool(cfg.instrument.map_mask))
-        # Q max: an explicit field wins; otherwise auto-cover the kinematic
-        # envelope so the data fills the whole accessible arch. A hardcoded cap
-        # leaves an empty band wherever the envelope reaches past it (wide angles
-        # at high Ei, or the energy-gain side) -- the bug this replaces.
+        # Q max: an explicit field wins; otherwise cover the kinematic envelope
+        # so the data fills the whole accessible arch (a fixed cap leaves an
+        # empty band at wide angles, high Ei, or on the energy-gain side).
         if cfg.grid.q_max_invA:
             q_max = float(cfg.grid.q_max_invA)
         else:
@@ -1503,15 +1499,12 @@ class NSPanel(RunPanel):
             Eg = _np.arange(g.e_min_meV, g.e_max_meV + 0.5 * g.de_meV, g.de_meV)
             _, q_hi = kinematic_envelope(cfg.instrument.geometry,
                                          cfg.instrument.e_fixed_meV, th_min, th_max, Eg)
-            # Mask to finite entries instead of np.nanmax: an all-NaN envelope
-            # would make nanmax emit a RuntimeWarning (and it was called twice).
+            # finite entries only: np.nanmax warns on an all-NaN envelope
             finite_q = q_hi[_np.isfinite(q_hi)]
             q_max = float(finite_q.max()) + 0.5 if finite_q.size else 13.0
             q_max = min(q_max, 40.0)                 # cover the arch + pad; sane cap
-        # q_min 0: the same full-arch principle as q_max above -- the CLI
-        # accepts a zero lower bound, and a hardcoded 0.5 cut a valid low-Q
-        # band out of cold/low-Ei maps while these comments promised full
-        # accessible coverage (review GUI-MAP).
+        # q_min 0, for the same reason: a higher floor cuts the low-Q band out
+        # of cold or low-Ei maps
         argv = [sys.executable, "-u", "-m", "irma.spectra", "map",
                 cfg_path, "--q-min", "0.0", "--q-max", f"{q_max:.3f}",
                 "--dq-map", str(cfg.grid.dq_max_invA),
@@ -1549,14 +1542,14 @@ class NSPanel(RunPanel):
             pass
 
     def _on_destroy(self, event):
+        """Remove the panel's temp files when it is destroyed."""
         # event.widget may be a path string during teardown; compare names
-        """Release callbacks and figures when the panel is destroyed."""
         if str(event.widget) != str(self):
             return
         self.cleanup_temp_files()
 
     def _plot_map(self, path):
-        """Load the computed map CSV and draw it."""
+        """Load the computed map (.npz) and draw it."""
         if self._map_path and self._map_path != path:
             self._discard_map_file(self._map_path)    # superseded temp map
         self._map_path = path          # subsequent y-scale toggles redraw the map
@@ -1634,8 +1627,7 @@ class NSPanel(RunPanel):
                 ax.plot(d["envelope_q_hi"], d["envelope_E"], "w-", lw=1.0, alpha=0.8,
                         label="kinematic envelope")
                 ax.legend(loc="upper right", fontsize=8)
-            # Keep the x-axis on the computed Q range: the envelope curve must
-            # never drag it into empty space past the data (q_max-mismatch).
+            # keep the x-axis on the computed Q range, not the envelope's
             ax.set_xlim(float(Q.min()), float(Q.max()))
             fig.colorbar(pcm, ax=ax, label="S(Q,E)")
         ax.set_xlabel(r"|Q| (1/$\AA$)")
