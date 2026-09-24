@@ -154,7 +154,8 @@ class ComputationRunner:
 
     @staticmethod
     def _kill_tree(proc):
-        """SIGTERM the child's process group; SIGKILL it after a grace period."""
+        """SIGTERM the child's process group; SIGKILL it after a grace period.
+        On Windows only the child itself is terminated."""
         if proc.poll() is not None:
             return
         if os.name != "posix":  # pragma: no cover - Windows

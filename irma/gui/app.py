@@ -50,9 +50,8 @@ class IrmaApp(EndfFormMixin):
         # the tree is reaped), then destroy.
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Open at the size the built widgets actually request (the fixed
-        # 900x750 default clipped the lattice row's third column and the
-        # trailing help buttons), clamped to the screen.
+        # Open at the size the built widgets request, limited to the screen
+        # but never below 900x750 (on a small screen the minimum wins).
         self.root.update_idletasks()
         width = min(self.root.winfo_reqwidth() + 40,
                     self.root.winfo_screenwidth() - 80)
@@ -85,11 +84,10 @@ class IrmaApp(EndfFormMixin):
     # Notebook (tabs)
     # ------------------------------------------------------------------
     def _build_notebook(self):
-        # Two top-level capabilities: ENDF/TSL evaluation and neutron-scattering
-        # forward spectra. The ENDF form is a single scrolling page (jump bar +
-        # five parts in deck order); all deck-generation wiring lives on self.
-        """Build the main tab notebook (ENDF Evaluation, Neutron Scattering
-        Experiments, NCrystal plugin)."""
+        """Build the main tab notebook: ENDF Evaluation, Neutron Scattering
+        Experiments, NCrystal plugin and MLIP phonon models. The ENDF form is
+        a single scrolling page (jump bar and five parts in deck order); its
+        deck-generation wiring lives on self."""
         self.top_notebook = ttk.Notebook(self.root)
         self.top_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
@@ -103,7 +101,7 @@ class IrmaApp(EndfFormMixin):
             "(NJOY/THERMR, OpenMC, MCNP).")
         self._build_endf_form(endf_page)
 
-        # Neutron-scattering panel (its own VISION/indirect/direct sub-tabs).
+        # Neutron-scattering panel (its own Indirect and Direct sub-tabs).
         ns_page = ttk.Frame(self.top_notebook)
         self.top_notebook.add(ns_page, text="Neutron Scattering Experiments")
         self._page_header(
