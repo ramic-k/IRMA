@@ -37,9 +37,10 @@ export:
 ```
 
 No grid appears here because the automatic grid is the default: IRMA
-builds the same converged alpha and beta grids the ENDF evaluator
-uses, from the same shared code, so the exported physics and a tape
-from the same calculation never drift apart. The
+builds the same converged alpha and beta grids an automatic-grid ENDF
+evaluation with `iint=1` uses, from the same shared code, so the
+exported physics and such a tape from the same calculation do not
+drift apart. The
 [NCrystal data exporter](../ncrystal-plugin.md) page documents every
 field.
 
@@ -145,7 +146,8 @@ spectrometer compared against measurement.
 ## The same export in the GUI
 
 The NCrystal plugin tab is this tutorial as a form: the material and
-export sections mirror the YAML, the scatterer row fills itself from
-the phonopy calculation, and the Log column streams the same export log.
+export sections mirror the YAML, each scatterer row fills its nuclear
+constants from the built-in table once you type the symbol, and the Log
+column streams the same export log.
 
 ![The NCrystal plugin tab staged with this tutorial's export](../assets/gui/gui_ncrystal_export.png)

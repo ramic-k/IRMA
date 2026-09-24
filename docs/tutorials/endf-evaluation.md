@@ -2,7 +2,7 @@
 
 This tutorial produces a production-quality thermal scattering
 evaluation for graphite: one committed input file in, one ENDF-6 tape out,
-in about a minute on a laptop. (A tape is an ENDF output file, the
+in one to two minutes on a laptop. (A tape is an ENDF output file, the
 historical name, and S(α,β) is the thermal scattering law in the
 dimensionless momentum and energy transfer.) Everything it uses ships with the
 repository, so the commands work from a fresh checkout with the
