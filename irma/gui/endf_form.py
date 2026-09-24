@@ -1,13 +1,9 @@
 """ENDF-evaluation form for the IRMA GUI (the LEAPR-parity deck panel).
 
-Extracted verbatim from :mod:`irma.gui.app` so the ENDF form is reviewable as
-one module, mirroring the NS/NCrystal panel extraction. It is a MIXIN rather
-than a self-contained panel class deliberately: the form's ~700 widget
-attributes live directly on the application object (``self.awr``,
-``self.iel_var``, ...), and the deck round-trip tests and
-:mod:`irma.gui.deck_text` address them there — a separate namespace would
-force hundreds of delegation shims for zero behavioral gain. ``IrmaApp``
-inherits this mixin; every attribute name is unchanged.
+A mixin, not a separate panel class: the form's widget attributes live on
+the application object (``self.awr``, ``self.iel_var``, ...), where the deck
+round-trip tests and :mod:`irma.gui.deck_text` address them. ``IrmaApp``
+inherits it.
 
 The card-by-card deck format reference lives in ``docs/input-reference.md``.
 """
@@ -85,64 +81,61 @@ def _show(widget, on, **pack):
 
 STRUCTURE_FILL_TITLE = "Fill structure from phonopy.yaml"
 STRUCTURE_FILL_HELP = (
-    "Prefills the iel=10 crystal structure -- the Lattice Parameters fields "
-    "and the whole 'Atom Types in Unit Cell' block -- from the phonopy calculation "
-    "named above (Card 6f).\n\n"
-    "The cell read is the phonopy PRIMITIVE cell, loaded through phonopy "
-    "itself. That is the cell the input file must describe: for inelastic_mode 1/2 "
-    "IRMA matches every Card 6d position against the phonopy primitive cell's "
-    "atom positions and refuses the input file when they do not correspond.\n\n"
-    "Nothing happens until you press Apply in the preview: the button never "
-    "fires on its own, not when you pick a phonopy.yaml, not on input-file import, "
-    "not on reset. Apply is all-or-nothing -- it replaces the lattice AND the "
-    "whole atom block together, so phonopy positions can never end up beside "
-    "a hand-typed lattice.\n\n"
-    "Each species is filled as the NATURAL ELEMENT (A = 0) with "
-    "natural-abundance constants, because a phonopy calculation names elements, not "
-    "isotopes. Isotopic materials must be edited afterwards.")
+    "Fills the Lattice Parameters and the whole 'Atom Types in Unit Cell'\n"
+    "block from the phonopy.yaml named above (Card 6f).\n\n"
+    "- The cell is the phonopy primitive cell, the cell inelastic_mode 1/2\n"
+    "  requires: IRMA matches every Card 6d position against it and\n"
+    "  refuses an input file that does not correspond.\n"
+    "- Each species is filled as the natural element (A = 0) with its\n"
+    "  natural-abundance constants, because a phonopy model names\n"
+    "  elements, not isotopes (deuterium appears as H).\n"
+    "- For an isotope, set ZA (Card 4) and press 'Apply ZA', which\n"
+    "  relabels that element's row (positions kept).\n"
+    "- Nothing changes until you press Apply in the preview: Apply\n"
+    "  replaces the lattice and the whole atom block together, Cancel\n"
+    "  changes nothing. The button never fires on its own.")
 
-# Material-IDENTITY fields (ZA, MAT, AWR, sigma_free, the lattice, the Card 6d
-# atom types) ship BLANK. A prefilled value there is IRMA asserting something
-# about the user's material that it cannot know, and a plausible-but-wrong
-# number survives review far more easily than an empty field. Methodology
+# Material-identity fields (ZA, MAT, AWR, sigma_free, the lattice, the Card 6d
+# atom types) ship blank: IRMA cannot know the user's material, and a
+# plausible but wrong prefilled number is easy to miss. Methodology
 # defaults (mesh, ndir/mpdir, auto-order, the grid knobs, npr, temperature)
 # stay prefilled: those encode what the validation campaign established.
 # One gray hint line per blanked group names the ways to fill it.
 _FILL_ROUTES = ("Import Input File (top of the Material part) or a committed "
                 "input file under examples/tsl/")
 IDENTITY_HINT_SCATTERER = (
-    "Blank on purpose — ZA, AWR and sigma_free describe YOUR material. Type "
-    "them in, press 'Fill AWR + sigma_free from ZA', or load an input file with "
+    "Blank on purpose: ZA, AWR and sigma_free describe your material. Type "
+    "them in, press 'Apply ZA', or load an input file with "
     + _FILL_ROUTES + ".")
 IDENTITY_HINT_MAT = (
-    "Blank on purpose — the MAT number labels YOUR evaluation. Assign one, or "
+    "Blank on purpose: the MAT number labels your evaluation. Assign one, or "
     "load an input file with " + _FILL_ROUTES + ".")
 IDENTITY_HINT_LATTICE = (
-    "Blank on purpose — the unit cell describes YOUR material. Type it in, "
+    "Blank on purpose: the unit cell describes your material. Type it in, "
     "press '" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or load an "
     "input file with " + _FILL_ROUTES + ".")
 IDENTITY_HINT_ATOMS = (
-    "Blank on purpose — the atom types describe YOUR material. Type them in, "
+    "Blank on purpose: the atom types describe your material. Type them in, "
     "press '" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or load an "
     "input file with " + _FILL_ROUTES + ".")
 
 EXT_HELP = {
     "about": (
-        "Crystalline EXTINCTION is a reduction of the Bragg-peak intensity in "
+        "Crystalline extinction is a reduction of the Bragg-peak intensity in "
         "a real crystallite: once a beam is strongly diffracted it cannot "
         "diffract again, so the measured coherent-elastic cross section is "
-        "LOWER than the ideal (kinematic) theory predicts.\n\n"
-        "Extinction is a property of the SAMPLE (crystallite size, mosaic, "
-        "grain size), NOT of the material itself. Fit l/g/L to a measured "
+        "lower than the ideal (kinematic) theory predicts.\n\n"
+        "Extinction is a property of the sample (crystallite size, mosaic, "
+        "grain size), not of the material itself. Fit l/g/L to a measured "
         "transmission (as in Xu 2025) or take them from the known "
-        "microstructure. OFF by default: the tape is then the ideal-crystal "
-        "Bragg edges, byte-identical to today's output.\n\n"
+        "microstructure. Off by default: the tape then has the ideal-crystal "
+        "Bragg edges, identical to a run without the extinction card.\n\n"
         "Extinction is strongest at long wavelength (low energy) and vanishes "
         "above ~0.1 eV. IRMA applies a per-plane factor y in (0,1] to the "
         "coherent-elastic Bragg edges and writes a standard histogram MF7/MT2 "
         "table; the high-energy edges are unchanged.\n\n"
         "The models and recipes are ported from the NCrystal CrysXT plugin. "
-        "See the '?' on the attribution line for references."),
+        "See the (i) on the attribution line for references."),
     "model": (
         "Extinction model (5 available):\n"
         "  - Sabine_uncorr / Sabine_corr: Sabine's analytic block model "
@@ -166,8 +159,10 @@ EXT_HELP = {
         "BC_mix and BC_mod require l>0. Fitted values are typically microns "
         "(1 µm = 1e4 Å)."),
     "g": (
-        "g is the mosaic spread in rad⁻¹ (the width of the distribution of "
-        "block orientations). Together with L it drives SECONDARY extinction "
+        "g is the mosaic spread parameter in rad⁻¹ (the Becker-Coppens "
+        "mosaic-distribution parameter; it scales as the inverse of the "
+        "angular spread of the blocks, so a larger g means a narrower "
+        "spread). Together with L it drives SECONDARY extinction "
         "(block-to-block beam depletion). Must be > 0 for BC_mix/BC_mod and "
         "for any secondary mechanism."),
     "L": (
@@ -196,7 +191,7 @@ EXT_HELP = {
         "faithful tape (~0.04% RMSE on THERMR-step reconstruction) at a modest "
         "point count."),
     "attribution": (
-        "The extinction models and recipes are PORTED (not imported) from the "
+        "The extinction models and recipes are ported (not imported) from the "
         "NCrystal CrysXT plugin:\n\n"
         "  - ncplugin-CrysXT: https://github.com/dddijulio/ncplugin-CrysXT\n\n"
         "References (please read these to understand the physics):\n\n"
@@ -218,45 +213,32 @@ EXT_HELP = {
 def _phase_from_log_line(line):
     """Extract a short phase label from a streamed child log line, or None.
 
-    The out-of-process compute child prints human phase markers ending in
-    ``...`` ("Accumulating coherent one-phonon contribution...", "Writing ENDF
-    output..."). Surfacing those on the status line turns a long run's static
-    "Running..." into live progress. Non-marker output (data rows, ``===``
-    banners, warnings) returns None so the current phase is left unchanged --
-    the readout is purely additive and never wrong-by-omission.
+    A phase marker is a multi-word line ending in ``...`` ("Writing ENDF
+    output...") of at most 120 characters (the longest real marker is ~105);
+    anything else returns None, which leaves the current phase unchanged.
+    The space rule rejects single-word progress dots from libraries
+    ("Loading...").
     """
     s = line.strip()
     if not s.endswith("...") or s.startswith("==="):
         return None
-    # Upper bound guards against a stray long line being pinned as a phase; 120
-    # clears the longest real marker ("Running phonopy mesh (...) again with
-    # symmetry reduction for incoherent one-phonon mode sums..." is ~105 chars).
     if not (3 < len(s) <= 120):
         return None
-    # Every real engine marker is a multi-word sentence; requiring a space
-    # rejects bare single-word progress dots a library might print
-    # ("Loading...", "Retrying...") that would otherwise pin a misleading phase.
     if " " not in s[:-3].strip():
         return None
     return s
 
 
 class EndfFormMixin:
-    """The ENDF Evaluation panel: tab builders, deck generation, run/log
+    """The ENDF Evaluation panel: part builders, deck generation, run/log
     wiring, and deck import/export. Mixed into :class:`irma.gui.app.IrmaApp`;
     reads and writes its widget attributes on ``self``."""
 
     def _build_endf_form(self, page):
         """Build the single-page ENDF form: a jump bar over one scrolling
         column holding the five parts (Material, Scattering, Grids, Phonon,
-        Run) in deck-writing order.
-
-        The parts were separate notebook tabs through v0.19. One page keeps
-        the whole deck visible in the order it is written — fill top to
-        bottom, press Run — and a deck import can no longer change a field
-        on a tab the user is not looking at. The jump bar preserves the
-        tabs' direct navigation: each button scrolls its part to the top.
-        """
+        Run) in deck-writing order; each jump-bar button scrolls its part to
+        the top."""
         init_form_styles()
         import tkinter.font as tkfont
         if "IrmaPartFont" not in tkfont.names():
@@ -314,8 +296,8 @@ class EndfFormMixin:
         canvas.bind("<Configure>", _fit_width)
 
         def _wheel(event):
-            # macOS reports small per-line deltas; Windows multiples of 120
             """Scroll the canvas on mouse wheel (platform-normalized delta)."""
+            # macOS reports small per-line deltas; Windows multiples of 120
             delta = event.delta
             step = delta // 120 if abs(delta) >= 120 else delta
             canvas.yview_scroll(-int(step), "units")
@@ -335,7 +317,7 @@ class EndfFormMixin:
         self._sync_modes()
 
     def _form_part(self, title):
-        """One deck part (a former tab) inside the single-page form: a
+        """One deck part inside the single-page form: a
         prominent title + separator, registered for the jump bar. Returns
         the part's body frame."""
         outer = ttk.Frame(self._endf_column)
@@ -360,7 +342,7 @@ class EndfFormMixin:
         canvas.yview_moveto(min(1.0, max(0.0, y / total)))
 
     # ------------------------------------------------------------------
-    # Tab 1: Material Setup
+    # Material part
     # ------------------------------------------------------------------
     def _build_material_tab(self):
         """Build the Material part widgets."""
@@ -388,20 +370,19 @@ class EndfFormMixin:
             help_text="Selects how the inelastic scattering (MF7/MT4, the "
                       "S(alpha,beta) table) is computed.\n\n"
                       "inelastic_mode values:\n"
-                      "  0. Legacy cubic: isotropic Debye-Waller factor plus "
-                      "the cubic/incoherent inelastic model.\n\n"
-                      "  1. Directional incoherent approximation: keeps IRMA's "
-                      "directional Debye-Waller / MT2 handling, but calls the "
-                      "noncubic S(alpha,beta) driver for the MT4 inelastic "
-                      "section, injecting incoherent-approximation one-phonon "
-                      "(n=1) plus incoherent-approximation multiphonon "
-                      "terms.\n\n"
-                      "  2. Coherent approximation: the same noncubic path, "
-                      "but injects the exact one-phonon term (coherent + "
-                      "incoherent) plus incoherent-approximation multiphonon "
-                      "terms.\n\n"
-                      "Modes 1 and 2 are the cleaned-up noncubic hybrid paths.\n\n"
-                      "Requires phonopy installed and a phonopy.yaml with "
+                      "  0. Legacy cubic: isotropic Debye-Waller factor and "
+                      "a phonon expansion of the scalar DOS given in the "
+                      "Phonon part.\n\n"
+                      "  1. Incoherent approximation: the inelastic part "
+                      "comes from the phonopy calculation, with directional "
+                      "Debye-Waller factors, treating every atom as an "
+                      "incoherent scatterer (no interference between "
+                      "atoms).\n\n"
+                      "  2. Coherent one-phonon: the same, except the "
+                      "one-phonon term is exact (coherent interference "
+                      "between atoms included); the multiphonon orders stay "
+                      "in the incoherent approximation.\n\n"
+                      "Modes 1 and 2 require phonopy installed and a phonopy.yaml with "
                       "force constants (Card 6f), plus explicit noncubic "
                       "inelastic controls (Card 6g). These modes work with "
                       "either elastic_mode=1 (SEF) or elastic_mode=2 (MEF). "
@@ -436,7 +417,7 @@ class EndfFormMixin:
             variable=self.inelastic_mode_var, value=2,
             command=self._on_inelastic_mode_click).pack(side=tk.LEFT)
 
-        # Sub-frame that is shown/hidden by either checkbox
+        # Sub-frame shown for inelastic_mode 1/2
         self._nc_subframe = ttk.Frame(nc_body)
         self._nc_subframe.pack(fill=tk.X, pady=5)
 
@@ -537,84 +518,42 @@ class EndfFormMixin:
         self.nc_multiphonon_num_directions = LabeledEntry(
             ctrl_row, "mpdir:", "1000", width=6, label_width=0,
             help_title="mpdir (Multiphonon Directions)",
-            help_text="Number of directions used to powder-average "
-                      "(orientationally average) the multiphonon background "
-                      "over the unit sphere.\n\n"
-                      "What it controls: with the anisotropic Debye-Waller "
-                      "tensor the multiphonon S(α,β) depends on the "
-                      "scattering DIRECTION: both the Debye-Waller "
-                      "exponent 2W = Q²·(û·U·û) and the direction-projected "
-                      "phonon DOS vary with the unit vector û. IRMA samples "
-                      "this many golden-spiral (Fibonacci-sphere) directions, "
-                      "equally weighted, and averages the multiphonon over "
-                      "them. (The one-phonon terms use 'ndir'; this knob only "
-                      "sizes the multiphonon angular average.)\n\n"
-                      "Convergence: the average converges quickly; for "
-                      "graphite-like crystals it is already converged by "
-                      "~50–100 directions. The default of 1000 (the "
-                      "validation-campaign sampling) carries ample margin; "
-                      "raise it only to verify convergence on a new "
-                      "material. Cost is linear in the count (the "
-                      "multiphonon phase scales ∝ mpdir), so larger values "
-                      "cost proportionally more for no accuracy gain once "
-                      "converged.")
+            help_text="Number of golden-spiral directions used to "
+                      "powder-average the multiphonon background (the "
+                      "one-phonon terms use 'ndir'). With the anisotropic "
+                      "Debye-Waller tensor the multiphonon terms depend on "
+                      "the scattering direction.\n\n"
+                      "Default 1000; graphite-like crystals are converged by "
+                      "~50-100 directions. Cost is linear in the count.")
         self.nc_multiphonon_num_directions.pack(side=tk.LEFT, padx=(0, 10))
-        # ON by default: the GUI's fixed nphon=100 with the default grids
-        # (Beta max = 5 eV reaches Q ~ 98 1/A) is a documented truncation
-        # case — graphite needs an order near 223 there. The deck-side
-        # default stays 0 (reproducibility for hand-written decks); the GUI
-        # writes the deck itself, so it defaults to the safe setting.
+        # GUI defaults auto_order to 1 (the deck default is 0): nphon=100
+        # truncates high Q on the default grids (graphite needs ~223).
         self.nc_auto_order_var = tk.IntVar(value=1)
-        # auto-size ON makes Card 3's nphon a dead field for modes 1/2;
-        # the trace keeps the nphon entry's grey-out in step (it also
-        # fires on deck import and reset).
+        # the trace greys out Card 3's nphon while auto-size is on
         self.nc_auto_order_var.trace_add(
             "write", self._sync_modes)
         ttk.Checkbutton(
             ctrl_row, text="Auto-size multiphonon order",
             variable=self.nc_auto_order_var,
         ).pack(side=tk.LEFT, padx=(0, 4))
-        InfoLabel(ctrl_row, "Card 6g Controls",
-                  "Card 6g controls the noncubic MT4 inelastic model:\n\n"
-                  "  ndir: one-phonon direction count; default 10000 (the\n"
-                  "    validation-campaign sampling)\n"
-                  "  mpdir: multiphonon direction count; powder-averages the\n"
-                  "    anisotropic multiphonon over the sphere; default 1000,\n"
-                  "    converged by ~50–100, raise only to check convergence\n"
-                  "  nphon (Card 3): maximum multiphonon order\n"
-                  "  Auto-size multiphonon order (Card 6g 3rd field): IRMA\n"
-                  "    sizes nphon from the anisotropic Debye-Waller physics.\n"
-                  "    ON by default; the GUI defaults produce Card 6g\n"
-                  "    '10000 1000 1'. Turn it OFF only for\n"
-                  "    deliberate low-order studies: your Card 3 nphon is then\n"
-                  "    honored exactly, and a too-low value truncates the\n"
-                  "    high-Q (high momentum transfer) rows of the cross\n"
-                  "    section.\n\n"
-                  "These controls are required for inelastic_mode=1/2."
+        InfoLabel(ctrl_row, "Auto-size multiphonon order",
+                  "Card 6g 3rd field. On (default): IRMA sizes the "
+                  "multiphonon order from the anisotropic Debye-Waller "
+                  "factor and ignores Card 3 nphon. Off: nphon is used as "
+                  "typed, and a low value truncates the high-Q cross "
+                  "section."
                   ).pack(side=tk.LEFT)
 
-        # Note: with the anisotropic Debye-Waller factor the multiphonon
-        # order required to reach the free-gas limit grows with Q, so a hand-set
-        # nphon that is fine at low Q will silently truncate the high-Q rows of
-        # the cross section. The GUI therefore defaults "Auto-size" ON; this
-        # warning is for users who deliberately turn it off.
         warn_row = ttk.Frame(self._nc_subframe)
         warn_row.pack(fill=tk.X, pady=(0, 2))
         ttk.Label(
             warn_row,
-            text=("⚠ Anisotropic Debye-Waller: high Q needs a HIGH multiphonon order "
-                  "(nphon). With 'Auto-size' OFF, your nphon is honored exactly and a "
-                  "too-low value truncates the high-Q cross section (IRMA warns in the "
-                  "terminal). Leave 'Auto-size' ON unless you are doing a deliberate "
-                  "low-order study."),
+            text=("⚠ With Auto-size off, a low nphon truncates the high-Q "
+                  "cross section."),
             foreground="#e5484d",
             wraplength=640,
             justify=tk.LEFT,
         ).pack(side=tk.LEFT, anchor="w")
-
-        # Coherent one-phonon powder averaging always uses the golden-spiral
-        # direction quadrature (equivalent to Euphonic's 'golden' method); it is
-        # not user-selectable.
 
         # BORN corrections row
         born_row = ttk.Frame(self._nc_subframe)
@@ -701,7 +640,7 @@ class EndfFormMixin:
         # Everything below only applies to the generalized treatment: the
         # crystal structure and the elastic-output options are iel=10
         # features. Hidden for iel=0-6 (built-in materials). The inelastic
-        # mode is NOT in here; it is built above, outside this group.
+        # mode is not in here; it is built above, outside this group.
         self._iel10_group = ttk.Frame(frame)
         self._iel10_group.pack(fill=tk.X)
         self.iel_var.trace_add("write", self._sync_modes)
@@ -717,7 +656,7 @@ class EndfFormMixin:
                      "Examples:\n"
                      "  Cubic: a=b=c, alpha=beta=gamma=90\n"
                      "  Hexagonal: a=b, alpha=beta=90, gamma=120\n"
-                     "  FCC NaCl: a=b=c=5.69, all angles 90")
+                     "  FCC NaCl: a=b=c=5.640, all angles 90")
 
         latt_body = form_section(self._iel10_group, "Lattice Parameters",
                                  help_title="Lattice Constants",
@@ -769,8 +708,8 @@ class EndfFormMixin:
                       "0.333 0.667 0.0  0.667 0.333 0.5\n\n"
                       "For polyatomic materials (e.g. NaCl), use one line "
                       "per species:\n"
-                      "11 23 22.99 3.63 1.62 4 0 0 0 0 .5 .5 .5 0 .5 .5 .5 0\n"
-                      "17 35 34.97 11.65 4.7 4 .5 .5 .5 .5 0 0 0 .5 0 0 0 .5\n\n"
+                      "11 23 22.792 3.63 1.62 4 0 0 0 0 .5 .5 .5 0 .5 .5 .5 0\n"
+                      "17 35 34.668 11.65 4.7 4 .5 .5 .5 .5 0 0 0 .5 0 0 0 .5\n\n"
                       "Scattering lengths and cross sections can be found in "
                       "the NIST neutron scattering length tables.")
         ttk.Label(atom_body, style="Hint.TLabel",
@@ -786,68 +725,33 @@ class EndfFormMixin:
                                   font=fixed_font(), padx=8, pady=6)
         self.atoms_text.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
 
-        # Coherent-elastic output options (iel=10) — the Bragg-edge grouping
-        # (ENDF-102 7.2.2) is an MF7/MT2 ELASTIC option that applies to every
-        # iel=10 inelastic_mode (including the classic mode 0), so it lives in
-        # its own section rather than under the phonopy-inelastic heading.
-        grp_overview = (
+        # Coherent-elastic output options (iel=10): Bragg-edge grouping
+        # (ENDF-102 7.2.2) is an MF7/MT2 elastic option for every iel=10
+        # inelastic_mode, so it has its own section.
+        grp_help = (
             "The coherent elastic table S(E,T) is a staircase with one step "
-            "per Bragg edge; the cross section is sigma = S(E,T)/E. Above "
-            "~1 eV the edges crowd together and the steps are tiny, so "
-            "ENDF-102 sec 7.2.2 lets you GROUP them into fewer steps while "
-            "preserving the average cross section.\n\n"
-            "Set 'bins/decade' > 0 to enable. The edges above 'above "
-            "(eV)' are merged into log-uniform bins (this many per "
-            "decade of energy); everything at or below the threshold is "
-            "kept unchanged. Cumulative S and the total cross section are "
-            "preserved exactly; only the placement of the merged "
-            "high-energy steps is approximated (IRMA prints the resulting "
-            "integral cross-section error per temperature).\n\n"
-            "Applies to ANY iel=10 inelastic_mode (it is an elastic "
-            "MF7/MT2 option). The GUI enables it by default, which keeps "
-            "tapes compact; uncheck the box to write every edge. Written as "
-            "optional fields 5 and 6 on Card 6b: 'elastic_mode nat nspec "
-            "inelastic_mode [bins_per_decade] [threshold_eV]'; an input file "
-            "without them (bins_per_decade 0) has grouping off.")
-        grp_bpd_help = (
-            "Reduces the number of coherent-elastic Bragg edges written to "
-            "MF7/MT2 above the threshold energy.\n\n"
-            "WHY: above ~1 eV the Bragg edges of many crystals (especially "
-            "low-symmetry space groups) become extremely dense, and each "
-            "'stair step' of S(E,T) is tiny. ENDF-102 sec 7.2.2 permits "
-            "grouping these into fewer steps 'while still preserving the "
-            "average value of the cross section'. Some materials otherwise "
-            "emit thousands of edges between 1 eV and emax.\n\n"
-            "WHAT 'bins/decade' MEANS: above the threshold the energy axis "
-            "is split into log-uniform bins, this many per factor of 10 in "
-            "energy. All edges in a bin are merged into ONE step, placed at "
-            "the structure-factor-weighted log-mean energy (the placement "
-            "that exactly preserves that bin's average cross section). The "
-            "number of grouped steps above the threshold is about "
-            "bins_per_decade × log10(emax/threshold) regardless of how many "
-            "raw edges existed; for example 20/decade over 1→5 eV keeps ~14 "
-            "steps. Larger values are finer (more steps, closer to "
-            "ungrouped); smaller values are coarser.\n\n"
-            "0 = OFF: keep every edge (the input-file default; the GUI "
-            "prefills 50 with the grouping checkbox ON). Edges at or below "
-            "the threshold are always kept individually. The cumulative S, "
-            "the total bound cross section, and the high-energy 1/E tail "
-            "stay exact in either case.")
-        grp_thr_help = (
-            "Energy (eV) above which Bragg edges may be grouped. ENDF-102 "
-            "sec 7.2.2 recommends 1 eV (the default), where the stair steps "
-            "are small enough that grouping preserves the average cross "
-            "section. Edges at or below this energy are always kept "
-            "individually. Only used when bins/decade > 0.")
+            "per Bragg edge (sigma = S(E,T)/E). Above ~1 eV the edges crowd "
+            "together and the steps are tiny, so ENDF-102 sec 7.2.2 allows "
+            "grouping them into fewer steps that preserve the average cross "
+            "section.\n\n"
+            "Edges above 'above (eV)' (default 1 eV) are merged into "
+            "log-uniform bins, 'bins/decade' per factor of 10 in energy, each "
+            "placed at the structure-factor-weighted log-mean energy; edges at "
+            "or below the threshold are kept. Cumulative S and the total cross "
+            "section stay exact (IRMA prints the integral cross-section error "
+            "per temperature). For example, 20/decade over 1-5 eV keeps about "
+            "14 steps.\n\n"
+            "Applies to any iel=10 inelastic_mode. The GUI enables it by default "
+            "(50 bins/decade); uncheck the box or set bins/decade to 0 to write "
+            "every edge. Written as optional fields 5 and 6 of Card 6b; an "
+            "input file without them has grouping off.")
         grp_body = form_section(
             self._iel10_group, "Coherent-Elastic Output (iel=10)",
             help_title="Bragg-Edge Grouping (ENDF-102 7.2.2)",
-            help_text=(grp_overview
-                       + "\n\nbins/decade\n" + grp_bpd_help
-                       + "\n\nabove (eV)\n" + grp_thr_help))
+            help_text=grp_help)
         grp_row = ttk.Frame(grp_body)
         grp_row.pack(fill=tk.X, pady=2)
-        # Grouping is ON by default (compact tapes; uncheck to keep every edge).
+        # Grouping is on by default (compact tapes; uncheck to keep every edge).
         self.coh_edge_group_enable_var = tk.BooleanVar(value=True)
         grp_chk = ttk.Checkbutton(grp_row, text="Bragg-edge grouping",
                                   variable=self.coh_edge_group_enable_var)
@@ -855,26 +759,19 @@ class EndfFormMixin:
         ToolTip(grp_chk,
                 "Merge the dense high-energy Bragg edges into log-uniform "
                 "bins (ENDF-102 7.2.2). Uncheck to write every edge.")
-        # Progressive disclosure: the bins/decade and threshold fields are
-        # read only while grouping is enabled, so they live in a sub-frame
-        # of the same row (the row/section identity is pinned by tests) and
-        # a var trace shows/hides them -- covering the checkbox and every
-        # programmatic set (deck import, reset) alike, like the extinction
-        # toggle below.
+        # The bins/decade and threshold fields show only while grouping is
+        # enabled; a var trace shows/hides them, so deck import and reset
+        # follow too.
         grp_fields = ttk.Frame(grp_row)
         self._grp_fields_frame = grp_fields
         grp_fields.pack(side=tk.LEFT)
         self.coh_edge_group_bpd = LabeledEntry(
             grp_fields, "bins/decade:", "50", width=6, label_width=0,
-            tooltip="Log-uniform bins per decade of energy for merging "
-                    "edges above the threshold. Larger = finer (closer to "
-                    "ungrouped); 0 keeps every edge.")
+            tooltip="Bins per decade above the threshold; 0 keeps every edge.")
         self.coh_edge_group_bpd.pack(side=tk.LEFT, padx=(0, 14))
         self.coh_edge_group_thr = LabeledEntry(
             grp_fields, "above (eV):", "1.0", width=6, label_width=0,
-            tooltip="Edges at or below this energy are always kept "
-                    "individually; ENDF-102 recommends 1 eV. Only used "
-                    "when bins/decade > 0.")
+            tooltip="Edges at or below this energy are always kept.")
         self.coh_edge_group_thr.pack(side=tk.LEFT)
 
         def _toggle_grp_fields(*_):
@@ -993,49 +890,20 @@ class EndfFormMixin:
     IINT_LINLIN = "1 — lin-lin (INT=2)"
 
     def _on_inelastic_mode_click(self):
-        """A user's click on an inelastic_mode radio button.
-
-        Besides the layout update the variable trace already does, the
-        click sets the Card 4 interpolation default that suits the mode:
-        the coherent one-phonon law (mode 2) has structural near-zeros
-        that log interpolation floors, so it gets lin-lin; modes 0 and 1
-        get the classic log-lin. Only a click does this, so a deck import
-        (which sets the mode variable and then the deck's own iint) and the
-        user's later choice of iint are left alone.
-        """
+        """Set the Card 4 iint default for the clicked mode: lin-lin for
+        mode 2 (log interpolation floors the coherent law's near-zeros),
+        log-lin for 0 and 1. Only a click sets it, so an imported deck's iint
+        is kept."""
         self.iint.set(self.IINT_LINLIN if self.inelastic_mode_var.get() == 2
                       else self.IINT_LOGLIN)
 
     # ------------------------------------------------------------------
     # Structure prefill from the Card 6f phonopy model
     # ------------------------------------------------------------------
-    _STRUCTURE_FILL_ASSUMPTIONS = (
-        "Assumptions -- read before applying:\n"
-        "  - Each species is filled as the NATURAL ELEMENT. ENDF codes that\n"
-        "    as A = 0, and AWR, b_coh and sigma_inc are that element's\n"
-        "    natural-abundance values, so the identity and the constants\n"
-        "    always come from one table entry.\n"
-        "  - A phonopy model names ELEMENTS, not isotopes. It typically\n"
-        "    labels deuterium as H, and it says nothing about enrichment.\n"
-        "  - For an isotope, set ZA on the Scattering tab and press 'Apply\n"
-        "    ZA': it relabels that element's row with the isotope's identity\n"
-        "    and constants (positions kept). Enrichment or a nuclide without\n"
-        "    tabulated constants is edited on the row by hand.\n"
-        "  - Positions are the phonopy PRIMITIVE cell's fractional\n"
-        "    coordinates, which is the cell inelastic_mode 1/2 requires.\n\n"
-        "Apply replaces the lattice fields AND the whole atom block; Cancel\n"
-        "changes nothing.")
-
     def _fill_structure_from_phonopy(self):
-        """Prefill Card 6c/6d from the phonopy model named on Card 6f.
-
-        Explicit click only. It never fires on its own -- not when a
-        phonopy.yaml is selected, not on deck import, not on reset -- and
-        nothing is written until the user confirms the preview. The
-        replacement is ATOMIC: Apply writes the lattice and the whole atom
-        block together, Cancel writes neither, so phonopy positions can
-        never end up beside a hand-typed lattice.
-        """
+        """Prefill Card 6c/6d from the phonopy model named on Card 6f, on an
+        explicit click only and after the user confirms the preview; the
+        lattice and the atom block are replaced together or not at all."""
         from irma.core.crystal_input import (
             format_card6d_row, format_lattice_fields, species_from_sites)
         # Lazy, inside the handler: irma.core.phonopy_io imports phonopy only
@@ -1069,9 +937,8 @@ class EndfFormMixin:
         except ImportError:
             messagebox.showerror(
                 "phonopy not available",
-                "phonopy is required to read the crystal structure from a "
-                "phonopy.yaml.\nInstall with: pip install phonopy\n\n"
-                "Until then, enter the lattice and atom types by hand.")
+                "phonopy is not installed (pip install phonopy); enter the "
+                "lattice and atom types by hand.")
             return
         except Exception as exc:
             messagebox.showerror(
@@ -1111,7 +978,7 @@ class EndfFormMixin:
             "  (Z  A  AWR  b_coh  sigma_inc  npos  x1 y1 z1 ...)",
         ]
         lines += [f"  {row}" for row in atom_rows]
-        lines += ["", self._STRUCTURE_FILL_ASSUMPTIONS]
+        lines += ["", STRUCTURE_FILL_HELP]
         if warnings:
             lines += ["", "Notes:"] + [f"  - {w}" for w in warnings]
         return "\n".join(lines)
@@ -1185,7 +1052,7 @@ class EndfFormMixin:
         self.atoms_text.insert("1.0", "\n".join(rows) + "\n")
 
     # ------------------------------------------------------------------
-    # Tab 2: Scattering Parameters
+    # Scattering part
     # ------------------------------------------------------------------
     APPLY_ZA_TITLE = "Apply ZA"
 
@@ -1198,23 +1065,12 @@ class EndfFormMixin:
             self.za_status_var.set(text)
 
     def _fill_from_za(self):
-        """Apply the principal ZA: fill AWR + sigma_free (spr) from the
-        built-in nuclear table, and relabel the atom row of that element
-        to the same nuclide.
-
-        Explicit click only, never automatic: the fields carry values the
-        user may have edited, and an overwrite must be a deliberate click.
-        The whole action is one transaction: a refusal or a cancelled
-        dialog changes nothing, on Card 5 or in the atom block.
-
-        The atom row rule: with exactly one row of the ZA's element, the
-        row is relabelled to the nuclide (A, AWR, b_coh, sigma_inc from
-        the table entry; positions kept) when its constants are the
-        table's own numbers for its current nuclide, and only after a
-        confirmation showing old and new values when they are not (they
-        are then someone's custom constants). Several rows of one element
-        are never chosen between. Nuclides with no tabulated constants,
-        or with energy-dependent ones, are refused outright.
+        """Apply the principal ZA (explicit click only): fill AWR and
+        sigma_free from the built-in table and relabel that element's single
+        atom row to the nuclide (positions kept), asking first when the row
+        carries custom constants. A refusal or a cancel changes nothing;
+        several rows of one element, and nuclides without usable tabulated
+        constants, are refused.
         """
         from irma.core.crystal_input import (
             format_atom_row, nuclide_label, principal_row_match, relabel_row,
@@ -1223,13 +1079,9 @@ class EndfFormMixin:
         from irma.gui.deck_text import parse_atoms_text
         za_text = str(self.za.get()).strip()
         if not za_text:
-            # The fresh form ships ZA blank (it names the user's material), so
-            # an empty field is the ordinary first click here, not a typo.
             messagebox.showerror(
                 self.APPLY_ZA_TITLE,
-                "Enter a ZA first — this button reads the scatterer identity "
-                "and fills AWR and sigma_free from the built-in nuclear "
-                "table.\n\nZA is Z*1000+A (e.g. 6000 for natural carbon, "
+                "Enter a ZA first: Z*1000+A (e.g. 6000 for natural carbon, "
                 "6012 for C-12).")
             return
         try:
@@ -1240,11 +1092,9 @@ class EndfFormMixin:
             messagebox.showerror(
                 self.APPLY_ZA_TITLE,
                 f"No tabulated scattering constants for ZA="
-                f"{self.za.get()!r} ({exc}).\n\nZA must be Z*1000+A "
-                f"(e.g. 6012 for C-12). The natural element (A=000) "
-                f"usually has constants; isotopes without measured "
-                f"values must be entered manually, on Card 5 and in the "
-                f"atom row alike.")
+                f"{self.za.get()!r} ({exc}); ZA is Z*1000+A (e.g. 6012 for "
+                f"C-12), and a nuclide without tabulated constants is "
+                f"entered by hand on Card 5 and in its atom row.")
             return
         if nuc.energy_dependent:
             messagebox.showerror(
@@ -1357,8 +1207,6 @@ class EndfFormMixin:
         ttk.Label(pf, style="Hint.TLabel", justify=tk.LEFT, wraplength=640,
                   text=IDENTITY_HINT_SCATTERER).pack(anchor=tk.W)
 
-        # ZA/AWR/sigma_free start blank: they name the user's scatterer, and
-        # the Fill-from-ZA button below turns a ZA into the other two.
         self.za = LabeledEntry(
             pf, "ZA:", "",
             help_title="ZA (Scatterer Identity)",
@@ -1401,7 +1249,7 @@ class EndfFormMixin:
                       "  Be-9:  8.93478\n"
                       "  carbon (natural): 11.898\n"
                       "  O-16:  15.858\n"
-                      "  Na-23: 22.990\n\n"
+                      "  Na-23: 22.792\n\n"
                       "This value affects the recoil kinematics and the "
                       "scaling of the alpha (momentum transfer) grid.")
         self.awr.pack(fill=tk.X, pady=2)
@@ -1416,7 +1264,7 @@ class EndfFormMixin:
                       "  sigma_b = sigma_free * ((1 + AWR) / AWR)^2\n"
                       "and writes B(1) = npr * sigma_free to the tape.\n\n"
                       "Examples (all FREE values):\n"
-                      "  C-12:  4.739 barn\n"
+                      "  carbon (natural): 4.739 barn\n"
                       "  Be-9:  6.154 barn\n"
                       "  H-1:   20.45 barn  (bound ~82 barn; do NOT enter "
                       "the bound value: every MT4 cross section would come "
@@ -1457,12 +1305,12 @@ class EndfFormMixin:
                       "Standard thermal-scattering (TSL) MAT numbers are "
                       "assigned by ENDF conventions, but any value works for "
                       "testing.\n\n"
-                      "Common assignments:\n"
-                      "  26 = H in H2O\n"
-                      "  27 = H in ZrH\n"
-                      "  28 = graphite\n"
-                      "  29 = Be\n"
-                      "  30 = BeO\n"
+                      "Common ENDF/B assignments (ENDF-102, Appendix C):\n"
+                      "  1 = H in H2O\n"
+                      "  7 = H in ZrH\n"
+                      "  26 = Be metal\n"
+                      "  27 = Be in BeO\n"
+                      "  30 = crystalline graphite (ENDF/B-VIII.0)\n"
                       "  37 = H in polyethylene")
         self.mat.pack(fill=tk.X, pady=2)
         self.nphon = LabeledEntry(
@@ -1496,7 +1344,7 @@ class EndfFormMixin:
                       "ENDF TSL libraries processed by THERMR (default).\n\n"
                       "1: The asymmetric form (writes the full "
                       "beta-asymmetric table; isym is raised by 2 in "
-                      "MF7/MT4). Mainly for diagnostics, NOT for standard "
+                      "MF7/MT4). Mainly for diagnostics, not for standard "
                       "library production.")
         self.isabt.pack(fill=tk.X, pady=2)
         self.ilog = LabeledCombobox(
@@ -1506,13 +1354,13 @@ class EndfFormMixin:
             help_text="0: Store the S(alpha, beta) values directly, linear "
                       "(default, NJOY-faithful).\n\n"
                       "1: Store ln(S) instead (ENDF LLN=1 log storage).\n\n"
-                      "IMPORTANT for LOW TEMPERATURE: with ilog=0 the symmetric "
+                      "At low temperature: with ilog=0 the symmetric "
                       "table is stored as S*exp(-beta/2). Because beta scales "
                       "as 1/T, at cryogenic temperatures the high-energy (e.g. "
                       "optic) phonon values become ~1e-100 and are written as "
-                      "ZERO, silently losing that structure on read-back. "
+                      "zero, silently losing that structure on read-back. "
                       "For T below ~50-100 K, set ilog=1 to preserve it (the "
-                      "run log will WARN if this happens). The reader must "
+                      "run log warns if this happens). The reader must "
                       "support LLN=1; THERMR and IRMA's own readers do. "
                       "Harmless at room temperature.")
         self.ilog.pack(fill=tk.X, pady=2)
@@ -1533,7 +1381,7 @@ class EndfFormMixin:
                       "floors, biasing the cross section LOW in the thermal "
                       "minimum. lin-lin preserves them. Honored by INT-aware "
                       "THERMR.\n\n"
-                      "IMPORTANT: use iint=1 only with a Q/alpha grid converged "
+                      "Use iint=1 only with a Q/alpha grid converged "
                       "near sharp coherent peaks; lin-lin still chords straight "
                       "across a peak that the grid does not resolve.")
         self.iint.pack(fill=tk.X, pady=2)
@@ -1781,13 +1629,9 @@ class EndfFormMixin:
         self._special_modes_note = ttk.Label(
             frame,
             text=("Special modes and the secondary scatterer apply to "
-                  "inelastic_mode = 0 decks only. Hiding them CLEARED "
-                  "ncold, nsk, the S(kappa) table and the secondary "
-                  "scatterer: the phonopy-backed modes compute MF7/MT4 "
-                  "directly from the force constants, so a pair-correlation "
-                  "or secondary-scatterer correction has nothing to apply "
-                  "to. Going back to inelastic_mode = 0 does not restore "
-                  "the values — re-enter them there."),
+                  "inelastic_mode 0 only; they were CLEARED because MT4 "
+                  "comes from the force constants, and switching back does "
+                  "not restore them."),
             foreground="gray", wraplength=860, justify=tk.LEFT)
 
     def _clear_special_scatter_fields(self):
@@ -1846,7 +1690,7 @@ class EndfFormMixin:
             self._sec2_frame.pack_forget()
 
     # ------------------------------------------------------------------
-    # Tab 3: Grid Generation
+    # Grids part
     # ------------------------------------------------------------------
     def _build_grid_tab(self):
         """Build the Grids part widgets."""
@@ -2065,30 +1909,17 @@ class EndfFormMixin:
             messagebox.showerror("Error", f"Could not read DOS file:\n{e}")
 
     def _marshal(self, func, *args):
-        """Queue ``func(*args)`` onto the Tk thread, no-op if it is torn down.
-
-        Worker threads marshal results back via root.after; once the window is
-        destroyed the interpreter is gone and after() raises TclError/
-        RuntimeError. Swallowing that turns a late result from a quit-during-work
-        thread into a clean no-op instead of a spurious traceback.
-        """
+        """Queue ``func(*args)`` onto the Tk thread; a no-op once the window
+        is destroyed (after() then raises TclError/RuntimeError)."""
         try:
             self.root.after(0, func, *args)
         except (RuntimeError, tk.TclError):
             pass
 
     def _detect_freq_from_fc(self):
-        """Detect max phonon frequency from phonopy.yaml via phonopy API.
-
-        phonopy.load + run_mesh can take seconds-to-minutes on a large
-        supercell, so it runs on a background thread; the GUI stays responsive
-        and the result is marshalled back to the Tk thread via root.after.
-
-        Single-flight: the worker enters isolated_phonopy_cwd(), a *process*
-        os.chdir, so two concurrent detections (or a calculation launched while
-        one runs) would race the global cwd. The detect button is disabled for
-        the duration, and detection is refused while a calculation owns the cwd.
-        """
+        """Detect the maximum phonon frequency from a phonopy.yaml on a
+        background thread. One detection at a time and none during a run: the
+        worker changes the process working directory (isolated_phonopy_cwd)."""
         if self.runner.is_running:
             messagebox.showwarning(
                 "Busy", "Finish or cancel the running calculation before "
@@ -2106,7 +1937,7 @@ class EndfFormMixin:
             args=(os.path.abspath(fc_path),), daemon=True).start()
 
     def _detect_freq_from_fc_worker(self, fc_path):
-        """Heavy phonopy mesh evaluation; runs OFF the Tk thread."""
+        """Heavy phonopy mesh evaluation; runs off the Tk thread."""
         try:
             import numpy as np
             from irma.core.phonopy_io import load_phonopy
@@ -2141,10 +1972,9 @@ class EndfFormMixin:
         if kind == "import":
             messagebox.showerror(
                 "phonopy not available",
-                "phonopy is required to detect freq_max from force constants.\n"
-                "Install with: pip install phonopy\n\n"
-                "Alternatively, use 'Detect from DOS' with a phonopy "
-                "total_dos.dat file, or enter freq_max manually.")
+                "phonopy is not installed (pip install phonopy); use 'Detect "
+                "from DOS' with a total_dos.dat file, or enter freq_max by "
+                "hand.")
         else:
             messagebox.showerror("Error",
                                  f"Could not read force constants:\n{detail}")
@@ -2178,7 +2008,7 @@ class EndfFormMixin:
             self.grid_info_var.set(f"Error: {e}")
 
     # ------------------------------------------------------------------
-    # Tab 4: Phonon Parameters
+    # Phonon part
     def _auto_grids(self, temps):
         """The automatic (alpha, beta) grids and their reference temperature.
 
@@ -2224,11 +2054,9 @@ class EndfFormMixin:
         # Continuous distribution
         self._phonon_ignored_note = ttk.Label(
             frame,
-            text=("inelastic_mode 1/2 is selected in the Material part: "
-                  "the phonopy-backed modes compute MT4 directly from the "
-                  "force constants, so the phonon distribution, "
-                  "translational, and oscillator cards do not apply and "
-                  "are hidden. They return with inelastic_mode = 0."),
+            text=("With inelastic_mode 1/2, MT4 comes from the force "
+                  "constants, so the phonon distribution, translational and "
+                  "oscillator cards are hidden until inelastic_mode 0."),
             foreground="#e5484d", wraplength=860, justify=tk.LEFT)
         cf = form_section(frame, "Continuous Phonon Distribution")
 
@@ -2366,7 +2194,7 @@ class EndfFormMixin:
         self.osc_weights.pack(fill=tk.X, pady=2)
 
     # ------------------------------------------------------------------
-    # Tab 5: Output & Run
+    # Run part
     # ------------------------------------------------------------------
     def _build_output_tab(self):
         """Build the Run part widgets."""
@@ -2436,7 +2264,7 @@ class EndfFormMixin:
         self.status_var = tk.StringVar(value="Ready")
         ttk.Label(rf, textvariable=self.status_var).pack(side=tk.LEFT)
 
-        # Live phase readout, fed from the child's streamed log markers (#12).
+        # Live phase readout, fed from the child's streamed log markers.
         self.phase_var = tk.StringVar(value="")
         ttk.Label(rf, textvariable=self.phase_var,
                   foreground="#3b9eff").pack(side=tk.LEFT, padx=(10, 0))
@@ -2456,7 +2284,7 @@ class EndfFormMixin:
     # Bottom bar
     # ------------------------------------------------------------------
     def _build_bottom_bar(self):
-        """Build the Run/Cancel/progress bottom bar."""
+        """Build the bottom bar (the version label)."""
         bar = ttk.Frame(self.root)
         bar.pack(fill=tk.X, padx=5, pady=(0, 5))
         from irma import __version__
@@ -2561,11 +2389,10 @@ class EndfFormMixin:
                 "nsk > 0 or ncold > 0 requires the S(kappa) table "
                 "(dka and the S(kappa) values).")
 
-        # Card 4/5 material identity. The fresh form ships these blank (they
-        # name the USER's material), so the first Run on an unfilled form must
-        # say which field is missing. Without the check the blanks are simply
-        # interpolated away and the card is written short, which re-reads as a
-        # different, silently wrong deck (smin landing in isabt, and so on).
+        # Card 4/5 material identity ships blank, so say which field is
+        # missing. Without the check the blanks are interpolated away and the
+        # card is written short, which re-reads as a different, silently wrong
+        # deck (smin landing in isabt, and so on).
         missing = [label for label, widget in (
             ("MAT (Card 4)", self.mat), ("ZA (Card 4)", self.za),
             ("AWR (Card 5)", self.awr), ("sigma_free (Card 5)", self.spr))
@@ -2573,11 +2400,7 @@ class EndfFormMixin:
         if missing:
             raise ValueError(
                 "Material identity is empty: " + ", ".join(missing)
-                + ". IRMA leaves these blank because they describe YOUR "
-                "material — fill them in (the 'Fill AWR + sigma_free from ZA' "
-                "button fills AWR and sigma_free once ZA is set), or load a "
-                "input file with Import Input File, e.g. one of the examples/tsl "
-                "input files.")
+                + ". Fill them in, press Apply ZA, or use Import Input File.")
 
         lines = []
         # Card 1
@@ -2626,9 +2449,7 @@ class EndfFormMixin:
 
         # Generalized elastic cards (iel=10)
         if iel == 10:
-            # Card 6c/6d are the crystal's identity and ship blank with the
-            # form, so name the card and the ways to fill it (same reason as
-            # the Card 4/5 check above).
+            # Card 6c/6d ship blank too (same reason as the Card 4/5 check)
             blank_latt = [label for label, widget in (
                 ("a", self.latt_a), ("b", self.latt_b), ("c", self.latt_c),
                 ("alpha", self.latt_alpha), ("beta", self.latt_beta),
@@ -2636,20 +2457,13 @@ class EndfFormMixin:
                 if not str(widget.get()).strip()]
             if blank_latt:
                 raise ValueError(
-                    "iel=10 (generalized) requires the lattice parameters "
-                    "(Card 6c) in the Material part; empty: "
-                    + ", ".join(blank_latt)
-                    + ". Type them in, press '" + STRUCTURE_FILL_TITLE
-                    + "' (inelastic_mode 1/2), or load an input file with Import "
-                    "Input File.")
+                    "iel=10 needs the lattice parameters (Card 6c); empty: "
+                    + ", ".join(blank_latt) + ".")
             atoms = parse_atoms_text(self.atoms_text.get("1.0", tk.END))
             nat = len(atoms)
             if nat < 1:
                 raise ValueError(
-                    "iel=10 (generalized) requires at least one atom type "
-                    "(Card 6d) in the Material part. Type the rows in, press "
-                    "'" + STRUCTURE_FILL_TITLE + "' (inelastic_mode 1/2), or "
-                    "load an input file with Import Input File.")
+                    "iel=10 needs at least one atom type (Card 6d).")
             # The principal ZA must be one of the rows (the engine's rule;
             # Apply ZA relabels a row).
             from irma.core.crystal_input import principal_mismatch_message
@@ -2892,16 +2706,15 @@ class EndfFormMixin:
         self.root.after(0, self._append_log_line, text)
 
     def _append_log_line(self, text):
-        """Append a streamed log line and reflect any phase marker (#12)."""
+        """Append a streamed log line and reflect any phase marker."""
         self.log.append(text)
         phase = _phase_from_log_line(text)
         if phase:
             self.phase_var.set(phase)
 
     def cleanup_temp_files(self):
-        """Idempotently remove the form-owned temp deck (review GUI-2):
-        the completion callback that used to own this dies with Tk on a
-        close-during-run, so app close also calls it synchronously."""
+        """Remove the form-owned temp deck. Idempotent, because app close
+        also calls it (after() callbacks die with the Tk interpreter)."""
         tmp = getattr(self, "_tmp_input", None)
         if tmp is not None:
             try:
@@ -3006,10 +2819,8 @@ class EndfFormMixin:
         self._imported_iprint = 0
 
         self.nphon.set("100")
-        # Material identity clears to BLANK, exactly as a freshly built form
-        # ships it: a reset that left MAT/ZA/AWR/spr at 0 would hand the deck
-        # writer a nuclide that does not exist instead of an empty field the
-        # generator names. (Fresh == reset is pinned by the GUI tests.)
+        # Material identity clears to blank, as on a freshly built form (a
+        # 0 would give the deck writer a nuclide that does not exist).
         self.mat.set("")
         self.za.set("")
         self.isabt.set("0 — S(α,β) (standard)")
