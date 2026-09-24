@@ -107,9 +107,8 @@ def test_parallel_matches_serial(tmp_path):
         scratch_dir=str(tmp_path / "s2"), **kw)
 
     assert r1.n_displacements == r2.n_displacements > 1
-    # EMT is deterministic; spawn workers use the same libraries, so the
-    # tolerance is tight. Documented as tolerance-based (not a bit-identity
-    # contract) per plan finding 11.
+    # EMT is deterministic and spawn workers use the same libraries, so the
+    # tolerance is tight; it is a tolerance, not a bit-identity contract.
     np.testing.assert_allclose(r1.phonon.force_constants,
                                r2.phonon.force_constants,
                                rtol=0, atol=1e-12)

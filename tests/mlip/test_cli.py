@@ -15,7 +15,6 @@ from ase.io import write as ase_write               # noqa: E402
 from irma.mlip.cli import (                         # noqa: E402
     _parse_pairs, _parse_species, _parse_supercell, main)
 
-QUIET_ENV = {"IRMA_MLIP_DEV_BACKENDS": "1"}
 
 
 @pytest.fixture(autouse=True)
@@ -154,21 +153,25 @@ def test_emit_rejects_invalid_bundle(tmp_path, capsys):
 
 
 def test_explicit_supercell_12_is_honored_under_disordered(al_poscar,
-                                                           tmp_path, capsys):
-    # review finding: '--supercell 12' must mean Lmin=12 even with
-    # --disordered (only OMISSION selects the 1x1x1 box default)
+                                                           tmp_path):
+    # '--supercell 12' means Lmin=12 even with --disordered; only omitting
+    # it selects the 1x1x1 box default
+    def supercell(outdir):
+        with open(os.path.join(outdir, "manifest.json")) as fh:
+            return json.load(fh)["displacements"]["supercell"]
+
     outdir = str(tmp_path / "b")
     rc = main(["build", al_poscar, "-o", outdir, "--potential", "emt",
                "--allow-dev-backend", "--disordered", "--supercell", "12",
                "--mesh", "2 2 2"])
     assert rc == 0
-    assert "supercell (3, 3, 3)" in capsys.readouterr().out  # ceil(12/4.05)
+    assert supercell(outdir) == [3, 3, 3]           # ceil(12/4.05)
 
     outdir2 = str(tmp_path / "b2")
     rc = main(["build", al_poscar, "-o", outdir2, "--potential", "emt",
                "--allow-dev-backend", "--disordered", "--mesh", "2 2 2"])
     assert rc == 0
-    assert "supercell (1, 1, 1)" in capsys.readouterr().out
+    assert supercell(outdir2) == [1, 1, 1]
 
 
 def test_bad_numeric_options_fail_before_any_compute(al_poscar, tmp_path,

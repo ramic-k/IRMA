@@ -97,8 +97,8 @@ def test_relax_with_snap_symmetry_records_the_shift():
 
 
 def test_snap_that_breaks_convergence_is_reported(monkeypatch):
-    # review finding: if the snap moves the structure off the optimizer's
-    # stationary point, the pre-snap converged=True must not survive
+    # if the snap moves the structure off the optimizer's stationary point,
+    # the pre-snap converged=True must not survive
     import irma.mlip.relax as rel
 
     def violent_snap(atoms, symprec=1e-2):
@@ -131,8 +131,8 @@ def test_cell_relaxation_moves_a_strained_cell_toward_equilibrium():
 def test_cell_residual_is_the_filter_residual_not_the_atomic_one():
     # Symmetric strain: atomic forces are ~0 by symmetry, but the cell
     # gradient is large. With nmax too small to converge, the reported
-    # residual must reflect the optimization target (finding: a
-    # stress-unconverged cell must not report "1e-15 converged").
+    # residual must reflect the optimization target: a stress-unconverged
+    # cell must not report "1e-15 converged".
     atoms = bulk("Al", "fcc", a=4.05, cubic=True)
     atoms.set_cell(atoms.get_cell() * 1.06, scale_atoms=True)
     res = relax(atoms, EMT(), fmax=1e-4, nmax=1, relax_cell=True)

@@ -304,7 +304,7 @@ def test_born_bundle_emits_use_born_zero_with_embedded_nac(tmp_path, al_model,
     assert st["noncubic"]["use_born"] == 0     # NAC rides embedded, not BORN
 
 
-def test_emitted_iel10_deck_RUNS_through_the_engine(al_bundle, tmp_path):
+def test_emitted_iel10_deck_runs_through_the_engine(al_bundle, tmp_path):
     (deck,) = emit_endf_decks(al_bundle, temperature_k=296.0,
                               mats={"Al": 45}, out_dir=str(tmp_path),
                               _preview=True, progress=QUIET)
@@ -315,7 +315,7 @@ def test_emitted_iel10_deck_RUNS_through_the_engine(al_bundle, tmp_path):
     assert out.is_file() and out.stat().st_size > 10000
 
 
-def test_emitted_classic_deck_RUNS_and_carries_bound_total_sb(dis_bundle,
+def test_emitted_classic_deck_runs_and_carries_bound_total_sb(dis_bundle,
                                                               tmp_path):
     (deck,) = emit_endf_decks(dis_bundle, temperature_k=296.0,
                               mats={"Al": 45}, out_dir=str(tmp_path),
@@ -362,7 +362,7 @@ def test_sef_option_and_mode1_deck(al_bundle, tmp_path):
     assert man["elastic_format"] == "sef" and man["inelastic_mode"] == 1
 
 
-def test_mode0_polyatomic_deck_carries_partial_spectra_and_RUNS(
+def test_mode0_polyatomic_deck_carries_partial_spectra_and_runs(
         cuau_bundle, tmp_path, capsys):
     decks = emit_endf_decks(cuau_bundle, temperature_k=296.0,
                             mats={"Cu": 100, "Au": 200},
@@ -394,11 +394,11 @@ def test_disordered_rejects_crystal_options(dis_bundle, tmp_path):
     assert os.listdir(tmp_path) == []     # refused before anything landed
 
 
-# ------------------------------------------------- QA remediation tests ----
+# ------------------------------------ provenance, paths, emitted mesh ----
 
 
 def _check_comment_cards(bundle, deck_path, extra=""):
-    """MLP-1: the writer maps comment card 1 onto the 66-column structured
+    """The writer maps comment card 1 onto the 66-column structured
     MF1/MT451 header and cards 6+ onto free-text DESCRIPTION records; the
     provenance must survive that mapping untruncated."""
     st = _parse(deck_path)
@@ -437,7 +437,7 @@ def test_deck_provenance_survives_mf1_column_mapping(al_bundle, dis_bundle,
 
 def test_disordered_spectra_dos_paths_are_absolute(dis_bundle, tmp_path,
                                                    monkeypatch):
-    """MLP-8: a relative --out-dir must still yield a YAML that resolves
+    """A relative --out-dir must still yield a YAML that resolves
     from any working directory (matching the crystalline branch's
     abspathed phonopy_yaml)."""
     monkeypatch.chdir(tmp_path)
@@ -466,8 +466,7 @@ def test_emitted_mesh_disordered_keeps_bundle_mesh(dis_bundle):
     classic DOS path never sums over q, so the production rule must not
     apply."""
     from irma.mlip.emit import _emit_mesh
-    assert _emit_mesh(dis_bundle) == \
-        [int(n) for n in dis_bundle.manifest["phonons"]["mesh"]]
+    assert _emit_mesh(dis_bundle) == [4, 4, 4]      # the fixture's bundle mesh
 
 
 def test_min_phonon_energy_reaches_every_emitted_file(al_bundle, tmp_path):
