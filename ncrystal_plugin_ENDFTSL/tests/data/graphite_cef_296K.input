@@ -1,4 +1,4 @@
-20 /  $ run (from the repo root): python -m irma examples/tsl/graphite_mode2.input graphite_mode2.endf
+20 /  $ run (from the repo root): python -m irma ncrystal_plugin_ENDFTSL/tests/data/graphite_cef_296K.input ncrystal_plugin_ENDFTSL/tests/data/graphite_cef_296K.endf
 'tsl C in graphite - phonopy-backed noncubic mode 2, full multiphonon' /
 1 1 1 /  $ Card 3: ntempr iprint nphon (auto-sized upward by Card 6g auto_order=1)
 28 6012 0 /
@@ -8,7 +8,7 @@
 2.461 2.461 6.708 90.0 90.0 120.0 /
 6 12 11.898 6.646 0.001 4 /
 0.0 0.0 0.0025  0.0 0.0 0.5025  0.333333 0.666667 0.0025  0.666667 0.333333 0.5025 /
-'tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml' /  $ Card 6f: vendored phonopy model (absolute path)
+'tests/mode2_euphonic_n1_validation/graphite/phonopy.yaml' /  $ Card 6f: vendored phonopy model (repository-relative path)
 12 12 12 14 0 /  $ small mesh (zero-out fixture)
 4000 200 1 /  $ Card 6g: ndir mpdir auto_order (1 = auto-size the multiphonon order)
 200 426 1 /
