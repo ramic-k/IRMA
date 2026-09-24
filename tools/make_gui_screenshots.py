@@ -11,7 +11,7 @@ Requirements
 * Screen Recording permission for the terminal running this script
   (System Settings > Privacy & Security > Screen Recording). Without it,
   ``screencapture`` fails with "could not create image from rect".
-* The ``euphonic_env`` interpreter (matplotlib for the plot scenes).
+* A Python environment with matplotlib (for the plot scenes).
 
 Usage
 -----
@@ -289,8 +289,7 @@ def capture(root, out_path, attempts=3):
 # ---------------------------------------------------------------------------
 
 def _endf_part(app, title):
-    """Select the ENDF page and scroll the named part to the top (the five
-    former sub-tabs are one scrolling page since the single-page merge)."""
+    """Select the ENDF page and scroll the named part to the top."""
     app.top_notebook.select(0)
     app.root.update()
     app.scroll_to_part(title)
@@ -324,7 +323,7 @@ def scene_scattering(app, run=False):
 def scene_grids(app, run=False):
     """Grids tab in automatic mode with the live size preview filled."""
     _endf_part(app, "Grids")
-    # Max phonon freq now ships blank (only the user's model knows it), and
+    # Max phonon freq starts blank (only the user's model knows it), and
     # the preview refuses to run without it. Take the value the way the form
     # intends, from the model, rather than typing one in: the worker is what
     # the Detect button starts, minus the file dialog.
@@ -484,7 +483,6 @@ def scene_ns_plot_map(app, run=False):
     panel._replot()
 
 
-# scene name (= PNG basename) -> (stager, needs --with-runs)
 def scene_ncrystal_export(app, run=False):
     """NCrystal plugin tab: the export form staged with the graphite
     mode-2 settings of the tutorial (vendored phonopy model, 40^3 mesh,
@@ -508,6 +506,7 @@ def scene_mlip_build_mgo(app, run=False):
     panel.outdir.set("mgo_bundle")
 
 
+# scene name (= PNG basename) -> (stager, needs --with-runs)
 SCENES = {
     "gui_material_iel10": (scene_material_iel10, False),
     "gui_material_iel1": (scene_material_iel1, False),

@@ -10,8 +10,7 @@ inelastic) agrees within 1e-6 relative (the ENDF write precision — the
 project's "tape-safe" equivalence criterion). Any structural mismatch (a dropped or
 added key, a truncated array, MT2 on one side only) fails closed as
 max_rel=inf.
-Deliberate physics changes additionally need their own quantification
-(see CHANGELOG 0.15.0's F16 entry for the worked example).
+Deliberate physics changes additionally need their own quantification.
 
 Profiles
 --------
@@ -115,9 +114,9 @@ instrument: {{geometry: vision, e_fixed_meV: 3.5}}
 def _auto_grid_block():
     """The campaign-standard automatic alpha/beta grids as deck text.
 
-    Regenerated in-process so before/after runs of the SAME gauge version
-    produce textually identical decks (the generators live in irma.core.grids
-    and are themselves byte-pinned by the test suite).
+    Regenerated in-process from the irma.core.grids of the tree being
+    gauged, so a change to the grid generator between two refs shows up as
+    a tape difference.
     """
     sys.path.insert(0, ROOT)
     from irma.core.grids import generate_alpha_grid, generate_beta_grid
@@ -238,8 +237,8 @@ def _walk_rel_diff(x, y):
 def _mf7_rel_diff(mf7_a, mf7_b):
     """Max relative difference over the MF7 sections of two parsed tapes.
 
-    Both MT2 (coherent elastic, ~98% of MF7 content on iel=10 decks) and MT4
-    (inelastic) are gauged. A section absent from BOTH tapes is fine (not
+    Both MT2 (coherent elastic, ~98% of the MF7 content of the small gauge
+    deck) and MT4 (inelastic) are gauged. A section absent from BOTH tapes is fine (not
     every deck emits elastic); present on one side only is a structural
     failure (inf).
     """
