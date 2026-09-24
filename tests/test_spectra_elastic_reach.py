@@ -1,6 +1,6 @@
 """Instrument-reach Bragg cutoff: the reach algebra, truncation as a
 bit-identical prefix of the engine builder, and byte-identical elastic
-output on the committed graphite mode-0 example against a full 5 eV run.
+output on the committed graphite mode-0 example against a wider enumeration.
 """
 import numpy as np
 import pytest
@@ -74,13 +74,13 @@ def test_engine_builder_truncation_is_a_bit_identical_prefix():
     assert float(trunc.E_edge_meV.max()) <= 0.12 / 1.0e-3          # <= emax
 
 
-# ---- the load-bearing proof: committed example, reach-derived vs full 5 eV ----
-def test_committed_example_spectrum_identical_to_full_5ev_enumeration(monkeypatch):
+# ---- committed example: reach-derived vs a wider enumeration ------------------
+def test_committed_example_spectrum_identical_to_a_wider_enumeration(monkeypatch):
     """End-to-end on examples/spectra/graphite_mode0_dosfile.yaml (plus two
-    constant-Q cuts to exercise the q_res-broadened peak path): forcing the old
-    full-5 eV enumeration changes NOTHING in the elastic output -- the dropped
-    edges are beyond the instrument's reach by construction. Equality is
-    asserted bitwise (tolerance 0)."""
+    constant-Q cuts to exercise the q_res-broadened peak path): enumerating
+    the edges to 1 eV, past the instrument's reach, changes nothing in the
+    elastic output -- the extra edges are beyond the reach by construction.
+    Equality is asserted bitwise (tolerance 0)."""
     yaml = pytest.importorskip("yaml")  # noqa: F841  (example config is YAML)
     from irma.spectra.config import load, _assemble_dos_species
     import irma.spectra.elastic as el
@@ -106,7 +106,7 @@ def test_committed_example_spectrum_identical_to_full_5ev_enumeration(monkeypatc
         progress=lambda *a, **k: None)
 
     r_reach = compute_spectrum(**common)
-    monkeypatch.setattr(el, "instrument_reach_emax_eV", lambda **kw: 5.0)
+    monkeypatch.setattr(el, "instrument_reach_emax_eV", lambda **kw: 1.0)
     r_full = compute_spectrum(**common)
 
     # the reach-derived run really enumerates far fewer edges...

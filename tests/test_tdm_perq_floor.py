@@ -5,7 +5,7 @@ The thermal-displacement tensor U_ij feeds the Debye-Waller factor. phonopy's
 Gamma-containing mesh it applies the Gamma-tier floor (0.1 meV) everywhere and
 drops off-Gamma modes in (1 ueV, 0.1 meV] that the one-phonon sum keeps. The
 per-q sum (``compute_thermal_displacement_matrices``) applies the SAME two-tier
-``mode_floor_mask`` as the DOS-tensor / one-phonon paths, keeping the TDM
+``mode_floor_mask`` as the per-atom DOS and one-phonon paths, keeping the TDM
 consistent with the one-phonon mode set.
 
 Correctness reference: on a Gamma-FREE mesh the two floors coincide, so the per-q
