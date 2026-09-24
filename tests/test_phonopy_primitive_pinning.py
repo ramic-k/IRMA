@@ -71,7 +71,8 @@ def test_compressed_yaml_is_scanned(tmp_path):
 
 
 def test_all_phonopy_load_sites_use_the_pin():
-    """Every phonopy.load call site must route through the pinning helper.
+    """Every phonopy.load call must route through the pinning helper: a file
+    has at least as many helper calls as load calls.
 
     A new load site added without the pin silently reintroduces the
     phonopy-4 auto-primitive drift.
@@ -81,9 +82,11 @@ def test_all_phonopy_load_sites_use_the_pin():
     offenders = []
     for path in root.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        if "phonopy.load(" in text or "phonopy_load(" in text:
-            if "pinned_primitive_matrix_kwargs" not in text:
-                offenders.append(str(path))
+        loads = text.count("phonopy.load(") + text.count("phonopy_load(")
+        pins = (text.count("pinned_primitive_matrix_kwargs(")
+                - text.count("def pinned_primitive_matrix_kwargs("))
+        if loads > pins:
+            offenders.append(f"{path}: {loads} load calls, {pins} pinned")
     assert not offenders, (
         f"phonopy.load call sites missing pinned_primitive_matrix_kwargs: "
         f"{offenders}")

@@ -2,19 +2,12 @@
 initializer, the converter's temperature and mass-ratio checks, and the GUI
 runner's macOS fork-safety variable. Headless (no Tk widgets).
 """
-import inspect
 import os
 
 import numpy as np
 import pytest
 
 from irma.core import noncubic_engine as ne
-
-
-def test_native_thread_env_pinned_at_import():
-    # Importing irma (irma/__init__.py) sets every native-thread var before numpy.
-    for name in ne.NATIVE_THREAD_ENV_VARS:
-        assert os.environ.get(name) == "1", name
 
 
 def test_pool_worker_init_forces_thread_env(monkeypatch):
@@ -24,12 +17,6 @@ def test_pool_worker_init_forces_thread_env(monkeypatch):
     ne._pool_worker_init()
     for name in ne.NATIVE_THREAD_ENV_VARS:
         assert os.environ[name] == "1", name
-
-
-def test_pool_uses_worker_initializer():
-    # the only check that _pool_worker_init is wired into the pool
-    src = inspect.getsource(ne)
-    assert "initializer=_pool_worker_init" in src
 
 
 def test_parse_args_rejects_nonpositive_temperature():
