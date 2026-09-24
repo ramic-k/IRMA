@@ -8,7 +8,7 @@ order / mode mappings included); (3) invalid input surfaces a clear error; (4)
 engine (the runner call is monkeypatched); (5) "Open Config..." reads a config
 back through the exporter's OWN loader, round-tripping both grid modes, and a
 file it rejects mutates nothing. The third top-level tab is asserted in
-test_gui_ns_panel.test_app_has_two_top_tabs_and_endf_intact.
+test_gui_ns_panel.test_app_top_tabs_and_endf_parts.
 """
 import pytest
 

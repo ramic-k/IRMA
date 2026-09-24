@@ -9,7 +9,8 @@ this file pins:
 - Apply is ATOMIC -- lattice and atom block are replaced together, never one
   without the other;
 - a missing path / unreadable yaml reports and mutates nothing;
-- what it writes generates a deck the core parser accepts.
+- what it writes generates a deck the core tokenizer reads and the GUI
+  import parser accepts.
 
 Requires a display (Tk); skipped headless (CI).
 """
@@ -252,8 +253,8 @@ def test_energy_dependent_species_is_refused(app, monkeypatch, tmp_path):
 
 # ------------------------------------------------------ end to end ----------
 
-def test_filled_form_generates_a_deck_the_core_parser_accepts(app, monkeypatch,
-                                                              tmp_path):
+def test_filled_form_generates_a_deck_the_import_parser_accepts(app, monkeypatch,
+                                                                tmp_path):
     pytest.importorskip("phonopy")
     from irma.core.deck import TokenReader, parse_leapr_input
     from irma.gui.deck_text import parse_deck_to_staging

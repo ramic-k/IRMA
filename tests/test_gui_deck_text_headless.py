@@ -137,10 +137,10 @@ def test_noncubic_valid_controls_parse(tmp_path):
     assert nc['min_phonon_energy_mev'] == 0.0
 
 
-def test_min_phonon_energy_card_parse_and_legacy_compatibility(tmp_path):
-    legacy = _stage(_nc_deck(), tmp_path)['noncubic']
+def test_min_phonon_energy_card_parse_with_and_without_cutoff_card(tmp_path):
+    without = _stage(_nc_deck(), tmp_path)['noncubic']
     selected = _stage(_nc_deck(cutoff="0.5/"), tmp_path)['noncubic']
-    assert legacy['min_phonon_energy_mev'] == 0.0
+    assert without['min_phonon_energy_mev'] == 0.0
     assert selected['min_phonon_energy_mev'] == 0.5
 
 
