@@ -1,27 +1,8 @@
-"""Live engine-backed coverage for the ``compute_spectrum`` mode-1/2 path.
-
-Every other ``compute_spectrum`` test drives the cheap mode-0 DOS branch
-(``dos_species=...``), so the PRODUCTION spectra path -- the engine block of
-``irma.spectra.forward`` -- ran in CI exactly never: ``_get_engine_context`` +
-``run_noncubic_sab_inprocess`` on the locus grid, ``_pick_sqe_key`` against
-live engine output, the S-orientation seam, and the tape-free elastic glue
-built from the engine's surfaced ``elastic_state``.
-
-The live test here mirrors the fast-CI noncubic gauge (vendored graphite
-phonopy model, mesh 4^3, ndir=40, mpdir=20) through the FORWARD-MODEL entry
-point instead of ``run_leapr``, with elastic=True so the engine
-``elastic_state`` -> ``from_engine_elastic_state`` glue runs too, and pins:
-
-  * the inelastic and elastic spectrum integrals to frozen values
-    (characterization pins -- blessed from two byte-identical runs in
-    separate processes, same determinism contract as the fast-CI tape pins),
-  * the live ``_pick_sqe_key`` selection recorded in metadata,
-  * the elastic line being populated AND concentrated at E=0,
-  * the I_total = I_inelastic + I_elastic decomposition.
-
-The two ``ValueError`` guards of the elastic glue (elastic=True without
-``elastic_scatterers``; ``elastic_scatterers`` missing a primitive species)
-are covered by cheap stubbed-engine tests -- no phonopy work needed there.
+"""Live engine-backed coverage of the ``compute_spectrum`` mode-1/2 path: the
+engine context and ``run_noncubic_sab_inprocess`` on the locus grid, the live
+``_pick_sqe_key`` selection, and the tape-free elastic line built from the
+engine's ``elastic_state``, on the vendored graphite model (mesh 4^3, ndir=40,
+mpdir=20). The elastic glue's two ValueError guards use a stubbed engine.
 """
 import os
 
@@ -52,17 +33,9 @@ _LIVE = dict(
                               "awr": 11.898}},
     progress=lambda *a, **k: None)
 
-# Frozen characterization pins (trapezoid integrals over the output E axis).
-# Determinism: two runs in SEPARATE processes reproduced every digit below
-# (the engine's ordered 2-worker pool + pinned BLAS threads, as in the
-# fast-CI tape pins) — but only on ONE platform. Across platforms the spectra
-# layer (scipy interpolation/broadening, BLAS) jitters at the ~1e-5 level:
-# the linux CI runner reproduced the engine-side law pins (rel 1e-6, see
-# test_noncubic_fast_ci) yet differed here by 9.4e-6 relative. The pin
-# tolerance is therefore 1e-4 — loose enough for platform jitter, tight
-# enough that any real orchestration regression (wrong sqe key, dropped
-# component, broken normalization) still fails.
-# The axis starts at E=0, so the elastic pin is half the line's area.
+# Frozen pins (trapezoid integrals over the output E axis); rel 1e-4 because
+# the spectra layer jitters about 1e-5 across platforms. The axis starts at
+# E=0, so the elastic pin is half the line's area.
 _I_INELASTIC = 2.888525860058e-02
 _I_ELASTIC = 3.915718308255e-05
 

@@ -1,25 +1,7 @@
-"""Direct energy-gain side for the eigenvector engine (modes 1/2).
-
-The engine computes the E<0 side with explicit Bose ANNIHILATION factors
-(n(omega) at -omega for the one-phonon coherent + incoherent terms; the
-negative half of the signed multiphonon convolution) under the opt-in
-``emit_gain_side`` flag -- never a detailed-balance mirror.
-
-Two contracts are pinned here against a real (small) graphite phonopy model:
-
-1. LOSS BYTE-IDENTITY (the ENDF byte-exact guard): every loss
-   ``sqe_*_barn_per_meV`` array is BITWISE identical whether ``emit_gain_side``
-   is off or on. The gain path is purely additive and never perturbs a loss
-   float, so the SAB/tape outputs are unaffected.
-
-2. GAIN == MIRROR TO O(dE/kT), CONVERGING. For the equilibrium harmonic model
-   detailed balance is exact in the continuum, so the directly-computed gain
-   equals the detailed-balance mirror of the loss side up to the discrete-grid
-   difference between depositing a line at its TRUE energy -omega (direct) and
-   reflecting the loss BIN whose center is offset by up to dE/2 (mirror). That
-   sub-bin difference is ~dE/kT and must SHRINK ~linearly as dE -> 0 -- which
-   both proves the gain side is correct and shows the direct method is the more
-   accurate one (no bin-center approximation).
+"""Direct energy-gain side of the eigenvector engine (modes 1/2) on a small
+graphite model: every loss array is bitwise unchanged when the gain side is
+emitted, and the gain side equals the detailed-balance mirror to O(dE/kT),
+the difference shrinking linearly with dE.
 
 Phonopy-gated and kept small (mesh 4^3, ndir 40, mpdir 20) -- a few seconds.
 """

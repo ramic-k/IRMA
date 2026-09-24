@@ -115,7 +115,8 @@ def main(argv):
     ap.add_argument("--rtol-integrated", type=float, default=0.05,
                     help="gate on I(beta)/J(alpha) where significant")
     ap.add_argument("--rtol-cuts", type=float, default=0.15,
-                    help="gate on broadened cuts at Q>=3 where significant")
+                    help="gate on broadened cuts at Q>=15, applied as twice "
+                         "this value (Q<3 and 3<=Q<15 use 0.10 and 0.20)")
     args = ap.parse_args(argv[1:])
 
     mat_dir = os.path.join(HERE, args.material)

@@ -1,16 +1,6 @@
-"""Direct energy-gain evaluation (explicit Bose factors) vs detailed balance.
-
-physics.gain_side='direct' computes the E<0 side of the neutron-scattering
-forward model with explicit occupation factors -- n(omega) phonon-annihilation
-weights, the phonon orders summed on a signed energy grid
-(irma.spectra.dos_mode0.compute_mode0_gain_direct) -- with NO detailed-balance
-mirror anywhere in the evaluation. For the equilibrium harmonic model the two
-are the same physics ((n+1)e^{-E/kT} = n identically), so their agreement --
-~1e-6 comparing the kernel to the mirror (gain-grid interpolation), ~1e-9
-end-to-end through the orchestrators -- is BOTH the regression contract for the
-new path and a standing cross-validation of the mirror: two independent
-implementations (the contin ladder + mirror vs the FFT ladder with explicit
-Bose factors) that must coincide.
+"""Direct energy-gain evaluation (explicit Bose factors on the mode-0 FFT
+ladder) against the detailed-balance mirror: for the harmonic model the two
+agree to ~1e-6 at kernel level and ~1e-9 through the orchestrators.
 
 CI-safe: mode-0 DOS path only, pure numpy, no phonopy/engine.
 """

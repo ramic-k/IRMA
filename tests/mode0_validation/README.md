@@ -16,7 +16,7 @@ fail (integral ratio outside [0.9, 1.1] or shape cosine below 0.85 — generous
 by design, see below).
 
 This is a sanity-level consistency check, not a controlled proof. Result
-(committed): both paths are now **per represented atom**, so they agree in
+(committed): both paths are **per represented atom**, so they agree in
 ABSOLUTE scale — the integral ratio mode0/mode1 ≈ **1.02** — and the
 area-normalised shapes track closely (cosine ≈ 0.92). The residual (~2 % integral
 + the shape difference) is **consistent with** mode 0's isotropic Debye-Waller vs

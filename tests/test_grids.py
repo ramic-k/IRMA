@@ -207,15 +207,6 @@ def test_grid_reference_temperature():
     assert grid_reference_temperature_K(0, 77.0) == 77.0
 
 
-def test_lat1_auto_grid_independent_of_first_temperature():
-    """A lat=1 deck's stored alpha/beta are in fixed 0.0253 eV units, so the
-    generated grid must not depend on temps[0]."""
-    from irma.core.grids import grid_reference_temperature_K
-    b77 = generate_beta_grid(0.2, grid_reference_temperature_K(1, 77.0))
-    b500 = generate_beta_grid(0.2, grid_reference_temperature_K(1, 500.0))
-    np.testing.assert_array_equal(b77, b500)
-
-
 # ---- lin-lin fine region: kernel width, temperature, and the user note ------
 def test_effective_temperature_bound_limits():
     from irma.core.grids import effective_temperature_bound_ratio

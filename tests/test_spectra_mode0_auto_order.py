@@ -1,19 +1,9 @@
-"""Mode-0 honors ``auto_multiphonon_order``.
-
-``max_phonon_order='auto'`` -- the production default through config, CLI and
-GUI -- must size the DOS-path phonon order from the physics, never resolve
-to a FIXED nphon=100: a fixed order means ~10x wasted
-ladder time for thermal cases (the contin ladder cost grows ~quadratically
-with the order) and silent truncation for high-alpha cases (H at high Q)
-where 100 is too FEW. Now 'auto' sizes the ladder to the converged
-Poisson(f0*alpha_max) order -- the exact rule modes 1/2 use
-(``derive_required_multiphonon_order``) with the isotropic
-``U_eq = f0*C_E/(awr*kT)`` standing in for the largest thermal-displacement
-eigenvalue, since ``Q^2 U_eq == lambda*alpha``.
-
-These tests pin the EFFECTIVE ORDER (result fields / forward metadata), the
-derivation math against a hand-rolled ``start()`` + Poisson-tail bound, and
-the convergence claim (auto == fixed-100 to ~1e-6) -- not just runtime.
+"""Mode-0 honors ``auto_multiphonon_order``: 'auto' sizes the DOS-path phonon
+order to the converged Poisson(f0*alpha_max) order, the rule modes 1/2 use,
+with ``U_eq = f0*C_E/(awr*kT)`` in place of the largest thermal-displacement
+eigenvalue (``Q^2 U_eq == lambda*alpha``). Pins the effective order, the
+derivation against ``start()`` and a Poisson-tail bound, and convergence
+against a fixed order of 100.
 """
 import math
 

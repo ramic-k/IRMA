@@ -51,11 +51,10 @@ import time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Prefer the enclosing checkout's irma over any ambient/editable install
-# (review VAL-2/V2): a clean-archive run used to import whatever irma the
-# environment happened to carry, so the frozen reference could be produced
-# by code other than the tree being validated. Same pattern as the
-# validate_*.py comparators.
+# Prefer the enclosing checkout's irma over any ambient/editable install, so
+# the frozen reference is produced by the tree being validated, not by
+# whatever irma the environment carries. Same pattern as the validate_*.py
+# comparators.
 sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..")))
 import irma.core.constants as _irma_constants
 from irma.core.constants import BK, HBAR2_OVER_2MN_MEV_A2
@@ -104,7 +103,7 @@ def parse_deck_template(material_dir):
     temperature_k = nums[nalpha + nbeta]
 
     # Card 6f-2 (mesh_nx ny nz ncpu use_born) follows the quoted
-    # phonopy.yaml path card; Card 6g (ndir mpdir [method] [auto]) follows
+    # phonopy.yaml path card; Card 6g (ndir mpdir [auto]) follows
     # the 6f block. Parsing them here keeps the Euphonic reference's
     # Debye-Waller mesh and powder-direction count tied to the deck, so
     # the two calculations cannot drift apart silently.
@@ -224,7 +223,7 @@ def main(argv):
         meta["euphonic_version"] = euphonic.__version__
     except Exception:
         pass
-    # Producer provenance (review VAL-2): the exact code and inputs behind
+    # Producer provenance: the exact code and inputs behind
     # the frozen reference must be reconstructible from its metadata.
     meta["irma_import_path"] = os.path.abspath(_irma_constants.__file__)
     try:
