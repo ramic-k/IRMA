@@ -54,17 +54,17 @@ def build_model_context(
     args: argparse.Namespace,
     preloaded_full_mesh: object = None,
 ) -> dict[str, object]:
-    """Build the phonopy MODEL layer of the compute context.
+    """Build the phonopy model layer of the compute context.
 
     Everything returned here is a function of the phonon model and the mesh
-    dimensions ONLY: ``args.phonopy_yaml`` / ``args.force_constants`` /
+    dimensions only: ``args.phonopy_yaml`` / ``args.force_constants`` /
     ``args.force_sets`` / ``args.born`` / ``args.mesh``. No temperature, Q/E
     grid, direction count or job count enters, so one model context can be
     shared by every grid-layer rebuild of the same model (e.g. the per-
     temperature rebuilds of a lat=0 multi-temperature deck).
 
     ``preloaded_full_mesh`` (optional): an already-run full-Monkhorst-Pack
-    phonopy ``Mesh`` for the SAME model and mesh dimensions (the MT2 path's
+    phonopy ``Mesh`` for the same model and mesh dimensions (the MT2 path's
     ``load_phonopy_mesh`` result carries one as ``phonopy_mesh_object``).
     When given, the duplicate full-mesh eigensolve is skipped;
     the symmetry-reduced mode-sum mesh is always run fresh.
@@ -199,7 +199,7 @@ def build_model_context(
             f"(star count range {int(np.min(multiphonon_star_counts))}..{int(np.max(multiphonon_star_counts))})."
         )
 
-    # The MODEL's own eigenvalue->THz factor. phonopy already applies it to
+    # The model's own eigenvalue->THz factor. phonopy already applies it to
     # mesh.frequencies, but the coherent one-phonon path solves the dynamical
     # matrix itself (noncubic_workers._batched_qpoints_eigh) and so must be
     # handed the same factor: it is calculator-specific (15.633302 vasp,
@@ -236,13 +236,13 @@ def build_compute_context(
     """Build the reusable, temperature-independent context for SAB evaluation.
 
     ``preloaded_full_mesh`` (optional): an already-run full-Monkhorst-Pack
-    phonopy ``Mesh`` for the SAME model and mesh dimensions (the MT2 path's
+    phonopy ``Mesh`` for the same model and mesh dimensions (the MT2 path's
     ``load_phonopy_mesh`` result carries one as ``phonopy_mesh_object``).
     When given, the duplicate full-mesh eigensolve is skipped;
     the symmetry-reduced mode-sum mesh is always run fresh.
 
-    ``model_context`` (optional): an already-built MODEL layer from
-    :func:`build_model_context` for the SAME model and mesh dimensions.
+    ``model_context`` (optional): an already-built model layer from
+    :func:`build_model_context` for the same model and mesh dimensions.
     When given, the phonopy load, both mesh eigensolves and the star-average
     are skipped entirely and only the grid layer is rebuilt — the caller
     (``standalone_sab.get_or_build_context``) is responsible for keying it by
@@ -366,7 +366,7 @@ def build_compute_context(
         "de_used": de_used,
         "directions": directions,
         "direction_red_basis": direction_red_basis,
-        # MODEL layer (shared by reference with model_context — see
+        # Model layer (shared by reference with model_context — see
         # build_model_context for the keys: mesh, primitive, rec_lat_no_2pi,
         # the incoherent_one_phonon_* arrays, max_mode_energy_mev and the
         # multiphonon_* mode/projection arrays).
