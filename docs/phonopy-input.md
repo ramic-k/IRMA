@@ -1,20 +1,19 @@
 # Preparing a phonopy calculation
 
-All three IRMA outputs take the same phonon input: a
-`phonopy.yaml`, named on Card 6f of an ENDF input file (cards are the
-numbered records of the input format; see the
+The eigenvector-based modes (1 and 2) of all three IRMA outputs read the
+same phonon input: a `phonopy.yaml`, named on Card 6f of an ENDF input
+file (cards are the numbered records of the input format; see the
 [input file reference](input-reference.md)), in the
 `material.phonopy_yaml` field of a spectra configuration, and in the
-same field of an NCrystal export configuration. The
-[MLIP front end](mlip.md) writes one for you inside every bundle from a
-pretrained machine-learned potential, with no force calculation of your
-own; if you have none, that page is your route. This
-page is for the other one: you have run your own force-constant
-calculation (DFT, AIMD, a classical potential, or a machine-learned
-potential outside `irma mlip`) and need to package it so IRMA can read
-it.
+same field of an NCrystal export configuration. (Mode 0 of the ENDF and
+spectra paths takes a DOS instead.)
 
-## What IRMA actually reads
+If you have no force-constant calculation, use the [MLIP front
+end](mlip.md), which writes a `phonopy.yaml` into every bundle. This page
+is for users who ran their own calculation (DFT, AIMD, a classical or
+machine-learned potential) and need to package it for IRMA.
+
+## What IRMA reads
 
 IRMA loads the `phonopy.yaml` for the cells and symmetry, then looks
 for force constants in a fixed order: embedded in the yaml itself
@@ -39,8 +38,8 @@ phonopy-load --include-fc
 
 The `--include-fc` flag is the important one for IRMA: phonopy saves a
 `phonopy.yaml` at the end of every run, and with `--include-fc` (or
-`--include-all`) that file carries the force constants inside it.
-Point IRMA at it and you are done. The same chain works for the other
+`--include-all`) that file carries the force constants inside it,
+which is all IRMA needs. The same chain works for the other
 calculators phonopy supports; pass the calculator flag you used at the
 `-d` step to the `-f` step as well (for example `phonopy --qe -d ...`
 then `phonopy --qe -f ...` for Quantum ESPRESSO).
@@ -71,8 +70,11 @@ dipole interaction splits the optical branches near the zone center,
 and phonopy handles it with the non-analytical-term correction (NAC)
 parameterized by a `BORN` file: the dielectric tensor and the Born
 effective charges. IRMA honors NAC two ways. If the `phonopy.yaml`
-already embeds the NAC parameters (a phonopy run with `--include-all`,
-or `--nac` workflows that save them), IRMA applies them. On an ENDF
+already embeds the NAC parameters, IRMA applies them. With phonopy 4,
+keep the `BORN` file in the directory where you run phonopy: phonopy
+then applies NAC and saves the parameters in `phonopy.yaml` (use
+`--include-fc` or `--include-all` so the force constants are embedded
+too). On an ENDF
 input file, Card 6f's `use_born=1` additionally names a `BORN` file
 explicitly, and an unreadable file is an error rather than a silent
 fallback. A `BORN` file merely sitting in
@@ -85,8 +87,9 @@ Whichever route produced the calculation, look at the phonon density of
 states before spending compute on an evaluation (phonopy's own `-p`
 plotting flag draws it, or plot the `total_dos.dat` it writes): imaginary modes or a
 cut-off spectrum mean the force-constant calculation needs attention,
-not the IRMA settings. The [scattering modes](modes.md) page covers
-the mesh-convergence question, and the
+not the IRMA settings. The [scattering modes](modes.md) page explains
+how the phonon q-mesh sets the lowest energy the one-phonon term
+reaches, and the
 [troubleshooting](troubleshooting.md) page lists the force-constant
 pitfalls IRMA diagnoses at load time, including the supercell and
 primitive-cell mismatches it rejects outright.
