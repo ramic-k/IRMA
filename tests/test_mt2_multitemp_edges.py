@@ -7,7 +7,7 @@ from math import exp
 
 import pytest
 
-from irma.core.engine import coher
+from irma.core.crystal import coher
 from irma.core.kernels import sigfig
 from irma.core.endf_writer import _coherent_s_table
 

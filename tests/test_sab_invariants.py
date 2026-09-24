@@ -18,7 +18,7 @@ implementation must satisfy:
 import numpy as np
 import pytest
 
-from irma.core.engine import contin, discre, trans
+from irma.core.kernels import contin, discre, trans
 
 THERM = 0.0253
 BK = 8.617333262e-5

@@ -8,7 +8,7 @@ NJOY's pb4 = 1.0 barn is a placeholder for the physical sigma_coh(Pb) =
 import numpy as np
 import pytest
 
-from irma.core.engine import coher
+from irma.core.crystal import coher
 
 EMAX = 5.0
 

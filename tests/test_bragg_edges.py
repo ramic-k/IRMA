@@ -8,10 +8,11 @@ from math import sqrt
 
 import pytest
 
-from irma.core.engine import (
-    compute_bragg_edges_general, AtomSite, CrystalStructure, WL2EKIN,
+from irma.core.constants import WL2EKIN
+from irma.core.crystal import (
+    AtomSite, CrystalStructure, _get_reciprocal_lattice_matrix,
+    compute_bragg_edges_general,
 )
-from irma.core.crystal import _get_reciprocal_lattice_matrix
 
 
 def _edges(graphite, emax=5.0):

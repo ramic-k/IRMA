@@ -4,7 +4,7 @@ cards, Fortran number and string forms, and card alignment.
 """
 import pytest
 
-from irma.core.engine import TokenReader, CARD_END
+from irma.core.deck import CARD_END, TokenReader
 
 
 @pytest.mark.parametrize("tokens, want", [

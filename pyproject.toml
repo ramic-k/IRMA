@@ -104,8 +104,6 @@ select = ["F", "E9"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-# engine.py and noncubic_engine.py are re-export modules: they import names
-# (run_leapr, the LEAPR kernels, the worker/numerics primitives) to re-export
-# them for the public API and the test suite, so F401 does not apply here.
-"irma/core/engine.py" = ["F401"]
+# noncubic_engine.py re-exports the worker/numerics primitives it imports for
+# the test suite, so F401 does not apply there.
 "irma/core/noncubic_engine.py" = ["F401"]

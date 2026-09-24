@@ -11,7 +11,7 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-from irma.core.engine import CrystalStructure, AtomSite
+from irma.core.crystal import CrystalStructure, AtomSite
 
 
 @pytest.fixture
