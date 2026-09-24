@@ -6,7 +6,8 @@ cumulative S (total bound XS) and the 1/E integral exactly at the reference T.
 """
 import numpy as np
 
-from irma.core.engine import _grouped_coherent_s_table, sigfig
+from irma.core.endf_writer import _grouped_coherent_s_table
+from irma.core.kernels import sigfig
 
 
 def _make_delta_fn(E, s_raw, W):
