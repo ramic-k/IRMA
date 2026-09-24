@@ -11,7 +11,7 @@ interpreter.
 import subprocess
 import sys
 
-HEAVY = ("ase", "torch", "phonopy", "scipy", "yaml",
+HEAVY = ("ase", "torch", "phonopy", "scipy", "yaml", "periodictable",
          "mattersim", "sevenn", "orb_models", "mace")
 
 CHECK = (

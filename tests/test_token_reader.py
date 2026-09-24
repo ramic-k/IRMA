@@ -1,8 +1,6 @@
-"""Regression tests for TokenReader card parsing.
-
-This is the mechanism behind optional/backward-compatible card fields (e.g. the
-Card 6b Bragg-edge grouping fields, the variable-length Card 6g). The stale-deck
-breakages we hit were exactly here, so pin the behavior.
+"""TokenReader card parsing: defaults for missing trailing fields (the optional
+Card 6b Bragg-edge grouping fields, the 2- or 3-field Card 6g), variable-length
+cards, Fortran number and string forms, and card alignment.
 """
 import pytest
 
@@ -31,7 +29,8 @@ def test_read_floats_consumes_card_end():
 @pytest.mark.parametrize("tokens", [[5000, 200, 0], [5000, 200, 0, 1],
                                     [5000, 200, 0, 0, 0]])
 def test_read_card_floats_reads_variable_length_card(tokens):
-    """Variable-length cards (Card 6g): read_card_floats takes every field."""
+    """read_card_floats takes every field on the card; the caller checks the
+    count (Card 6g allows 2 or 3)."""
     r = TokenReader(tokens + [CARD_END])
     assert r.read_card_floats() == [float(t) for t in tokens]
 
@@ -45,9 +44,8 @@ def test_read_ints_with_defaults():
 
 
 def test_fortran_d_exponents_tokenize_as_numbers():
-    """NJOY-style decks legitimately use Fortran D-exponent notation
-    (1.0d-5, 2D3); these used to tokenize as strings and fail every
-    numeric read."""
+    """NJOY-style decks use Fortran D-exponent notation (1.0d-5, 2D3); these
+    tokenize as numbers, not strings."""
     from irma.core.deck import _parse_line, CARD_END
     tokens = _parse_line("1.0d-5 2D3 -3.5d+2 0.25 /")
     assert tokens == [1.0e-5, 2000.0, -350.0, 0.25, CARD_END]
@@ -60,8 +58,8 @@ def test_non_numeric_d_tokens_stay_strings():
 
 
 def test_doubled_quote_escaping_in_strings():
-    """Fortran '' escaping inside a quoted string is a literal quote; it
-    used to truncate the string at the first inner quote."""
+    """Fortran '' escaping inside a quoted string is a literal quote and does
+    not end the string."""
     from irma.core.deck import _parse_line
     tokens = _parse_line("'it''s a graphite deck' /")
     assert tokens[0] == ("string", "it's a graphite deck")
@@ -78,9 +76,9 @@ def test_stray_text_on_card_is_discarded_not_leaked():
 
 
 def test_read_card_floats_rejects_trailing_word():
-    """A word in a numeric-coded field (method selector written 'numerical'
-    instead of its code 0) used to be silently dropped, letting [5000, 200]
-    pass a downstream 2/3/4-field count check with the method defaulted."""
+    """A word in a numeric field ('numerical' where a code belongs) raises
+    instead of being dropped, which would let [5000, 200] pass a later
+    field-count check."""
     from irma.core.deck import _parse_line, DeckError
     r = TokenReader(_parse_line("5000 200 numerical /"))
     with pytest.raises(DeckError, match="numerical"):
