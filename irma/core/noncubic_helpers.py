@@ -5,7 +5,7 @@ unit/sigma inference, the S(Q,E) -> asymmetric-SAB conversion, and the
 multiphonon-order sizing rule — factored out of ``noncubic_engine`` so that
 module can stay focused on the multiprocessing kernels and the compute-phase
 orchestration. None of these touch the ``WORKER_STATE`` global or the
-worker pool; ``noncubic_engine`` re-exports them.
+worker pool; ``noncubic_engine`` imports them for its own phases.
 """
 from __future__ import annotations
 
@@ -133,8 +133,9 @@ def convert_sqe_to_asym_downscatter_sab(
 
     ``S_asym_downscatter(alpha, beta_downscatter_abs) = (4*pi*kT/sigma_b) * S(Q, E_tr)``
 
-    Here ``sqe_barn_per_mev`` is the powder-averaged differential quantity
-    ``d^2 sigma / (dOmega dE')``. The ``4*pi`` converts from the internal
+    Here ``sqe_barn_per_mev`` is the powder-averaged ``(sigma/4pi) S(Q,E)`` in
+    barn/sr/meV, with no k'/k factor (``d^2 sigma / (dOmega dE')`` is k'/k
+    times it). The ``4*pi`` converts from the internal
     per-steradian convention to the angle-integrated ``S(alpha,beta)``
     normalization.
     """

@@ -2,7 +2,7 @@
 
 Array accumulation, sphere sampling and energy-grid construction and
 rebinning, used by the setup path and the worker kernels. They do not touch
-``WORKER_STATE``; ``noncubic_engine`` re-exports them.
+``WORKER_STATE``; ``noncubic_engine`` imports them for its own phases.
 """
 from __future__ import annotations
 
@@ -190,10 +190,9 @@ def build_uniform_positive_work_grid(
     """Build a uniform internal energy grid for the multiphonon convolutions.
 
     The first work-grid bin is centered at E=0 with its lower edge clamped
-    to 0, so its width is half a spacing: a density value there is doubled
-    relative to interior bins for the same deposited mass. Rebinning onto
-    the output grid conserves the integral (mass), so this is correct by
-    construction — only the E=0 DENSITY readout looks halved.
+    to 0, so it is half a spacing wide and holds the positive-energy half of
+    the mass around E=0. Rebinning onto the output grid conserves the
+    integral.
 
     ``phonon_max_energy_mev`` is the highest phonon energy of the model. A
     non-uniform output grid uses its minimum spacing, unless that needs more
