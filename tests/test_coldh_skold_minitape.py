@@ -1,12 +1,8 @@
 """Fast CI byte-identity for the cold-hydrogen and Skold kernels.
 
-The 8.8x performance rewrite of coldh (hoisted rotational sums, batched
-sint) and the Skold correction previously had byte-identity coverage only
-in the slow, manually-run expected validation (7-temperature ortho/para-H).
-This pins them in CI: a miniature ortho-H deck (6 alpha x 10 beta, 14 K,
-diffusion translation + one discrete oscillator + a 12-point S(kappa)
-table, nsk=2) must reproduce the vendored NJOY tape BYTE-IDENTICALLY in
-MF7. With ncold=1 the deck exercises contin, trans (diffusion:
+A miniature ortho-H deck (6 alpha x 10 beta, 14 K, diffusion translation +
+one discrete oscillator + a 12-point S(kappa) table, nsk=2) must reproduce
+the vendored NJOY tape BYTE-IDENTICALLY in MF7. With ncold=1 the deck exercises contin, trans (diffusion:
 stable/besk1/terps), discre and coldh (ortho rotational sums + SCT); NJOY
 and IRMA run the Skold step only for ncold=0, so the same deck with
 ncold=0 pins skold. MF1 is excluded: IRMA deliberately writes a consistent
