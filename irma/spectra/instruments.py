@@ -37,8 +37,9 @@ class Instrument:
     angles_deg      : detector scattering angles (2theta) making up the bank
     sigma_coeffs    : Gaussian energy-resolution sigma polynomial (meV)
     bank_halfwidth_deg : angular acceptance (+/-) used for the elastic Bragg
-                      integration of EACH angle (collects reflections in the
-                      angle's elastic-Q window); set 0 for a point differential
+                      integration of each angle (collects reflections in the
+                      angle's elastic-Q window); 0 gives the point differential
+                      (library use; the config requires > 0)
     combine         : 'mean' (per-detector average) or 'sum' over angles
     resolution_model : 'poly' (sigma from sigma_coeffs) or 'chopper' (auto
                       chopper resolution from chopper_spec = {instrument,
@@ -58,7 +59,7 @@ class Instrument:
     def width_source(self):
         """Return the resolution width argument for ``resolution_convolve``.
 
-        'poly' -> the sigma_coeffs polynomial (legacy, unchanged). 'chopper'
+        'poly' -> the sigma_coeffs polynomial. 'chopper'
         -> a callable E->sigma(meV) bound to Ei=E_fixed, re-evaluated on
         whatever E_out each call site uses.
         """
@@ -102,7 +103,7 @@ def indirect(Ef, angles_deg, sigma_coeffs=si.VISION_SIGMA_COEFFS,
              bank_halfwidth_deg=5.0, combine="mean"):
     """Generic indirect-geometry instrument (OCLIMAX INSTR=1).
 
-    Bank combination (``combine``) is a FLAT mean/sum over the listed detector
+    Bank combination (``combine``) is an unweighted mean/sum over the listed detector
     angles — each angle's inelastic spectrum is sampled at the bank center with
     equal weight (no solid-angle factor), while within a bank the elastic
     channel is integrated over the bank's angular acceptance. Match your
@@ -193,14 +194,14 @@ def simulate_q_cuts(p: si.PowderSQE, q_values, E_out, sigma_coeffs,
                     shape="gaussian", q_band=None, kinematic_factor=None):
     """Constant-|Q| cuts of the powder S(Q,E): I(E) at each fixed Q.
 
-    A real detector follows a Q(E) locus; a constant-Q cut is the VERTICAL
+    A real detector follows a Q(E) locus; a constant-Q cut is the vertical
     slice of S(Q,E) at a single |Q| (a theory cut, useful for reading off which
     modes live at a given Q). Each Q is sampled with the same resolution
     convolution as a bank, plus an optional elastic peak whose area is the
     elastic differential at that Q (``q_res`` broadens the Bragg peaks so a cut
     near an edge still collects it).
 
-    ``q_band`` (half-width, 1/A): if given (> 0), each cut is AVERAGED over
+    ``q_band`` (half-width, 1/A): if given (> 0), each cut is averaged over
     ``|Q| in [Q0 - q_band, Q0 + q_band]`` -- a finite detector Q-bin -- instead
     of an infinitely-thin slice at exactly Q0. The band is sampled on the S(Q,E)
     grid step ``q_res`` (>=3 points, capped at 21) and mean-averaged, keeping the

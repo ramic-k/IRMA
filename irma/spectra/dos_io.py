@@ -1,10 +1,10 @@
 """Phonon-DOS readers for the DOS-based ("mode 0") spectra path.
 
-v1 supports a GENERIC 2-column text DOS: column 0 = phonon frequency, column 1 =
+Reads a generic 2-column text DOS: column 0 = phonon frequency, column 1 =
 DOS intensity (arbitrary units; the mode-0 kernel renormalizes it). Comments
 (``#``), blank lines and non-numeric header rows are skipped; whitespace- or
 comma-separated. The frequency unit is given by the caller. The DOS is returned
-on a UNIFORM omega grid in eV (the kernel's units), ready for
+on a uniform omega grid in eV (the kernel's units), ready for
 :func:`irma.spectra.dos_mode0.compute_mode0_sqe`.
 """
 from __future__ import annotations

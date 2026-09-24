@@ -1,15 +1,12 @@
 """Forward-spectrum orchestration for ``irma.spectra``.
 
-``compute_spectrum`` computes ``S(Q,E)`` FRESH from a phonon model by
-calling the in-process noncubic SAB engine on an instrument-tailored locus grid
-(NOT a dense 2-D grid), reads the engine's physical ``sqe_*`` map directly via
+``compute_spectrum`` computes ``S(Q,E)`` from a phonon model by calling the
+in-process noncubic SAB engine on an instrument-tailored locus grid (not a
+dense 2-D grid), reads the engine's ``sqe_*`` map directly via
 ``_pick_sqe_key`` (no SAB inversion, no tape), then projects it onto the
-instrument's kinematic locus with ``instruments.simulate``.
-
-Cost note: the locus grid keeps the Q-support to the bank-locus envelope (tens of
-shells), but the multiphonon background at each Q still needs the full energy
-work-grid self-convolution -- so the win vs a dense validation grid is ~2-10x
-(fewer Q shells), not orders of magnitude.
+instrument's kinematic locus with ``instruments.simulate``. The locus grid
+limits the Q support to the bank-locus envelope; the multiphonon background at
+each Q still needs the full energy work-grid self-convolution.
 """
 from __future__ import annotations
 
@@ -80,7 +77,7 @@ def _pick_sqe_key(multiphonon_max_order, inelastic_mode):
 class SpectrumResult:
     """Result of a forward INS-spectrum calculation.
 
-    The PER-ANGLE arrays (one row per detector bank) are the primary output --
+    The per-angle arrays (one row per detector bank) are the primary output --
     each bank sits at a different scattering angle and records its own spectrum.
     The combined ``I_*`` fields are the bank-reduced (mean/sum) convenience curve.
     """
@@ -117,13 +114,14 @@ def build_locus_support(geometry, e_fixed_meV, angles_deg, dE, e_max, dQ,
                         e_pad=0.0):
     """Build the engine's (Q_support, E_support) for an instrument locus.
 
-    E_support is the uniform LOSS-side energy grid the engine computes S(Q,E)
-    on; the energy-gain side is reconstructed downstream by detailed balance
-    (mirroring the loss side), so it reaches only -(max loss energy). When a
+    E_support is the uniform loss-side energy grid the engine computes S(Q,E)
+    on; the energy-gain side (computed directly or mirrored by detailed
+    balance) is built on the mirror of that grid, so it reaches only
+    -(max loss energy). When a
     deeper gain side is requested (``include_gain`` and ``e_min < -e_max``), the
     loss grid is extended to ``|e_min|`` so the gain wing in [e_min, -e_max] has
     loss data to mirror instead of being silently zeroed by the fill_value=0
-    interpolator. Q_support is a ``dQ``-spaced grid spanning the UNION envelope
+    interpolator. Q_support is a ``dQ``-spaced grid spanning the union envelope
     of every bank locus ``Q(E)`` over the full E range. ``e_pad`` widens that
     range on both sides: the resolution broadening needs S past the axis ends
     (``irma.spectra.sqe.pad_reach``).
@@ -134,8 +132,8 @@ def build_locus_support(geometry, e_fixed_meV, angles_deg, dE, e_max, dQ,
     if include_gain and e_lo < 0.0:
         e_loss_max = max(e_loss_max, -e_lo)                        # cover the gain wing
     E_support = np.arange(0.0, e_loss_max + 0.5 * dE, dE)         # engine loss grid
-    # The Q envelope must cover the full SIGNED output range [e_min, e_max], not
-    # just the loss side: when e_min < 0 the energy-GAIN locus Q(E<0) reaches
+    # The Q envelope must cover the full signed output range [e_min, e_max], not
+    # just the loss side: when e_min < 0 the energy-gain locus Q(E<0) reaches
     # different (often higher) |Q| than the loss side, and the output spectrum is
     # sampled there too. Spanning only [0, e_max] would let the fill_value=0
     # interpolator silently zero the energy-gain wing.
@@ -168,9 +166,10 @@ def _mode0_direct_gain(*, dos_species, temperature_k, q, E_loss, nphon, progress
 
     Evaluates :func:`irma.spectra.dos_mode0.compute_mode0_gain_direct` on the
     mirror grid ``-E_loss[E_loss>0][::-1]`` so the signed assembly in
-    ``signed_sqe`` meshes exactly with the loss side, summing the SAME phonon
-    order ``nphon`` the loss side used (so the gain side is never more complete
-    than the loss side). Returns ``({E_gain, S_gain}, "direct")`` on success;
+    ``signed_sqe`` meshes exactly with the loss side. An explicit ``nphon``
+    sums the same phonon order the loss side used (so the gain side is never
+    more complete than the loss side); with ``nphon='auto'`` the gain side uses
+    the closed form over all orders. Returns ``({E_gain, S_gain}, "direct")`` on success;
     on an extreme (light-mass / very-high-Q / very-low-T) input whose ladder
     overflows the FFT-grid budget -- where the gain side is physically
     negligible -- it falls back with ``({}, "detailed_balance")`` and a NOTE.
@@ -191,7 +190,7 @@ def _mode0_direct_gain(*, dos_species, temperature_k, q, E_loss, nphon, progress
         return {}, "detailed_balance"
     order = ("all orders (closed form)" if isinstance(nphon, str)
              else f"order {int(nphon)}")
-    progress(f"energy-gain side: DIRECT evaluation (explicit Bose factors, "
+    progress(f"energy-gain side: direct evaluation (explicit Bose factors, "
              f"{order}; no detailed-balance mirror)")
     return {"E_gain": g["e_gain_mev"], "S_gain": g["sqe_barn_per_meV"]}, "direct"
 
@@ -205,7 +204,7 @@ def _build_mode0_elastic_model(*, dos_species, m0, dos_crystal, elastic_kind,
     Debye-Waller line is built. Returns ``None`` (with a NOTE) for a
     coherent-only request without a crystal -- the result is then
     inelastic-only. Shared by ``compute_spectrum`` and ``compute_sqe_map`` so
-    the map carries the SAME elastic line as the 1-D spectra.
+    the map carries the same elastic line as the 1-D spectra.
     """
     if dos_crystal is None and elastic_kind == "coherent":
         progress("NOTE: the mode-0 coherent elastic line needs "
@@ -453,7 +452,8 @@ def compute_spectrum(*, geometry, phonopy_yaml, temperature_k, mesh,
     Energy-gain side: ``gain_side="direct"`` (default) computes E<0 with
     explicit Bose factors (mode 0 evaluates its own gain ladder, modes 1/2 read
     the engine's gain arrays); ``"detailed_balance"`` mirrors the loss side.
-    The two agree to round-off for the harmonic model.
+    The two agree to round-off in mode 0; in modes 1/2 they agree to the
+    sub-bin level (the engine's direct gain uses the exact line energies).
     """
     from irma.spectra import instruments as _ins
 
@@ -605,7 +605,7 @@ def kinematic_mask(Q, q_lo, q_hi):
     ``True`` where ``|Q|`` is reachable at energy transfer ``E`` -- i.e.
     ``q_lo(E) <= |Q| <= q_hi(E)``, with the :func:`kinematic_envelope` edges
     evaluated on the map's own energy axis. Forbidden energies carry NaN edges, which compare False, so
-    they map to inaccessible. Use it to BLANK ``S(Q,E)`` outside the accessible
+    they map to inaccessible. Use it to blank ``S(Q,E)`` outside the accessible
     region (the Euphonic-style ``--angle-range`` mask -- the characteristic
     "arch") instead of only overlaying the envelope curves.
     """
@@ -619,7 +619,7 @@ def kinematic_mask(Q, q_lo, q_hi):
 def save_sqe_map(path, Q, E, S, envelope=None, masked=False):
     """Write a 2-D S(Q,E) map to ``.npz`` or long-form ``.csv`` (by extension).
 
-    ``masked=True`` (with an ``envelope = (env_E, q_lo, q_hi)``) blanks S OUTSIDE
+    ``masked=True`` (with an ``envelope = (env_E, q_lo, q_hi)``) blanks S outside
     the kinematically-accessible band first -- the Euphonic-style arch -- so the
     export matches the masked plot. The CSV is long-form ``Q_invA,E_meV,S`` rows
     (the masked variant omits the blanked cells); the npz stores Q, E, S (NaN

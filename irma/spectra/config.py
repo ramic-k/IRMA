@@ -21,7 +21,7 @@ from typing import Optional, Union
 
 import numpy as np
 
-# VISION preset defaults (kept in lockstep with irma.spectra.sqe)
+# VISION preset defaults (from irma.spectra.sqe)
 from irma.spectra.sqe import (
     VISION_BANKS, VISION_EF_MEV, VISION_SIGMA_COEFFS, sigma_of_E)
 
@@ -192,7 +192,7 @@ class GridConfig:
     e_min_meV: float = 0.0
     e_max_meV: float = 250.0
     de_meV: float = 0.5                     # one default everywhere: CLI + GUI agree
-    dq_max_invA: float = 0.05               # S(Q,E) Q-support spacing (ONE meaning)
+    dq_max_invA: float = 0.05               # S(Q,E) Q-support spacing
     # 2-D map Q-axis maximum (GUI map launch + `irma spectra map`). 1-D spectrum
     # runs derive their Q support from the instrument locus and do not read it.
     q_max_invA: Optional[float] = None
@@ -208,9 +208,9 @@ class InstrumentConfig:
     angles_deg: Optional[list] = None       # None -> preset fills it (vision)
     q_cuts: Optional[list] = None           # optional constant-|Q| cuts [1/A]
     bank_halfwidth_deg: float = 5.0
-    sigma_coeffs: Optional[list] = None     # None -> vision preset poly
+    sigma_coeffs: Optional[list] = None     # None -> VISION poly (vision/indirect), constant 0.02*Ei sigma (direct)
     resolution_shape: str = "gaussian"      # gaussian (sigma poly) | lorentzian (HWHM poly)
-    resolution_model: str = "poly"          # poly (sigma poly) | chopper (auto, any PyChop instrument)
+    resolution_model: str = "poly"          # poly (sigma poly) | chopper (auto; the eight instruments in chopper_resolution)
     chopper_spec: Optional[dict] = None     # instrument,package,frequency for resolution_model=chopper
     combine: str = "mean"
     # Output selection (the Run button's product). 'cuts' = 1-D spectra;
@@ -219,7 +219,7 @@ class InstrumentConfig:
     # ignored for 'cuts'.
     output_mode: str = "cuts"               # cuts | map
     cut_by: str = "angles"                  # angles | q   (fixed-cuts sub-mode)
-    cut_dq_invA: Optional[float] = None     # constant-Q cut band width [1/A]; None -> thin slice
+    cut_dq_invA: Optional[float] = None     # half-width of the constant-Q cut band [1/A]; None -> thin slice
     map_coverage_deg: Optional[list] = None  # [2th_min, 2th_max] mask band; None -> instrument default
     map_mask: bool = True                   # mask the 2-D map to the accessible (q,E) band
     export_components: bool = False         # save/plot inel+elastic breakdown (else total only)
@@ -246,7 +246,7 @@ class SpectraConfig:
         """
         if not isinstance(d, dict):
             raise SpectraConfigError(f"config root must be a mapping, got {type(d).__name__}")
-        # Unknown SECTIONS must fail as loudly as unknown keys inside one: a
+        # Unknown sections must fail like unknown keys inside one: a
         # typo'd 'instrumnet:' would otherwise be dropped wholesale and the run
         # would complete (exit 0) with the default instrument instead.
         unknown = set(d) - {"material", "physics", "grid", "instrument"}
@@ -569,7 +569,7 @@ def validate(cfg: SpectraConfig) -> SpectraConfig:
 def check_input_files(cfg: SpectraConfig) -> SpectraConfig:
     """Preflight every path-valued config field that is set; return ``cfg``.
 
-    Raises :class:`SpectraConfigError` naming the responsible FIELD when a
+    Raises :class:`SpectraConfigError` naming the responsible field when a
     referenced file does not exist, so a typo'd path fails up front instead of
     surfacing mid-run as a bare "[Errno 2] No such file or directory" with no
     hint which field caused it. Kept OUT of :func:`validate` deliberately: a

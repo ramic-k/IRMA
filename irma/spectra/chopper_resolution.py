@@ -1,8 +1,10 @@
 """Direct-geometry chopper-spectrometer energy resolution -- independent reimplementation (BSD).
 
 Computes the incident-energy-dependent instrument energy resolution Delta E(E)
-of a direct-geometry time-of-flight chopper spectrometer from first principles,
-so the user picks an instrument + chopper package/mode + frequency + incident
+of a direct-geometry time-of-flight chopper spectrometer from an analytical
+model of the moderator pulse, chopper timing and flight paths (for the two
+disk-chopper instruments, the burst constant C and the lever-arm factor K are
+calibrated against PyChop output), so the user picks an instrument + chopper package/mode + frequency + incident
 energy Ei and the resolution width is derived -- no manual ``dt_ch`` lookup.
 
 Supported instruments (all eight PyChop direct-geometry spectrometers):
@@ -130,7 +132,7 @@ def _moderator_var_s2(Ei, S1, S2, B1, B2, Emod):
     A = 4.37392e-4 * sig * np.sqrt(Ei)
     B = np.where(Ei > 130.0, B2, B1)
     R = np.exp(-Ei / Emod)
-    var_mm2 = 3.0 / (A * A) + R * (2.0 - R) / (B * B)   # in (mm/v)^2 ~ "mm^2" units
+    var_mm2 = 3.0 / (A * A) + R * (2.0 - R) / (B * B)   # variance in us^2
     return var_mm2 * 1.0e-12                              # -> s^2
 
 

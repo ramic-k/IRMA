@@ -1,8 +1,8 @@
 """``irma spectra`` command-line interface.
 
 Three preset/flag subcommands (``vision`` / ``indirect`` / ``direct``) plus a
-config runner (``run <cfg> [--set k=v]``). The flag form is **pure sugar**: it
-builds the identical :class:`~irma.spectra.config.SpectraConfig` the config form
+config runner (``run <cfg> [--set k=v]``). The flag form is a convenience layer:
+it builds the identical :class:`~irma.spectra.config.SpectraConfig` the config form
 loads and calls the identical ``run_spectra`` -- exactly one compute path. The
 geometry guard is structural: ``--ef`` exists only on vision/indirect, ``--ei``
 only on direct, so argparse rejects the wrong one automatically.
@@ -86,8 +86,7 @@ _SCATTERER_KEYS = ("dos", "unit", "mult", "pos")
 def parse_scatterer(s):
     """``"SYM,sigma_bound_b,awr[,b_coh_fm[,sigma_inc_b]]"`` -> dict.
 
-    Trailing ``key=value`` tokens add the mode-0 (DOS) fields (order-free,
-    backward compatible -- existing comma lines have no ``=``):
+    Trailing ``key=value`` tokens add the mode-0 (DOS) fields (in any order):
     ``dos=<file>``, ``unit=<meV|eV|cm-1|THz>``, ``mult=<int>``, and
     ``pos=x1:y1:z1;x2:y2:z2`` (fractional sites for the coherent-elastic peaks).
     Example: ``"H,80.27,0.999,-3.74,80.26,dos=h_dos.txt,mult=2,pos=0:0:0;0.5:0.5:0.5"``.
@@ -97,14 +96,15 @@ def parse_scatterer(s):
         if "=" in tok:
             k, v = tok.split("=", 1)
             k = k.strip().lower()
-            if k not in _SCATTERER_KEYS:        # a typo'd key must fail loudly,
-                raise argparse.ArgumentTypeError(  # not silently drop the field
+            if k not in _SCATTERER_KEYS:        # an unknown key is an error,
+                raise argparse.ArgumentTypeError(  # not a dropped field
                     f"--scatterer: unknown key {k!r} (accepted: "
                     f"{', '.join(_SCATTERER_KEYS)})")
             kv[k] = v.strip()
         else:
-            pos_parts.append(tok)        # KEEP empty placeholders -- an absent
-            #                              b_coh_fm must not shift sigma_inc_b up
+            # keep empty placeholders: an absent b_coh_fm must not shift
+            # sigma_inc_b into its position
+            pos_parts.append(tok)
     while pos_parts and pos_parts[-1] == "":    # but drop trailing-comma empties
         pos_parts.pop()
     if len(pos_parts) < 3:
@@ -113,7 +113,7 @@ def parse_scatterer(s):
 
     def _num(val, field, cast=float):
         """Cast one scatterer field, naming it in the error on failure."""
-        # name the offending FIELD instead of letting argparse leak the generic
+        # name the offending field instead of argparse's generic
         # "invalid parse_scatterer value: ..." for an unparseable number.
         try:
             return cast(val)
@@ -220,13 +220,16 @@ def _add_common(p):
                    help="both (Bragg + Debye-Waller) | coherent | incoherent "
                         "(default: both)")
     p.add_argument("--sigma-coeffs", type=parse_coeffs,
-                   help="resolution width poly c0,c1,c2 (meV): sigma for gaussian, HWHM for lorentzian")
+                   help="resolution width poly c0,c1,c2 (meV): sigma for gaussian, HWHM for "
+                        "lorentzian. Default: the VISION poly for vision/indirect, a "
+                        "constant 0.02*Ei sigma placeholder for direct")
     p.add_argument("--resolution-shape", choices=["gaussian", "lorentzian"],
                    help="resolution line shape; gaussian (default) is the "
                         "OCLIMAX-equivalent, lorentzian is the heavier-tailed option")
     p.add_argument("--resolution-model", choices=["poly", "chopper"],
                    help="width source: poly (sigma c0,c1,c2; default) | chopper "
-                        "(auto, any PyChop instrument); chopper is direct-geometry only")
+                        "(auto, for the instruments --chopper-instrument lists); chopper "
+                        "is direct-geometry only")
     # automatic chopper resolution (resolution-model=chopper)
     p.add_argument("--chopper-instrument",
                    help="instrument for --resolution-model chopper: ARCS, SEQUOIA, "
@@ -286,7 +289,8 @@ def build_parser():
                       help="map Q step [1/A]; default = config grid.dq_max_invA")
     mapp.add_argument("--angle-range", nargs=2, type=float, metavar=("MIN", "MAX"),
                       help="detector 2theta range for the kinematic envelope (deg); "
-                           "default = config instrument.map_coverage_deg")
+                           "default: instrument.map_coverage_deg, else the chopper "
+                           "instrument's coverage, else instrument.angles_deg, else 45 135")
     mapp.add_argument("--no-broaden", action="store_true",
                       help="skip the energy-resolution broadening")
     mapp.add_argument("--mask", action=argparse.BooleanOptionalAction, default=None,
