@@ -1,6 +1,6 @@
 [project]
 name = "ncrystal-plugin-ENDFTSL"
-version = "0.2.0"
+version = "0.3.0"
 description = "NCrystal plugin: thermal neutron scattering straight from ENDF/TSL (MF7/MT2 + MF7/MT4) evaluations"
 readme = "README.md"
 license = {file = "LICENSE"}
