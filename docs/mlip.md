@@ -288,8 +288,10 @@ irma mlip emit <bundle> --to endf,spectra,ncrystal \
   elastic format (MEF: both elastic components on every species' tape)
   by default; `--elastic-format sef` selects the single-channel
   convention. `--min-phonon-energy` writes the optional minimum phonon
-  energy into the input files and both YAML configurations, so the three
-  paths truncate the same modes. `--inelastic-mode` picks the physics level (default 2):
+  energy into the mode-1/2 input files, the crystalline spectra
+  configuration and the NCrystal configuration, so those paths truncate the
+  same modes; the DOS-driven outputs (mode-0 input files and the disordered
+  spectra configuration) do not take it. `--inelastic-mode` picks the physics level (default 2):
   modes 1/2 emit directional input files (Card 6g
   `10000 1000 1` and a campaign-density phonopy mesh, the
   validation-campaign settings and the GUI form's production
@@ -436,14 +438,15 @@ also importable locally (unregister it, or set the variable empty, to
 force in-process execution). With nothing registered, an importable
 potential runs in-process exactly as before.
 
-Linux needs one precaution: a bare `pip install torch` gives the CUDA
-build, and the
-CUDA wheel breaks `nequip-compile` even for CPU targets (a TF32
-flag clash inside torch). For CPU-only MLIP work install the CPU
-wheels explicitly (`pip install torch torchvision --index-url
-https://download.pytorch.org/whl/cpu`) and keep
-torchvision/torchaudio on the same flavor as torch (a mixed pair
-fails at import with "operator torchvision::nms does not exist").
+Linux needs one precaution: a bare `pip install torch`, which is what
+`irma mlip env create` runs, gives the CUDA build, and the CUDA wheel
+breaks `nequip-compile` even for CPU targets (a TF32 flag clash inside
+torch). For CPU-only MLIP work, replace it with the CPU wheels inside the
+potential's environment (its interpreter is listed by `irma mlip env
+list`): `<env python> -m pip install --force-reinstall torch torchvision
+--index-url https://download.pytorch.org/whl/cpu`. Keep
+torchvision/torchaudio on the same flavor as torch (a mixed pair fails at
+import with "operator torchvision::nms does not exist").
 The pipeline itself is verified on Linux: it reproduces the macOS
 phonons identically (ZrO2: same freq_max and imaginary census), with
 the same `--jobs` scaling (serial 197 s -> 46 s, about 4x, at
