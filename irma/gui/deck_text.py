@@ -36,8 +36,7 @@ def emit_comment_lines(comments_raw):
     inside the quotes), with embedded single quotes doubled so apostrophes
     and slashes survive the tokenizer. The Tk text widget always appends a
     trailing newline; it is dropped so an otherwise-empty block emits no
-    cards (matching the prior whitespace-trimmed behavior) without
-    discarding intentional in-line padding.
+    cards without discarding intentional in-line padding.
     """
     if comments_raw.endswith("\n"):
         comments_raw = comments_raw[:-1]
@@ -152,7 +151,7 @@ def parse_deck_to_staging(reader, path):
     if two_pass and (ncold > 0 or nsk > 0):
         raise ValueError(
             "ncold/nsk together with a two-pass secondary scatterer "
-            "is not supported in the GUI — edit the deck directly.")
+            "is not supported in the GUI — edit the input file directly.")
     st['nss'] = nss
     st['aws'] = aws
     st['sps'] = sps
@@ -245,8 +244,7 @@ def parse_deck_to_staging(reader, path):
             if len(fvals_nc) != 5:
                 raise ValueError(
                     "Card 6f mesh line must contain 5 values "
-                    "(mesh_nx mesh_ny mesh_nz ncpu use_born); the "
-                    "former 6th field sigma_beta was removed.")
+                    "(mesh_nx mesh_ny mesh_nz ncpu use_born).")
             mesh_nx = reader.to_int(fvals_nc[0], "mesh_nx")
             mesh_ny = reader.to_int(fvals_nc[1], "mesh_ny")
             mesh_nz = reader.to_int(fvals_nc[2], "mesh_nz")
@@ -262,7 +260,7 @@ def parse_deck_to_staging(reader, path):
                 nc['born_path'] = reader.read_string()
 
             # Optional one-value minimum-phonon-energy card before Card 6g.
-            # A legacy deck starts directly with the 2/3-value Card 6g.
+            # Without it the 2/3-value Card 6g follows directly.
             fvals_nc_ctrl = reader.read_card_floats()
             nc['min_phonon_energy_mev'] = 0.0
             if len(fvals_nc_ctrl) == 1:
@@ -325,12 +323,12 @@ def parse_deck_to_staging(reader, path):
             n_detail_blocks += 1
             if n_detail_blocks > 1:
                 raise ValueError(
-                    "This deck supplies a separate phonon-spectrum "
+                    "This input file supplies a separate phonon-spectrum "
                     "block for more than one temperature (multiple "
                     "positive temperature cards). The GUI supports "
                     "only the shared-spectrum convention (first "
                     "temperature positive, the rest negative) — "
-                    "edit the deck directly.")
+                    "edit the input file directly.")
             (delta, _ni, rho, twt, c_diff, tbeta, _nd, bdel, adel, ska, _nka,
              dka, cfrac) = _read_temperature_detail_cards(reader, nsk, ncold)
             st.update(
@@ -369,7 +367,7 @@ def parse_deck_to_staging(reader, path):
                         "The secondary pass supplies a separate phonon-"
                         "spectrum block for more than one temperature; "
                         "the GUI supports only the shared-spectrum "
-                        "convention — edit the deck directly.")
+                        "convention — edit the input file directly.")
                 (delta, _ni, rho, twt, c_diff, tbeta, _nd, bdel, adel,
                  *_) = _read_temperature_detail_cards(reader, 0, 0)
                 st.update(
@@ -380,7 +378,7 @@ def parse_deck_to_staging(reader, path):
 
     # Comment cards (MF1/MT451). The tokenizer already strips the quote
     # delimiters and resolves doubled quotes, preserving interior and
-    # leading/trailing whitespace; do NOT strip the content here, so an
+    # leading/trailing whitespace; the content is not stripped here, so an
     # import -> export cycle is byte-faithful for column-aligned records.
     comments = reader.read_comment_strings()
     clean = []

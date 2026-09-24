@@ -9,7 +9,7 @@ from tkinter import ttk, messagebox
 
 def parse_float(label, text):
     """``float(text)`` that names the originating GUI field on failure, so the
-    error dialog says WHICH entry is bad instead of a bare conversion message."""
+    error dialog says which entry is bad instead of a bare conversion message."""
     try:
         return float(text)
     except (TypeError, ValueError):
@@ -27,7 +27,7 @@ def parse_int(label, text):
 
 
 def fixed_font():
-    """The platform's pleasant monospace font for code-like text fields.
+    """Platform monospace font for code-like text fields.
 
     ('Courier', 10) renders poorly on retina macOS; Tk substitutes a default
     if the named family is missing, so this degrades safely."""
@@ -87,7 +87,7 @@ def show_help_dialog(anchor, title, message):
     # Size the popup to its content: a fixed-height window would clip
     # the longer help texts (Bragg-edge grouping, mpdir, ilog, ...) with
     # no scrollbar and no resize handle -- the message would just stop
-    # mid-sentence. Count the WRAPPED display lines and grow the widget
+    # mid-sentence. Count the wrapped display lines and grow the widget
     # up to _HELP_MAX_VISIBLE_LINES; beyond that, attach a scrollbar.
     msg.update_idletasks()
     n_lines = msg.count("1.0", "end", "displaylines")
@@ -159,10 +159,9 @@ def form_section(parent, title, help_title=None, help_text=None,
     """A flat form section: bold title, optional 'ⓘ' help, separator, and
     an indented body frame (returned).
 
-    Replaces the boxed LabelFrame look. The body and outer frames carry
-    ``_irma_section_title`` so tests can locate the section a widget
-    belongs to without relying on LabelFrame. ``expand=True`` lets the
-    section grow with the window (log panes)."""
+    The body and outer frames carry ``_irma_section_title`` so tests can
+    locate the section a widget belongs to without relying on LabelFrame.
+    ``expand=True`` lets the section grow with the window (log panes)."""
     outer = ttk.Frame(parent)
     outer.pack(fill=tk.BOTH if expand else tk.X, expand=expand,
                pady=(2, 12))
