@@ -175,15 +175,12 @@ what the [validation record](validation/methodology.md) means by
 
 IRMA reproduces fresh NJOY2016.78 tapes exactly and the published
 ENDF/B-VIII.1 tapes to below 7e-5 on the golden set under `tests/`, but
-eight NJOY
-behaviors are deliberately handled differently. Seven
-are bugs, placeholders, or numerical hazards in NJOY itself that IRMA does
-*not* reproduce; the eighth is an NJOY quirk that IRMA deliberately *does*
-reproduce for byte parity. Each carries a `DELIBERATE NJOY DIVERGENCE`
-comment at the code site (ten sites in all, because the last entry is
-tagged in each of its three implementations). The list is a
-maintainer-level record: the variable and routine names follow NJOY's
-own source, and each entry names its consequence for users.
+the NJOY behaviors below are handled differently on purpose: bugs,
+placeholders, or numerical hazards in NJOY itself that IRMA does not
+reproduce. Each is marked with an "NJOY divergence" comment at the code
+site, except the `bfact` guard, which never changes a physical result.
+The list is a maintainer-level record: the variable and routine names
+follow NJOY's own source, and each entry names its consequence for users.
 
 * **Discrete-oscillator delta lines (`twt = 0` input files).** NJOY's `discre`
   reuses its `idone` flag for both the line loop and the inner
@@ -227,7 +224,7 @@ own source, and each entry names its consequence for users.
   `if (iprint.ne.0)` in NJOY (`leapr.f90:566-571`), so NJOY's *physics*
   output depends on the print flag. IRMA applies the clamp
   unconditionally. All NJOY reference tapes in the expected set were
-  generated with `iprint=1` (clamp active), and IRMA reproduces them to
+  generated with `iprint` ≠ 0 (clamp active), and IRMA reproduces them to
   below 7e-5; an `iprint=0` NJOY run can differ where the SCT range begins.
 * **Translational self-term clamp (`trans`).** NJOY clamps only the
   convolution part of the translational S(α,β) (`leapr.f90:940`) and
@@ -238,14 +235,11 @@ own source, and each entry names its consequence for users.
   All validation-set input files reproduce their NJOY references to below
   7e-5 with the clamp active.
 * **Overflow guard in the discrete-oscillator Bessel factors
-  (`bfact`).** NJOY has no guard on exponential arguments above 709:
-  `exp(709+)` overflows to Inf, and Inf times an underflowed Bessel
-  coefficient of 0 puts NaN in the table. IRMA zeroes those terms; since
-  both codes already zero the coefficients below 1e-30, any term the
-  guard suppresses is numerically meaningless for a sum-rule-bounded
-  S(α,β). The condition only arises for high-energy oscillators at
-  cryogenic temperatures (e.g. a 0.2 eV oscillator below ~30 K at
-  expansion order ≳ 18).
+  (`bfact`).** IRMA leaves a term at zero when its exponential argument
+  exceeds 709, because Python's `math.exp` raises there; NJOY's Fortran
+  would give Inf. The case is not reached for physical input files: the
+  Bessel coefficient of such a term has already fallen below 1e-30, and
+  both codes then skip the term, so the outputs agree.
 * **SCT prefactor square root (`sint`).** The SCT tail evaluated when a
   discrete-oscillator or rotational shift pushes |β| past the tabulated
   range is a Gaussian, normalized by the *square root* of `4π·wt·α·T̄`
