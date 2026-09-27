@@ -84,7 +84,7 @@ inelastic S(α,β) is built.
 
 | `inelastic_mode` | Engine | Debye-Waller | Needs phonopy? | Reads the DOS cards? |
 |------------------|--------|--------------|----------------|--------------------------|
-| `0` | Phonon expansion from a tabulated DOS | Isotropic (scalar) | No | Yes (Cards 11–19 / Card 6e) |
+| `0` | Phonon expansion from a tabulated DOS | Isotropic (scalar) | No | Yes (Cards 11–19, with Card 12e) |
 | `1` | Directional incoherent approximation | Directional | Yes | No |
 | `2` | Exact coherent + incoherent one-phonon, incoherent multiphonon | Directional | Yes | No |
 
@@ -114,7 +114,7 @@ ENDF tapes do not carry this label.
 Modes 1 and 2 ignore the DOS cards.
 `inelastic_mode=1/2` build the inelastic section (MF7/MT4) and the Debye-Waller factors entirely from
 the phonopy calculation: the continuous-DOS, translational, and
-oscillator detail cards (Cards 11–19) are not read, and Card 6e partial
+oscillator detail cards (Cards 11–19) are not read, and Card 12e partial
 spectra are rejected (`nspec` must be `0`). The input file supplies only the
 temperature cards; everything else comes from phonopy. The mixed-moderator
 (`nss>0`), cold-hydrogen (`ncold`), and Sköld (`nsk`) options are also

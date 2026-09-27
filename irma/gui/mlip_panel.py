@@ -258,7 +258,7 @@ HELP = {
         "  default: omit the flag; the CLI emits mode-2 input files.\n"
         "  0: the classic isotropic option built from the bundle's "
         "species-projected DOS (the principal spectrum on the classic "
-        "cards, Card 6e partial spectra for the other species).\n"
+        "cards, Card 12e partial spectra for the other species).\n"
         "  1/2: directional input files computed from the phonopy calculation.\n\n"
         "Not applicable to disordered bundles: the CLI rejects an explicit "
         "mode there, since they always use the DOS-driven classic option."),

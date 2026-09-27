@@ -55,7 +55,7 @@ If you need help installing or configuring the dependencies:
 For the phonopy-backed modes (`iel=10` with `inelastic_mode=1/2`), the input
 file also needs the phonopy control cards (`Card 6f` and `Card 6g`):
 
-- use `nspec=0` and omit Card `6e`
+- use `nspec=0` (no Card `12e` partial spectra)
 - keep the full crystal in Card `6d`, even for mixed materials
 - keep one principal scatterer per input file; Card `4`'s ZA selects the
   principal atom type from Card `6d`, and Card `5` gives that atom's mass

@@ -286,7 +286,7 @@ def test_secondary_scatterer_rejected_in_phonopy_modes():
 
 
 def test_nonzero_nspec_rejected_in_phonopy_modes():
-    """Card 6e partial spectra have no role when MT4/DW come from Phonopy:
+    """Card 12e partial spectra have no role when MT4/DW come from Phonopy:
     nspec != 0 with inelastic_mode=1/2 is a deck error, never silently
     consumed and ignored."""
     deck = _MODE1_HEAD.replace("1 1 0 1/", "1 1 1 1/") + "100 100 /\n"
@@ -431,16 +431,18 @@ def test_card6d_negative_sigma_inc_rejected():
     _expect(deck, "Card 6d", "sigma_inc must be >= 0")
 
 
-def test_card6e_bad_spectrum_rejected():
-    """Card 6e partial spectra obey the same validity rules as the classic
-    Card 11/12 spectrum they replace."""
-    head = _GEN_HEAD.replace("1 1 0 0/", "1 1 1 0/")
+def test_card12e_bad_spectrum_rejected():
+    """Card 12e partial spectra obey the same validity rules as the Card
+    11/12 spectrum they follow."""
+    head = (_GEN_HEAD.replace("1 1 0 0/", "1 1 1 0/")
+            + "3 4 1/\n0.05 1.0 8.0/\n0.0 0.6 2.0 6.0/\n"
+            + "300/\n0.005 6/\n0.0 0.20 0.45 0.55 0.30 0.0/\n")
     deck_zero_delta = head + "6 12 0.0 4/\n0.0 0.2 0.5 0.3/\n"
-    _expect(deck_zero_delta, "Card 6e", "delta", "must be > 0")
+    _expect(deck_zero_delta, "Card 12e", "delta", "must be > 0")
     deck_all_zero = head + "6 12 0.005 4/\n0.0 0.0 0.0 0.0/\n"
-    _expect(deck_all_zero, "Card 6e", "rho values are all zero")
+    _expect(deck_all_zero, "Card 12e", "rho values are all zero")
     deck_neg = head + "6 12 0.005 4/\n0.0 -0.2 0.5 0.3/\n"
-    _expect(deck_neg, "Card 6e", "rho values must be >= 0")
+    _expect(deck_neg, "Card 12e", "rho values must be >= 0")
 
 
 _MODE2_6F_HEAD = """20 /

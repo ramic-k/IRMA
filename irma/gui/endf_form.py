@@ -49,7 +49,8 @@ def _set_values(box, values):
     box.insert("1.0", " ".join(f"{v:.6e}" for v in values))
 
 
-def _detail_lines(delta, rho, twt_c_tbeta, e_box, w_box, what):
+def _detail_lines(delta, rho, twt_c_tbeta, e_box, w_box, what,
+                  partial_spectra=()):
     """Deck lines of one temperature's phonon model: the spectrum
     (Cards 11-12), twt c tbeta (Card 13) and the oscillators (Cards 14-16).
     what names the oscillator boxes in errors ("Discrete", "Secondary")."""
@@ -61,8 +62,11 @@ def _detail_lines(delta, rho, twt_c_tbeta, e_box, w_box, what):
         raise ValueError(
             f"{what} oscillators: {len(e)} energies but {len(w)} weights; "
             "give one weight per energy, or leave both empty.")
-    out = [f"{delta:.6e} {len(rho)} /", fmt_array(rho) + " /",
-           twt_c_tbeta + " /"]
+    out = [f"{delta:.6e} {len(rho)} /", fmt_array(rho) + " /"]
+    for sp in partial_spectra:               # Card 12e, after Card 12
+        out += [f"{sp['Z']} {sp['A']} {sp['delta']:.6e} {sp['ni']} /",
+                fmt_array(sp['rho']) + " /"]
+    out.append(twt_c_tbeta + " /")
     if e:
         out += [f"{len(e)} /", " ".join(f"{v:.6e}" for v in e) + " /",
                 " ".join(f"{v:.6e}" for v in w) + " /"]
@@ -386,7 +390,7 @@ class EndfFormMixin:
                       "force constants (Card 6f), plus explicit noncubic "
                       "inelastic controls (Card 6g). These modes work with "
                       "either elastic_mode=1 (SEF) or elastic_mode=2 (MEF). "
-                      "Card 6e partial spectra are omitted because MT4 and "
+                      "Card 12e partial spectra are omitted because MT4 and "
                       "the directional elastic Debye-Waller factors come from "
                       "Phonopy.\n\n"
                       "For mixed materials, keep the full crystal in Card 6d, "
@@ -1181,7 +1185,7 @@ class EndfFormMixin:
         self.spr.set(f"{spr:.6g}")
         if new_rows is not None:
             self._write_atom_rows([format_atom_row(r) for r in new_rows])
-            # imported Card 6e spectra follow their row to the new nuclide
+            # imported Card 12e spectra follow their row to the new nuclide
             (old_z, old_a), new_a = relabelled
             for sp in self._imported_partial_spectra:
                 if (sp["Z"], sp["A"]) == (old_z, old_a):
@@ -1708,7 +1712,12 @@ class EndfFormMixin:
                    "The phonon spectrum is read only for the first "
                    "temperature. All subsequent temperatures reuse the same "
                    "phonon spectrum but recompute S(a,b) at the new "
-                   "temperature (the Boltzmann population changes).\n\n"
+                   "temperature (the Boltzmann population changes). The "
+                   "other species' partial spectra (Card 12e) of an "
+                   "imported iel=10 mode-0 input file are reused the same "
+                   "way; to give each temperature its own spectra, edit the "
+                   "input file directly (one temperature block per "
+                   "temperature).\n\n"
                    "For ENDF TSL libraries, typical temperature sets are:\n"
                    "  Graphite: 296 400 500 600 700 800 1000 1200 1600 2000\n"
                    "  Be: 77 100 200 293.6 296 400 500 600 700 800 1000 1200\n"
@@ -2485,6 +2494,10 @@ class EndfFormMixin:
         else:
             lines.append("0 0 0 0 0 /")
 
+        # Card 12e partial spectra (iel=10, mode 0), written with the first
+        # temperature block
+        partial_spectra = []
+
         # Generalized elastic cards (iel=10)
         if iel == 10:
             # Card 6c/6d ship blank too (same reason as the Card 4/5 check)
@@ -2505,16 +2518,19 @@ class EndfFormMixin:
             # The principal ZA must be one of the rows (the engine's rule;
             # Apply ZA relabels a row).
             from irma.core.crystal_input import principal_mismatch_message
-            mismatch = principal_mismatch_message(
-                int(parse_float("ZA", self.za.get())), atoms)
+            za_int = int(parse_float("ZA", self.za.get()))
+            mismatch = principal_mismatch_message(za_int, atoms)
             if mismatch:
                 raise ValueError(mismatch)
             elastic_mode = self._code(self.elastic_mode)
 
-            # Card 6e partial spectra ride through import -> export verbatim;
-            # they are a classic-path (inelastic_mode=0) feature only.
+            # Card 12e partial spectra ride through import -> export verbatim;
+            # they are a classic-path (inelastic_mode=0) feature only. The
+            # principal's spectrum is the DOS on this form, so an imported
+            # spectrum for the principal's nuclide is not written.
             partial_spectra = (
-                self._imported_partial_spectra
+                [sp for sp in self._imported_partial_spectra
+                 if (sp["Z"], sp["A"]) != divmod(za_int, 1000)]
                 if inelastic_mode_val == 0 else [])
             nspec = len(partial_spectra)
 
@@ -2541,13 +2557,7 @@ class EndfFormMixin:
                 coords = '  '.join(
                     f"{x} {y} {z}" for x, y, z in at['positions'])
                 lines.append(f"{coords} /")
-            # Card 6e: preserved partial spectra (per-species DW, mode 0)
-            for sp in partial_spectra:
-                lines.append(f"{sp['Z']} {sp['A']} {sp['delta']:.6e} "
-                             f"{sp['ni']} /")
-                lines.append(fmt_array(sp['rho']) + ' /')
-
-            # Card 6f: phonopy mesh parameters (inelastic_mode=1/2; Card 6e omitted)
+            # Card 6f: phonopy mesh parameters (inelastic_mode=1/2)
             if inelastic_mode_val in (1, 2):
                 yaml_path = self.nc_phonopy_yaml.get().strip()
                 if not yaml_path:
@@ -2644,7 +2654,8 @@ class EndfFormMixin:
                 lines += _detail_lines(
                     delta_e, rho,
                     f"{self.twt.get()} {self.c_diff.get()} {self.tbeta.get()}",
-                    self.osc_energies, self.osc_weights, "Discrete")
+                    self.osc_energies, self.osc_weights, "Discrete",
+                    partial_spectra)
 
                 # Cards 17/18: S(kappa) table (nsk > 0 or ncold > 0);
                 # Card 19: coherent fraction (nsk > 0)
@@ -2851,7 +2862,8 @@ class EndfFormMixin:
                    f"ntempr={staging['ntempr']}, iel={staging['iel']}")
         if self._imported_partial_spectra:
             summary += (f"\nPreserved {len(self._imported_partial_spectra)} "
-                        f"Card 6e partial spectrum block(s); they will be "
+                        f"Card 12e partial spectrum block(s) of the other "
+                        f"species; they will be "
                         f"re-emitted on export.")
         return summary
 

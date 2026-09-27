@@ -378,10 +378,10 @@ def test_mode0_polyatomic_deck_carries_partial_spectra_and_runs(
     out = tmp_path / "cu_mode0.endf"
     result = run_leapr(cu, str(out))
     captured = capsys.readouterr()
-    # the Au species carries its own Card 6e spectrum: no inherited-lambda
+    # the Au species carries its own Card 12e spectrum: no inherited-lambda
     # fallback, hence no warning
-    assert "Partial spectrum" in captured.out
-    assert "INHERITED" not in captured.out
+    assert "Card 12e spectra: Z=79" in captured.out
+    assert "no Card 12e spectrum" not in captured.out
     assert result.iel == 10
     assert out.is_file() and out.stat().st_size > 10000
 

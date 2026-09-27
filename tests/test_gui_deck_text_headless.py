@@ -225,12 +225,14 @@ def test_parse_atoms_valid_line_parses():
 def _iel10_deck(card4="31 6012. 0 0 1e-75 0",
                 card5="11.898 4.739 1 10 0 0",
                 card6="0",
-                card6b="2 1 1 0",
+                card6b="2 2 1 0",
                 card6c="2.46 2.46 6.7 90 90 120",
-                card6d="6 12 11.9 6.646 0.001 1/\n0 0 0",
-                card6e="6 12 0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n"):
-    """A valid iel=10 inelastic_mode=0 deck (one atom type, one Card 6e
-    partial spectrum) with per-card override points for the guard tests."""
+                card6d="6 12 11.9 6.646 0.001 1/\n0 0 0/\n"
+                       "8 16 15.86 5.803 0.0 1/\n0.5 0.5 0.5",
+                card12e="8 16 0.005 6/\n0.0 0.1 0.3 0.6 0.4 0.0/\n"):
+    """A valid iel=10 inelastic_mode=0 deck (C principal and O, with one
+    Card 12e partial spectrum for O) with per-card override points for the
+    guard tests."""
     return (
         "20 /\n'iel10 import'/\n1 0 100/\n"
         f"{card4}/\n"
@@ -239,9 +241,10 @@ def _iel10_deck(card4="31 6012. 0 0 1e-75 0",
         f"{card6b}/\n"
         f"{card6c}/\n"
         f"{card6d}/\n"
-        f"{card6e}"
         "3 4 1/\n0.05 1.0 8.0/\n0.0 0.6 2.0 6.0/\n300/\n"
-        "0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n0. 0. 1./\n0/\n/\n"
+        "0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n"
+        f"{card12e}"
+        "0. 0. 1./\n0/\n/\n"
     )
 
 
@@ -262,16 +265,16 @@ def test_iel10_card6b_inelastic_mode_checked(tmp_path):
         _stage(_iel10_deck(card6b="2 1 1 5"), tmp_path)
 
 
-def test_iel10_card6e_non_integral_z_rejected(tmp_path):
+def test_iel10_card12e_non_integral_z_rejected(tmp_path):
     with pytest.raises(ValueError, match="Z must be an integer"):
         _stage(_iel10_deck(
-            card6e="6.5 12 0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n"), tmp_path)
+            card12e="6.5 12 0.005 6/\n0.0 0.2 0.45 0.55 0.3 0.0/\n"), tmp_path)
 
 
 def test_iel10_phonopy_mode_ncold_rejected(tmp_path):
     with pytest.raises(ValueError, match="ncold/nsk"):
         _stage(_iel10_deck(card5="11.898 4.739 1 10 4 0",
-                           card6b="2 1 0 2", card6e=""), tmp_path)
+                           card6b="2 1 0 2", card12e=""), tmp_path)
 
 
 # ---------------- Card 4 checked conversion --------------------------
@@ -300,9 +303,8 @@ def test_natural_element_A0_is_accepted(tmp_path):
     natural-abundance constants (which is what the reference decks do).
     """
     staged = _stage(_iel10_deck(card4="31 6000. 0 0 1e-75 0",
-                                card6d="6 0 11.9 6.646 0.001 1/\n0 0 0",
-                                card6e="6 0 0.005 6/\n"
-                                       "0.0 0.2 0.45 0.55 0.3 0.0/\n"),
+                                card6d="6 0 11.9 6.646 0.001 1/\n0 0 0/\n"
+                                       "8 16 15.86 5.803 0.0 1/\n0.5 0.5 0.5"),
                     tmp_path)
     assert staged["atoms"][0]["A"] == 0
     assert int(float(staged["za"])) == 6000

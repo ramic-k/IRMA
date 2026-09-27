@@ -37,7 +37,7 @@ Classify the request as one of these before doing anything else.
    mode-2 physics; `--elastic-format sef` and `--inelastic-mode 0|1|2`
    select the other conventions (mode 0 builds the classic
    DOS-driven deck from the bundle's species-projected DOS, with a
-   Card 6e partial spectrum per non-principal species). Read
+   Card 12e partial spectrum per non-principal species). Read
    `docs/mlip.md` (potentials table, licenses, model selection,
    what a build does) and `examples/mlip/README.md`.
 3. **Spectra forward model** (`irma spectra run <config.yaml>`):

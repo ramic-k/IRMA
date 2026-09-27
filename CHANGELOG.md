@@ -3,6 +3,33 @@
 Notable changes to IRMA. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Mode-0 `iel=10` input files give the other species' partial phonon
+  spectra per temperature, as Card 12e right after Card 12 in each
+  temperature block, instead of once as Card 6e after Card 6d. Each
+  species' Bragg-edge Debye-Waller factor at a temperature now comes from
+  that temperature's spectrum, as the principal's already came from its
+  own Cards 11-12; a negative temperature reuses the previous block's
+  spectra with the rest of the block. A spectrum for the principal, a
+  species change between blocks, and spectra left after Card 6d are
+  refused with messages that say where the spectra go. An input file
+  moved to the new layout gives a byte-identical tape; values change only
+  where a later block supplies a different spectrum (MF7/MT2 at that
+  temperature). The MLIP emitter, the GUI import and export, the help
+  texts and the input reference follow the new layout. In the GUI the
+  principal's spectrum is always the DOS on the form, so an imported
+  spectrum for the principal is not written.
+- Coherent elastic (MF7/MT2) at later temperatures: the Bragg edges are
+  thinned at the first temperature, as in NJOY, and each later block adds
+  the last kept edge once for every dropped edge. When some edge
+  contributes more at a later temperature, as with a stiffer spectrum
+  given for it, that overstated the later blocks (85% on a test case). The
+  writer now keeps the edges such a temperature needs and adds each edge
+  once. Files in which no edge contributes noticeably more at a later
+  temperature are unchanged, and `docs/njoy.md` lists this as a
+  deliberate difference from NJOY.
+
 ## [1.1.0] — 2026-09-24
 
 This release comes out of a full review of the code. Most of the changes

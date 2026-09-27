@@ -9,8 +9,8 @@ inputs for IRMA's three consumers:
   phonopy.yaml (use_born=0: NAC, when present, is embedded in it), with
   explicit automatic grids and Card 6g 10000/1000/auto; mode 2 writes
   lin-lin iint=1, modes 0/1 log-lin iint=0. Mode 0 uses the bundle's
-  species-projected DOS: the principal's spectrum on Cards 11-14 and one
-  Card 6e partial spectrum per non-principal species. Disordered materials
+  species-projected DOS: the principal's spectrum on Cards 11-12 and one
+  Card 12e partial spectrum per non-principal species after it. Disordered materials
   get the classic continuous-spectrum deck: the species DOS drives contin,
   and the elastic term is incoherent with SB = sigma_bound_total (the
   incoherent approximation applied to elastic; Card 5 spr is the free-atom
@@ -245,10 +245,10 @@ def emit_endf_decks(bundle: Bundle, *, temperature_k, mats, nuclides=None,
     ``inelastic_mode`` selects the emitted deck's physics level (0, 1, or
     2; default 2). Mode 0 is the classic isotropic path driven by the
     bundle's species-projected DOS: the principal's spectrum goes on the
-    classic cards and every other species gets a Card 6e partial spectrum,
+    classic cards and every other species gets a Card 12e partial spectrum,
     so each species' elastic W'(T) uses its own lambda. Modes 1/2 are the
     phonopy-backed decks (per-species Debye-Waller from the displacement
-    tensors; no Card 6e). Mode 2 writes lin-lin (iint=1); modes 0/1 keep
+    tensors; no Card 12e). Mode 2 writes lin-lin (iint=1); modes 0/1 keep
     the log-lin default (iint=0). ``elastic_format`` is ``"mef"`` (default:
     both elastic components on every species' tape) or ``"sef"``. Both
     options are crystal-deck selectors: a disordered bundle (classic
@@ -436,14 +436,6 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
                 # the optional one-value card before Card 6g
                 lines.append(f"{float(min_phonon_energy_mev):g} /")
             lines.append(f"{sampling[0]} {sampling[1]} {sampling[2]} /")
-        else:
-            # Card 6e: every non-principal species' own spectrum, so its
-            # elastic W'(T) uses its own lambda (no inherited-lambda
-            # fallback on a polyatomic mode-0 deck).
-            for s in others:
-                delta_ev, ni, rho_uni = _uniform_rho(*dos[s.symbol])
-                lines.append(f"{s.Z} {s.A} {delta_ev:.6e} {ni} /")
-                lines += _array_lines(rho_uni)
         lines += [
             f"{len(alpha)} {len(beta)} 1 /",
             *_array_lines(alpha),
@@ -452,9 +444,15 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
         ]
         if inelastic_mode == 0:
             delta_ev, ni, rho_uni = _uniform_rho(*dos[prin.symbol])
+            lines += [f"{delta_ev:.6e} {ni} /", *_array_lines(rho_uni)]
+            # Card 12e: every non-principal species' own spectrum, so its
+            # elastic W'(T) uses its own lambda (no inherited-lambda
+            # fallback on a polyatomic mode-0 deck).
+            for s in others:
+                delta_ev, ni, rho_uni = _uniform_rho(*dos[s.symbol])
+                lines.append(f"{s.Z} {s.A} {delta_ev:.6e} {ni} /")
+                lines += _array_lines(rho_uni)
             lines += [
-                f"{delta_ev:.6e} {ni} /",
-                *_array_lines(rho_uni),
                 "0.0 0.0 1.0 /",          # twt c tbeta: no translational
                 "0 /",                    # no discrete oscillators
             ]

@@ -442,18 +442,34 @@ def _coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta):
     tol = 0.9e-7
     out = {}
 
-    # Thin negligible edges at the first temperature, caching the deltas.
-    deltas_T0 = []
-    total_sum = 0.0
-    suml = 0.0
-    jmax = 0
-    for j in range(nedge):
-        d = edge_delta(j, 0)
-        deltas_T0.append(d)
-        total_sum += d
-        if total_sum - suml > tol * total_sum:
-            jmax = j + 1
-            suml = total_sum
+    def last_significant(deltas):
+        total_sum = 0.0
+        suml = 0.0
+        last = 0
+        for j, d in enumerate(deltas):
+            total_sum += d
+            if total_sum - suml > tol * total_sum:
+                last = j + 1
+                suml = total_sum
+        return last
+
+    # Thin negligible edges at the first temperature, as NJOY does. That is
+    # safe while no edge contributes more at a later temperature (Debye-
+    # Waller factors that grow with temperature). A later temperature where
+    # some edge contributes more (a stiffer Card 11-12 or Card 12e spectrum
+    # given for it) also keeps the edges it needs; otherwise the later
+    # blocks would re-add the last kept edge for every edge dropped here.
+    deltas_T0 = [edge_delta(j, 0) for j in range(nedge)]
+    jmax = last_significant(deltas_T0)
+    # An increase counts when it is above the thinning tolerance of the
+    # first temperature's total, not rounding noise.
+    noticeable = tol * sum(deltas_T0)
+    grows = False
+    for i in range(1, ntempr):
+        deltas = [edge_delta(j, i) for j in range(nedge)]
+        if any(d - d0 > noticeable for d, d0 in zip(deltas, deltas_T0)):
+            grows = True
+            jmax = max(jmax, last_significant(deltas))
 
     if jmax == 0:
         raise ValueError(
@@ -495,9 +511,13 @@ def _coherent_s_table(bragg, nedge, ntempr, tempr, edge_delta):
             for j in range(nedge):
                 if j < jmax:
                     jj = j
-                # For j >= jmax, jj stays at jmax-1 (Fortran behavior)
-                e_sf = sigfig(bragg[jj][0], 7, 0)
-                s += edge_delta(jj, i, energy=e_sf)
+                # For j >= jmax, jj stays at jmax-1 and NJOY adds that edge
+                # again for every dropped edge (Fortran behavior). When some
+                # edge grows with temperature, each edge's own contribution is
+                # added instead, the dropped ones into the last point.
+                k = j if grows else jj
+                e_sf = sigfig(bragg[k][0], 7, 0)
+                s += edge_delta(k, i, energy=e_sf)
                 out['S'][jj + 1][i] = sigfig(s, 7, 0)
 
     return out

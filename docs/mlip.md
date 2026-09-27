@@ -300,7 +300,7 @@ irma mlip emit <bundle> --to endf,spectra,ncrystal \
   from the displacement tensors), and mode 0 emits the classic
   isotropic input file driven by the
   bundle's species-projected DOS, with the principal's spectrum on the
-  classic cards and a Card 6e partial spectrum for every other
+  classic cards and a Card 12e partial spectrum for every other
   species, so each species' elastic W'(T) carries its own lambda. Mode
   0 is DOS-driven and therefore subject to the imaginary-mode gate
   (`--allow-unstable`). Every emitted input file also writes the bundle

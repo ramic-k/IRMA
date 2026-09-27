@@ -621,20 +621,25 @@ def formf(lat, l1, l2, l3):
     return 0.0
 
 def _compute_per_species_msd(crystal_info, tempr_arr, ntempr, dwpix):
-    """Per-species Debye-Waller lambda from the Card 6e partial spectra.
+    """Per-species Debye-Waller lambda from each temperature's Card 12e spectra.
 
-    Each spectrum carries its species' full vibrational weight (tbeta = 1).
-    A type without a spectrum inherits the principal's lambda ``dwpix``.
+    ``crystal_info['partial_spectra_by_temp'][itemp]`` maps atom type to the
+    spectrum of temperature ``itemp`` (a negative temperature carries the
+    previous block's). Each spectrum carries its species' full vibrational
+    weight (tbeta = 1). A type without a spectrum inherits the principal's
+    lambda ``dwpix``, which comes from that temperature's Cards 11-12.
     Stored in ``crystal_info['atom_types'][i]['dwpix']``.
     """
     principal = crystal_info.get('principal_atom_idx')
+    by_temp = crystal_info.get('partial_spectra_by_temp') or [{}] * ntempr
     for iat, at in enumerate(crystal_info['atom_types']):
-        if at['spectrum_idx'] is None:
+        if iat not in by_temp[0]:
             at['dwpix'] = np.array(dwpix[:ntempr], dtype=float)
             if iat != principal:
                 print(f"WARNING: atom type {iat+1} (Z={at['Z']}, A={at['A']}) has "
-                      "no Card 6e spectrum; using the principal's Debye-Waller lambda.")
+                      "no Card 12e spectrum; using the principal's Debye-Waller lambda.")
             continue
-        sp = crystal_info['partial_spectra'][at['spectrum_idx']]
-        at['dwpix'] = np.array([start(sp['rho'], sp['ni'], sp['delta'], BK * T, 1.0)[1]
-                                for T in tempr_arr[:ntempr]])
+        at['dwpix'] = np.array([
+            start(by_temp[k][iat]['rho'], by_temp[k][iat]['ni'],
+                  by_temp[k][iat]['delta'], BK * tempr_arr[k], 1.0)[1]
+            for k in range(ntempr)])

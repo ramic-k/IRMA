@@ -180,8 +180,8 @@ def parse_deck_to_staging(reader, path):
         # the engine accept the same decks with the same messages; the
         # engine-only steps (principal merge, phonopy model) are not run.
         from irma.core.crystal_cards import (
-            read_card_6b, read_card_6c, read_card_6d, read_card_6e,
-            read_cards_6f_6g)
+            read_card_6b, read_card_6c, read_card_6d, read_cards_6f_6g,
+            refuse_card_6e_position)
         (elastic_mode, nat, nspec, inelastic_mode_loaded, edge_group_bpd,
          edge_group_thr) = read_card_6b(reader, ncold, nsk, nss, b7)
         st['elastic_mode'] = elastic_mode
@@ -200,12 +200,7 @@ def parse_deck_to_staging(reader, path):
             })
         st['atoms'] = atoms
 
-        for isp in range(nspec):
-            sp = read_card_6e(reader, isp)
-            st['partial_spectra'].append({
-                'Z': sp['Z'], 'A': sp['A'], 'delta': sp['delta'],
-                'ni': sp['ni'], 'rho': [float(v) for v in sp['rho']],
-            })
+        refuse_card_6e_position(reader, nspec, [(a['Z'], a['A']) for a in atoms])
 
         if inelastic_mode_loaded in (1, 2):
             c = read_cards_6f_6g(reader)
@@ -268,7 +263,13 @@ def parse_deck_to_staging(reader, path):
                     "temperature positive, the rest negative) — "
                     "edit the input file directly.")
             (delta, _ni, rho, twt, c_diff, tbeta, _nd, bdel, adel, ska, _nka,
-             dka, cfrac) = _read_temperature_detail_cards(reader, nsk, ncold)
+             dka, cfrac, spectra) = _read_temperature_detail_cards(
+                 reader, nsk, ncold, nspec)
+            # Card 12e partial spectra ride through import -> export verbatim
+            st['partial_spectra'] = [
+                {'Z': sp['Z'], 'A': sp['A'], 'delta': sp['delta'],
+                 'ni': sp['ni'], 'rho': [float(v) for v in sp['rho']]}
+                for sp in spectra]
             st.update(
                 delta1=delta, rho=list(rho), twt=str(twt), c_diff=str(c_diff),
                 tbeta=str(tbeta), osc_e=[] if bdel is None else list(bdel),

@@ -84,9 +84,11 @@ def _njoy_endout_reference(bragg, nedge, ntempr, dwpix):
     return jmax, e_t0, s_t0, lt
 
 
-# Per-temperature Debye-Waller integrals (eV^-1), decreasing with temperature,
-# chosen so the high-energy tail thins (jmax << nedge) at every temperature.
-DWPIX = [10.0, 7.0, 5.0]
+# Per-temperature Debye-Waller integrals (eV^-1), growing with temperature as
+# physical factors do, chosen so the high-energy tail thins (jmax << nedge) at
+# every temperature. A factor that falls with temperature is where IRMA keeps
+# more edges than NJOY (the last test).
+DWPIX = [5.0, 7.0, 10.0]
 TEMPR = [296.0, 600.0, 1000.0]
 
 
@@ -113,3 +115,26 @@ def test_lt_block_matches_njoy_endout(itemp):
 
     irma_lt = [out['S'][q][itemp] for q in range(1, jmax + 1)]
     assert irma_lt == lt_ref[itemp]
+
+
+@pytest.mark.parametrize("dwpix", [[20.0, 2.0], [20.0, 10.0]])
+def test_later_temperature_with_a_smaller_factor_keeps_its_edges(dwpix):
+    """A later temperature whose Debye-Waller integral is smaller (a stiffer
+    spectrum given for it) needs edges the first temperature would thin
+    away; its cumulative S at the last edge matches the direct sum."""
+    bragg, nedge = _graphite_edges()
+    delta = _make_edge_delta(bragg, dwpix)
+    out = _coherent_s_table(bragg, nedge, 2, [296.0, 600.0], delta)
+    exact = sum(delta(j, 1) for j in range(nedge))
+    assert out['S'][out['NP']][1] == pytest.approx(exact, rel=1e-6)
+
+
+def test_growing_edge_adds_each_edge_once():
+    """An edge absent at the first temperature and present at the second:
+    the second block's cumulative S is exact at every kept point."""
+    bragg = [(0.1, 1.0), (0.2, 1.0), (0.3, 1.0), (0.4, 1.0)]
+    rows = {0: [1.0, 0.0, 0.0, 0.0], 1: [1.0, 1.0, 0.0, 0.0]}
+    out = _coherent_s_table(bragg, 4, 2, [296.0, 600.0],
+                            lambda j, it, energy=None: rows[it][j])
+    assert out['NP'] == 2
+    assert [out["S"][q][1] for q in (1, 2)] == pytest.approx([1.0, 2.0], rel=1e-9)
