@@ -22,7 +22,7 @@ def _parse_extinction_card(reader, elastic_mode):
 
         extinction <model> l=<Å> g=<rad⁻¹> L=<Å> [dist=<...>] [rec=cls|std] [rmse_tol=<frac>]
 
-    Placed at the end of the iel=10 elastic block (after Cards 6d/6e, or 6g for
+    Placed at the end of the iel=10 elastic block (after Card 6d, or 6g for
     inelastic_mode=1/2), before Card 7. Returns the ``coherent_extinction`` config
     dict consumed by the ENDF writer, or ``None`` if the card is absent.
     Extinction is a *sample* property — l (crystallite
@@ -159,7 +159,7 @@ def read_card_6b(reader, ncold=0, nsk=0, nss=0, b7=0.0):
     fvals = reader.read_floats(6, defaults=[0, 0, 0, 0, 0, 0])
     elastic_mode = reader.to_int(fvals[0], "elastic_mode")   # 1=SEF, 2=MEF
     nat = reader.to_int(fvals[1], "nat")              # number of atom types
-    nspec = reader.to_int(fvals[2], "nspec")          # Card 6e blocks
+    nspec = reader.to_int(fvals[2], "nspec")          # Card 12e per temperature block
     inelastic_mode = reader.to_int(fvals[3], "inelastic_mode")
     # Bragg-edge grouping (field 5, 0 = off) and its threshold in eV (field 6)
     bins_per_decade = reader.to_int(fvals[4], "bins_per_decade")
@@ -197,7 +197,7 @@ def read_card_6b(reader, ncold=0, nsk=0, nss=0, b7=0.0):
     reader.require(
         not (inelastic_mode in (1, 2) and nspec != 0),
         f"nspec must be 0 when inelastic_mode={inelastic_mode}: "
-        f"Phonopy provides MT4 and the Debye-Waller factors, so Card 6e "
+        f"Phonopy provides MT4 and the Debye-Waller factors, so Card 12e "
         f"partial spectra are not used (got nspec={nspec})")
     reader.require(nspec >= 0, f"nspec must be >= 0, got {nspec}")
     return elastic_mode, nat, nspec, inelastic_mode, bins_per_decade, float(fvals[5])
@@ -240,7 +240,7 @@ def read_card_6d(reader, iat):
     at_sigma_inc = fvals[4]
     at_npos = reader.to_int(fvals[5], "npos")
     reader.require(at_Z >= 1, f"Z must be >= 1, got {at_Z}")
-    # A only identifies the nuclide (matched to Card 4 za and Card 6e);
+    # A only identifies the nuclide (matched to Card 4 za and Card 12e);
     # A = 0 is ENDF's natural element.
     reader.require(at_A >= 0, f"A must be >= 0 (0 = natural "
                               f"element), got {at_A}")
@@ -256,28 +256,72 @@ def read_card_6d(reader, iat):
             'sigma_inc': at_sigma_inc, 'npos': at_npos, 'positions': positions}
 
 
-def read_card_6e(reader, isp):
-    """Card 6e partial spectrum ``isp + 1``, checked: a dict of Z, A, delta
-    [eV], ni and rho."""
-    reader.card(f"Card 6e (partial spectrum {isp+1}: Z A delta ni)")
-    fvals = reader.read_floats(4)
-    sp_Z = reader.to_int(fvals[0], "Z")
-    sp_A = reader.to_int(fvals[1], "A")
-    sp_delta = fvals[2]
-    sp_ni = reader.to_int(fvals[3], "ni")
-    # Same validity rules as the classic Card 11/12 spectrum: these
-    # spectra feed the per-species Debye-Waller integrals directly.
-    reader.require(sp_delta > 0.0,
-                   f"delta (spectrum spacing, eV) must be > 0, "
-                   f"got {sp_delta:g}")
-    reader.require(sp_ni >= 2,
-                   f"ni (number of spectrum points) must be >= 2, "
-                   f"got {sp_ni}")
-    reader.card(f"Card 6e (partial spectrum {isp+1}: {sp_ni} rho values)")
-    sp_rho = reader.read_float_array(sp_ni)
-    reader.require(bool(np.all(sp_rho >= 0.0)), "rho values must be >= 0")
-    reader.require(bool(np.any(sp_rho > 0.0)), "rho values are all zero")
-    return {'Z': sp_Z, 'A': sp_A, 'delta': sp_delta, 'ni': sp_ni, 'rho': sp_rho}
+def refuse_card_6e_position(reader, nspec, atom_keys):
+    """Refuse partial spectra written after Card 6d, where Card 6e used to
+    be: they are Card 12e now, inside each temperature block.
+
+    ``atom_keys`` are the Card 6d (Z, A) pairs. An old Card 6e header is
+    ``Z A delta ni`` with (Z, A) one of them and a fractional energy spacing;
+    Card 7 (``nalpha nbeta lat``) has an integer third field, and the
+    optional extinction card starts with a keyword.
+    """
+    if nspec == 0:
+        return
+    head = reader.peek_card()
+    old = (len(head) >= 4
+           and all(isinstance(t, (int, float)) for t in head[:4])
+           and (int(head[0]), int(head[1])) in set(atom_keys)
+           and float(head[2]) != int(head[2]))
+    reader.card("Card 7 (nalpha nbeta lat)")
+    reader.require(
+        not old,
+        f"found a partial spectrum after Card 6d; partial spectra (Card 6b "
+        f"nspec = {nspec}) now go in each temperature block as Card 12e, "
+        f"right after Card 12 (the principal's spectrum)")
+
+
+def match_partial_spectra(reader, crystal_info, spectra, species=None):
+    """Atom-type index -> Card 12e spectrum for one temperature block.
+
+    Each spectrum must match exactly one Card 6d atom type by (Z, A) and must
+    not be the principal's, whose spectrum is Cards 11-12. ``species`` is the
+    set of atom types the first block gave spectra for; every later block
+    must give the same set.
+    """
+    atom_types = crystal_info['atom_types']
+    principal = crystal_info['principal_atom_idx']
+    keys = [(at['Z'], at['A']) for at in atom_types]
+    matched = {}
+    for i, sp in enumerate(spectra):
+        key = (sp['Z'], sp['A'])
+        reader.card(f"Card 12e (partial spectrum {i+1}: Z A delta ni)",
+                    line=sp.get('line'))
+        reader.require(
+            key in keys,
+            f"Card 12e partial spectrum {i+1} (Z={key[0]}, A={key[1]}) "
+            f"does not match any Card 6d atom type")
+        reader.require(
+            keys.count(key) == 1,
+            f"duplicate Card 6d atom type Z={key[0]}, A={key[1]} with a "
+            f"Card 12e partial spectrum for the same (Z, A)")
+        idx = keys.index(key)
+        reader.require(
+            idx != principal,
+            f"Card 12e partial spectrum {i+1} is for the principal scatterer "
+            f"(Z={key[0]}, A={key[1]}), whose spectrum is Cards 11-12 of the "
+            f"same temperature block")
+        reader.require(
+            idx not in matched,
+            f"duplicate Card 12e partial spectrum for Z={key[0]}, A={key[1]}")
+        matched[idx] = sp
+    if species is not None:
+        reader.card("Card 12e (partial spectra of this temperature block)",
+                    line=spectra[0].get('line') if spectra else None)
+        reader.require(
+            set(matched) == species,
+            "every temperature block must give Card 12e spectra for the same "
+            "species as the first block")
+    return matched
 
 
 def read_cards_6f_6g(reader):
@@ -342,7 +386,7 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
     """Parse the generalized-elastic card block (iel=10): Cards 6b-6g.
 
     Reads the elastic/inelastic mode controls, lattice, atom types and
-    positions, the Card 6e partial spectra (mode 0), and — for inelastic_mode=1/2 —
+    positions, and — for inelastic_mode=1/2 —
     the phonopy mesh controls (loading the mesh once for all
     temperatures). Returns the populated crystal_info dict.
     """
@@ -422,21 +466,8 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
     for at in atom_types:
         at['fraction'] = at['npos'] / total_atoms_in_cell
 
-    # Card 6e: partial phonon spectra (per-species Debye-Waller input for
-    # inelastic_mode=0; rejected above for modes 1/2).
-    partial_spectra = []
-    for isp in range(nspec):
-        sp = read_card_6e(reader, isp)
-        sp_Z, sp_A, sp_delta, sp_ni, sp_rho = (
-            sp['Z'], sp['A'], sp['delta'], sp['ni'], sp['rho'])
-
-        partial_spectra.append({
-            'Z': sp_Z, 'A': sp_A,
-            'delta': sp_delta, 'ni': sp_ni,
-            'rho': sp_rho,
-        })
-        print(f"    Partial spectrum {isp+1}: Z={sp_Z}, A={sp_A}, "
-              f"delta={sp_delta:.6e}, ni={sp_ni}")
+    # Mode-0 partial spectra are Card 12e, read with each temperature block.
+    refuse_card_6e_position(reader, nspec, [(at['Z'], at['A']) for at in atom_types])
 
     # Build crystal structure for Bragg edge calculation
     crystal = CrystalStructure(
@@ -479,27 +510,6 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
         else:
             print("  -> Principal scatterer is not the DC atom -> LTHR=2 (incoherent elastic)")
 
-    # Match each Card 6e spectrum to exactly one Card 6d atom type by (Z, A).
-    reader.card("Card 6e (partial spectrum atom matching)")
-    keys = [(at['Z'], at['A']) for at in atom_types]
-    for at in atom_types:
-        at['spectrum_idx'] = None
-    for i, sp in enumerate(partial_spectra):
-        key = (sp['Z'], sp['A'])
-        reader.require(
-            key in keys,
-            f"Card 6e partial spectrum {i+1} (Z={key[0]}, A={key[1]}) "
-            f"does not match any Card 6d atom type")
-        reader.require(
-            keys.count(key) == 1,
-            f"duplicate Card 6d atom type Z={key[0]}, A={key[1]} with a "
-            f"Card 6e partial spectrum for the same (Z, A)")
-        at = atom_types[keys.index(key)]
-        reader.require(
-            at['spectrum_idx'] is None,
-            f"duplicate Card 6e partial spectrum for Z={key[0]}, A={key[1]}")
-        at['spectrum_idx'] = i
-
     # Store everything for later use
     crystal_info = {
         'elastic_mode': elastic_mode,
@@ -507,7 +517,7 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
         'inelastic_mode': inelastic_mode,
         'crystal': crystal,
         'atom_types': atom_types,
-        'partial_spectra': partial_spectra,
+        'nspec': nspec,                 # Card 12e spectra per temperature block
         'principal_atom_idx': principal_atom_idx,
         'dc_atom_idx': dc_atom_idx,
         # Coherent-elastic Bragg-edge grouping (ENDF-102 7.2.2); 0 = off.

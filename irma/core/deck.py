@@ -201,10 +201,11 @@ class TokenReader:
         self._card = None
         self._card_line = None
 
-    def card(self, label):
-        """Set the current card label used in deck-error messages."""
+    def card(self, label, line=None):
+        """Set the current card label used in deck-error messages; ``line``
+        names the card's source line when it was read earlier."""
         self._card = label
-        self._card_line = self._line()   # where this card starts
+        self._card_line = self._line() if line is None else line
         return self
 
     def _line(self):
@@ -348,6 +349,17 @@ class TokenReader:
         at end of input. Used to detect an optional free-form card by keyword."""
         return self.tokens[self.pos] if self.pos < len(self.tokens) else None
 
+    def peek_card(self):
+        """The raw tokens of the next card, without consuming them."""
+        pos = self.pos
+        while pos < len(self.tokens) and self.tokens[pos] == LINE_END:
+            pos += 1
+        out = []
+        while pos < len(self.tokens) and self.tokens[pos] not in _RECORD_ENDS:
+            out.append(self.tokens[pos])
+            pos += 1
+        return out
+
     def read_card_tokens(self):
         """Read all raw tokens remaining on the current card (strings AND numbers),
         consuming the card terminator. This serves free-form key=value cards that
@@ -469,8 +481,37 @@ class TokenReader:
         return comments
 
 
-def _read_temperature_detail_cards(reader, nsk, ncold):
-    """Read the per-temperature detail block (Cards 11-19) for one temperature."""
+def read_card_12e(reader, isp):
+    """Card 12e partial spectrum ``isp + 1`` of this temperature, checked: a
+    dict of Z, A, delta [eV], ni and rho."""
+    reader.card(f"Card 12e (partial spectrum {isp+1}: Z A delta ni)")
+    line = reader._card_line
+    fvals = reader.read_floats(4)
+    sp_Z = reader.to_int(fvals[0], "Z")
+    sp_A = reader.to_int(fvals[1], "A")
+    sp_delta = fvals[2]
+    sp_ni = reader.to_int(fvals[3], "ni")
+    # Same validity rules as the Card 11/12 spectrum: these spectra feed
+    # the per-species Debye-Waller integrals directly.
+    reader.require(sp_delta > 0.0,
+                   f"delta (spectrum spacing, eV) must be > 0, "
+                   f"got {sp_delta:g}")
+    reader.require(sp_ni >= 2,
+                   f"ni (number of spectrum points) must be >= 2, "
+                   f"got {sp_ni}")
+    reader.card(f"Card 12e (partial spectrum {isp+1}: {sp_ni} rho values)")
+    sp_rho = reader.read_float_array(sp_ni)
+    reader.require(bool(np.all(sp_rho >= 0.0)), "rho values must be >= 0")
+    reader.require(bool(np.any(sp_rho > 0.0)), "rho values are all zero")
+    return {'Z': sp_Z, 'A': sp_A, 'delta': sp_delta, 'ni': sp_ni, 'rho': sp_rho,
+            'line': line}
+
+
+def _read_temperature_detail_cards(reader, nsk, ncold, nspec=0):
+    """Read the per-temperature detail block (Cards 11-19) for one temperature.
+
+    ``nspec`` Card 12e partial spectra follow Card 12 (iel=10, mode 0).
+    """
     reader.card("Card 11 (delta ni — continuous-spectrum grid)")
     fvals = reader.read_floats(2)
     delta1 = fvals[0]
@@ -484,6 +525,7 @@ def _read_temperature_detail_cards(reader, nsk, ncold):
     reader.require(np.all(p1 >= 0.0), "rho values must be >= 0")
     reader.require(np.any(p1 > 0.0), "rho values are all zero")
     np1 = ni
+    partial_spectra = [read_card_12e(reader, isp) for isp in range(nspec)]
 
     reader.card("Card 13 (twt c tbeta)")
     fvals = reader.read_floats(3)
@@ -533,5 +575,5 @@ def _read_temperature_detail_cards(reader, nsk, ncold):
 
     return (
         delta1, np1, p1, twt, c_diff, tbeta,
-        nd, bdel, adel, ska, nka, dka, cfrac,
+        nd, bdel, adel, ska, nka, dka, cfrac, partial_spectra,
     )

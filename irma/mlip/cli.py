@@ -137,7 +137,7 @@ def _add_emit_options(p):
                    help="physics level of the emitted ENDF decks [2]. "
                         "0 = classic isotropic path from the bundle's "
                         "species-projected DOS (principal spectrum on the "
-                        "classic cards, Card 6e partial spectra for the "
+                        "classic cards, Card 12e partial spectra for the "
                         "other species); 1/2 = phonopy-backed directional "
                         "decks. Not applicable to disordered bundles")
     # default None, not "mef": the build records its options in the bundle

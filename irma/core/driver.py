@@ -23,7 +23,7 @@ from irma.core.crystal import (
     _compute_per_species_msd,
     _order_site_groups_by_card6d_positions, _site_tensors_uniform,
 )
-from irma.core.crystal_cards import _parse_crystal_cards
+from irma.core.crystal_cards import _parse_crystal_cards, match_partial_spectra
 from irma.core.endf_writer import write_endf_output
 
 
@@ -400,6 +400,13 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
         nka = 0
         dka = 0.0
         cfrac = 0.0
+        # Card 12e partial spectra (iel=10, mode 0, principal pass): one set
+        # per temperature block, carried over by a negative temperature.
+        nspec = (crystal_info['nspec']
+                 if crystal_info is not None and not phonopy_mt4 and isecs == 0
+                 else 0)
+        block_spectra = {}
+        partial_spectra_by_temp = []
 
         for itemp in range(ntempr):
             reader.card(f"Card 10 (temperature {itemp+1} of {ntempr})")
@@ -423,13 +430,21 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
             elif itemp == 0 or temp >= 0.0:
                 (
                     delta1, np1, p1, twt, c_diff, tbeta,
-                    nd, bdel, adel, ska, nka, dka, cfrac,
-                ) = _read_temperature_detail_cards(reader, nsk, ncold)
+                    nd, bdel, adel, ska, nka, dka, cfrac, spectra,
+                ) = _read_temperature_detail_cards(reader, nsk, ncold, nspec)
+                if nspec:
+                    block_spectra = match_partial_spectra(
+                        reader, crystal_info, spectra,
+                        None if itemp == 0 else set(partial_spectra_by_temp[0]))
+                    print("    Card 12e spectra: " + ", ".join(
+                        f"Z={sp['Z']} A={sp['A']}" for sp in spectra))
             else:
                 # Negative T: reuse the previous temperature's detail block
                 # (standard LEAPR convention) — no cards are consumed here.
                 print("    (negative T: reusing previous temperature's "
                       "scattering-law inputs)")
+
+            partial_spectra_by_temp.append(block_spectra)
 
             if phonopy_mt4:
                 f0, tbar, deltab, F_matrix_all = _noncubic_mt4_step(
@@ -476,6 +491,9 @@ def run_leapr(input_file: str | Path, output_file: str | Path) -> LeaprResult:
             if nsk == 2 and ncold == 0:
                 skold_approx(ssm, alpha, nalpha, nbeta, itemp, lat, arat,
                              awr, tev, ska, nka, dka, cfrac)
+
+        if isecs == 0 and crystal_info is not None:
+            crystal_info['partial_spectra_by_temp'] = partial_spectra_by_temp
 
         if isecs == 0 and npass == 2:
             ssm_principal = ssm.copy()

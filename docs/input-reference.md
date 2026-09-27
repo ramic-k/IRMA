@@ -161,7 +161,7 @@ elastic_mode  nat  nspec  inelastic_mode  [bins_per_decade]  [threshold_eV]  /
 |-------|---------|-------|
 | `elastic_mode` | — | `1` = SEF (single-channel elastic format): one elastic component per tape. Single atom type: the dominant component carries the full elastic strength, coherent (LTHR=1) if `σ_coh > σ_inc`, else incoherent (LTHR=2). Polyatomic: the designated-coherent atom (the species with the smallest incoherent contribution, which SEF selects to carry the coherent elastic) gets LTHR=1, every other principal gets LTHR=2 (see [Theory](theory.md#elastic-format-sef-vs-mef-card-6b-field-1)). `2` = MEF (Mixed Elastic Format): LTHR=3 (coherent + incoherent together). Must be 1 or 2. |
 | `nat` | — | Number of distinct atom types in the unit cell (`≥ 1`). |
-| `nspec` | — | Number of partial phonon spectra that follow (Card 6e). Meaningful only for `inelastic_mode=0`. **For `inelastic_mode=1/2`, `nspec` must be 0** and Card 6e is omitted (input error otherwise). |
+| `nspec` | — | Number of Card 12e partial phonon spectra in each temperature block, after Card 12. Meaningful only for `inelastic_mode=0`. **For `inelastic_mode=1/2`, `nspec` must be 0** (input error otherwise). |
 | `inelastic_mode` | — | `0` = isotropic Debye-Waller + phonon expansion from the input file's DOS (no phonopy). `1` = directional DW + S(α,β) from the phonopy calculation with incoherent-approximation one-phonon plus incoherent-approximation multiphonons. `2` = directional DW + S(α,β) from the phonopy calculation with **exact** one-phonon (coherent + incoherent) plus incoherent-approximation multiphonons. Modes 1/2 require Cards 6f/6g. |
 | `bins_per_decade` | `0` (off) | Optional. ENDF-102 §7.2.2 coherent-elastic Bragg-edge grouping: above `threshold_eV`, dense edge steps are merged into this many log-uniform bins per decade with structure-factor-weighted placement; cumulative S stays exact at each bin boundary (see [Scattering modes](modes.md#bragg-edge-grouping-optional)). |
 | `threshold_eV` | `1.0` | Optional. Grouping threshold in eV; used only when `bins_per_decade > 0`. |
@@ -192,7 +192,7 @@ line says so.
 `A` names the isotope, or `0` for the natural element. It is an
 identity key rather than a physical input: the scattering constants on
 the same line (`awr`, `b_coh`, `sigma_inc`) carry the physics, while
-`A` is what Card 4's `za` and any Card 6e partial spectrum are matched
+`A` is what Card 4's `za` and any Card 12e partial spectrum are matched
 against. Naming the natural element as `A = 0` (ENDF's own convention)
 avoids borrowing an isotope's mass number for constants that are
 natural-abundance values.
@@ -207,7 +207,7 @@ x1 y1 z1  x2 y2 z2  ...  (npos fractional positions)  /
 | Field | Notes |
 |-------|-------|
 | `Z` | Atomic number (`≥ 1`). |
-| `A` | Mass number, or `0` for the natural element (`≥ 0`); an identity key matched against Card 4 `za` and Card 6e. |
+| `A` | Mass number, or `0` for the natural element (`≥ 0`); an identity key matched against Card 4 `za` and Card 12e. |
 | `awr` | Atomic weight ratio to the neutron mass (`> 0`). |
 | `b_coh` | Coherent scattering length in fm (finite). |
 | `sigma_inc` | Incoherent scattering cross section in barns (`≥ 0`). |
@@ -227,41 +227,6 @@ combined, the coherent-elastic comb counts the principal once, and for
 site. The merged entries must agree in `awr`, `b_coh`, and `sigma_inc`;
 differing values are a Card 6d input error. Non-principal types are never
 merged.
-
-#### Card 6e: partial phonon spectra (repeated `nspec` times)
-
-Read only when `nspec > 0` (i.e. `inelastic_mode=0`). For each spectrum:
-
-```
-Z  A  delta  ni  /
-rho(1) rho(2) ... rho(ni)  /
-```
-
-`Z`/`A` identify which Card 6d atom type the spectrum belongs to; `delta` is
-the equidistant energy grid spacing in eV (`> 0`); `ni` is the number of DOS
-values (`≥ 2`); `rho(j)` is the partial phonon density of states (each `≥ 0`,
-not all zero). These spectra feed the per-species Debye-Waller integrals in
-the isotropic path.
-
-For `inelastic_mode=1/2`, phonopy supplies MT4 and the Debye-Waller
-factors, so Card 6e has no role: `nspec` must be 0 and the card must be
-omitted (input error otherwise).
-
-Each partial spectrum must carry its species' full vibrational weight. The
-per-species Debye-Waller integral normalizes each Card 6e spectrum with a
-continuous weight of 1 (the `tbeta = 1` convention): there is no
-per-species translational, diffusion, or discrete-oscillator weight, and
-Card 6e has no `tbeta` field. A partial spectrum must therefore represent
-all of its species' vibrational weight; a spectrum carrying only part of it
-would bias that species' Debye-Waller lambda.
-
-A Card 6d atom type with no matching Card 6e spectrum falls back to the
-principal scatterer's Debye-Waller lambda (computed from the Card 11/12
-spectrum). For the principal type itself this is exact. For any other type
-it is only an approximation, and it directly sets that species' elastic
-`W'(T)` on the tape, so IRMA prints a warning naming the type. To give such
-a species its own lambda, raise `nspec` on Card 6b and supply a Card 6e
-spectrum for it.
 
 #### Card 6f: phonopy mesh (`inelastic_mode=1/2` only)
 
@@ -343,7 +308,7 @@ truncates the high-Q part of the table (the engine warns).
 
 #### Extinction card: crystalline extinction (optional)
 
-An optional card placed **last in the `iel=10` block** (after Cards 6d/6e, or
+An optional card placed **last in the `iel=10` block** (after Card 6d, or
 Card 6g for `inelastic_mode=1/2`), before Card 7. It is off by default; when
 present it reduces the coherent-elastic Bragg edges of MF7/MT2 for
 dynamical-diffraction extinction, a property of the physical specimen. The
@@ -409,6 +374,7 @@ still computed at `|T|`). This matches NJOY LEAPR.
 | **10** | `T` | every temperature | Temperature in K; must be nonzero. A negative value reuses the previous temperature's detail block (the first temperature always supplies one). |
 | **11** | `delta ni` | classic / `inelastic_mode=0`, first or positive `T` | Continuous-spectrum energy spacing in eV (`> 0`) and point count `ni` (`≥ 2`). |
 | **12** | `rho(1..ni)` | with Card 11 | Phonon density of states on the equidistant grid (each `≥ 0`, not all zero). |
+| **12e** | `Z A delta ni` / `rho(1..ni)` | `iel=10`, `inelastic_mode=0`, `nspec` times after Card 12 | Partial spectrum of one other species at this temperature ([below](#card-12e-partial-phonon-spectra-iel10-inelastic_mode0)). |
 | **13** | `twt c tbeta` | with Card 11 | Translational weight `twt` (`≥ 0`), diffusion constant `c` (0 = free gas), continuous weight `tbeta` (`> 0`). |
 | **14** | `nd` | with Card 11 | Number of discrete oscillators (`≥ 0`). |
 | **15/16** | oscillator energies / weights | only if `nd > 0` | Energies in eV (each `> 0`); weights (each `≥ 0`). |
@@ -418,6 +384,70 @@ still computed at `|T|`). This matches NJOY LEAPR.
 For `inelastic_mode=1/2` the detail block is omitted entirely: the
 inelastic S(α,β) comes from the phonopy calculation, so those input files supply only
 the temperature cards (Card 10), and Cards 11–19 are not read.
+
+#### Card 12e: partial phonon spectra (`iel=10`, `inelastic_mode=0`)
+
+In a mode-0 `iel=10` input file, every temperature block holds the phonon
+spectrum of every species. Cards 11–12 hold the principal scatterer's
+spectrum; the other species follow as Card 12e, repeated `nspec` times
+(Card 6b), right after Card 12:
+
+```
+Z  A  delta  ni  /
+rho(1) rho(2) ... rho(ni)  /
+```
+
+`Z`/`A` name the Card 6d atom type, `delta` is the equidistant energy spacing
+in eV (`> 0`), `ni` the number of values (`≥ 2`), and `rho(j)` the partial
+phonon density of states (each `≥ 0`, not all zero).
+
+A species' spectrum sets its Debye-Waller factor in the coherent-elastic Bragg
+edges (MF7/MT2) at that temperature, as the principal's Cards 11–12 set its
+inelastic law and its own Debye-Waller factor. The rules:
+
+- A negative temperature reuses the previous block, Card 12e included. If the
+  spectra do not change with temperature, write them once in the first block
+  and give the later temperatures as negative values.
+- Every block names the same species, each at most once, and each matches
+  exactly one Card 6d atom type by (`Z`, `A`).
+- The principal has no Card 12e spectrum: its spectrum is Cards 11–12 of the
+  same block.
+- Each spectrum carries its species' full vibrational weight. The
+  Debye-Waller integral normalizes it with a continuous weight of 1 (the
+  `tbeta = 1` convention); Card 12e has no translational, diffusion, or
+  oscillator weight. A spectrum holding only part of a species' weight would
+  bias its Debye-Waller factor.
+- A Card 6d atom type without a Card 12e spectrum takes the principal's
+  Debye-Waller factor at each temperature, and IRMA prints a warning naming
+  the type. For any species other than the principal this is only an
+  approximation, and it sets that species' elastic `W'(T)` on the tape.
+
+A two-temperature BeO-style block, principal Be with an O spectrum at each
+temperature:
+
+```
+296.0 /                    -- Card 10
+0.0025 120 /               -- Card 11: Be spectrum grid
+... 120 values ... /       -- Card 12
+8 16 0.0025 140 /          -- Card 12e: O at 296 K
+... 140 values ... /
+0. 0. 1. /                 -- Card 13
+0 /                        -- Card 14
+1200.0 /                   -- Card 10: its own block at 1200 K
+0.0025 120 /               -- Card 11
+... 120 values ... /       -- Card 12
+8 16 0.0025 140 /          -- Card 12e: O at 1200 K
+... 140 values ... /
+0. 0. 1. /                 -- Card 13
+0 /                        -- Card 14
+```
+
+Earlier IRMA versions read these spectra once, as Card 6e after Card 6d, and
+used them at every temperature. An input file that still has them there is
+refused with a message saying where they go. Move them to after Card 12 of
+every block that has its own Cards 11–12: the first block and each later
+block with a positive temperature (blocks for negative temperatures have no
+cards and reuse the previous block's spectra).
 
 After the last temperature block, optional quoted comment cards (one per line)
 become the ENDF MF1/MT451 text records. A bare `/` ends the comment section.
@@ -523,8 +553,8 @@ stop
 ```
 
 Because `inelastic_mode=2`, the input file supplies only the temperature card
-(Card 10): no continuous-DOS, oscillator, or Sköld detail block. `nspec=0`
-on Card 6b and Card 6e is absent. The inelastic S(α,β) and the directional
+(Card 10): no continuous-DOS, oscillator, or Sköld detail block, and
+`nspec=0` on Card 6b. The inelastic S(α,β) and the directional
 Debye-Waller factors come from the phonopy calculation named on Card 6f. To add
 LO-TO splitting, set `use_born=1` on Card 6f-2 and add a BORN path card.
 

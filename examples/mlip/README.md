@@ -82,7 +82,7 @@ Scattering constants come from the built-in nuclear-data table; the
 evaluations. The emitted input files default to the mixed elastic format (MEF) and
 the full mode-2 physics; `--elastic-format sef` and
 `--inelastic-mode 0` (the fast classic option built from the bundle's
-species-projected DOS, with a Card 6e partial spectrum for every
+species-projected DOS, with a Card 12e partial spectrum for every
 non-principal species) select the other conventions. Nothing runs the downstream calculations for you: you
 inspect the emitted inputs and drive `irma`, `irma spectra`, or
 `irma ncrystal` yourself, exactly as in the other example families.

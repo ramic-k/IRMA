@@ -1,7 +1,7 @@
 """GUI deck generation and import (export -> engine -> import round trips).
 
 Covers export and import for every iel, the secondary scatterer (Card 6),
-the ncold/nsk Cards 17-19 S(kappa) records, Card 6g's auto-order field, Card 6e
+the ncold/nsk Cards 17-19 S(kappa) records, Card 6g's auto-order field, Card 12e
 partial spectra, multi-temperature decks, and the Card 4 isabt/ilog/smin flags.
 
 Needs tkinter and a display; skips without them.
@@ -300,25 +300,36 @@ def _setup_iel10(app):
     app.coh_edge_group_bpd.set("0")
 
 
-def test_card6e_partial_spectra_preserved(app, tmp_path):
+def test_card12e_partial_spectra_preserved(app, tmp_path):
+    """An imported Card 12e spectrum for a non-principal species is written
+    after Card 12 of the first temperature block, runs, and round-trips."""
     _reset(app)
     _setup_iel10(app)
+    _set_text(app.atoms_text,
+              app.atoms_text.get("1.0", "end").strip()
+              + "\n8 16 15.86 5.803 0.0 1 0.5 0.5 0.5")
     app._imported_partial_spectra = [{
+        'Z': 8, 'A': 16, 'delta': 0.005, 'ni': 6,
+        'rho': [0.0, 0.10, 0.30, 0.60, 0.40, 0.0],
+    }, {
+        # the principal's spectrum is the DOS on the form: not written
         'Z': 6, 'A': 12, 'delta': 0.005, 'ni': 6,
         'rho': [0.0, 0.20, 0.45, 0.55, 0.30, 0.0],
     }]
     text = app._generate_input_text()
     assert " 1 0 /" in text                 # Card 6b: nspec=1, mode 0
-    assert "6 12 5.000000e-03 6 /" in text  # Card 6e header
-    _run_engine(text, tmp_path)             # exercises the fsum DW branch
+    assert "6 12 5.000000e-03 6 /" not in text
+    lines = text.splitlines()
+    header = lines.index("8 16 5.000000e-03 6 /")
+    assert header > next(i for i, l in enumerate(lines) if l.startswith("296"))
+    _run_engine(text, tmp_path)             # the engine accepts the placement
 
     deck = tmp_path / "spectra.input"
     deck.write_text(text)
     _reset(app)
     summary = app._import_leapr_from_path(str(deck))
-    assert "Preserved 1 Card 6e" in summary
-    assert len(app._imported_partial_spectra) == 1
-    assert app._imported_partial_spectra[0]['ni'] == 6
+    assert "Preserved 1 Card 12e" in summary
+    assert app._generate_input_text() == text
 
 
 def test_min_phonon_energy_gui_deck_roundtrip(app, tmp_path):

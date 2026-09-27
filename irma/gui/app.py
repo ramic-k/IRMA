@@ -23,7 +23,7 @@ class IrmaApp(EndfFormMixin):
                         "As S(α,β) evaluations")
         self.root.minsize(800, 600)
 
-        # Card 6e partial spectra carried through import -> export verbatim
+        # Card 12e partial spectra carried through import -> export verbatim
         # (the GUI has no editor for them; they are preserved, not edited).
         self._imported_partial_spectra = []
 

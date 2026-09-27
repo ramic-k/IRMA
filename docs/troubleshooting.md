@@ -139,10 +139,10 @@ front, before the expensive phonon-mesh load, instead of crashing mid-run:
 |---|---|---|
 | `ncold > 0` or `nsk > 0` (Card 5) | `inelastic_mode=1/2` | "ncold/nsk pair-correlation options are not available with inelastic_mode=…" |
 | `nss > 0` (Card 6) | `inelastic_mode=1/2` | "a secondary scatterer is not supported with inelastic_mode=…" |
-| `nspec ≠ 0` (Card 6b) | `inelastic_mode=1/2` | "nspec must be 0 …; phonopy provides MT4 and the Debye-Waller factors, so Card 6e partial spectra are not used" |
+| `nspec ≠ 0` (Card 6b) | `inelastic_mode=1/2` | "nspec must be 0 …; phonopy provides MT4 and the Debye-Waller factors, so Card 12e partial spectra are not used" |
 
 To fix: set `ncold=0` and `nsk=0` on Card 5, `nss=0` on Card 6, and
-`nspec=0` on Card 6b (omit the Card 6e blocks). Modes 1/2 input files supply
+`nspec=0` on Card 6b (no Card 12e spectra). Modes 1/2 input files supply
 **only** the temperature cards after the grids; the legacy detail block
 (continuous DOS, translational, oscillator, and Sköld cards) is not read at
 all. If you genuinely need cold hydrogen, Sköld, or a mixed moderator, use
@@ -176,6 +176,19 @@ SEF selects to carry the coherent elastic: the one with the smallest
 incoherent contribution). To fix: use
 `elastic_mode=2` (MEF) to keep a coherent component, or remove the
 `extinction` card. See [Crystalline extinction](extinction.md).
+
+### Partial spectra (Card 12e)
+
+In a mode-0 `iel=10` input file, the other species' spectra are Card 12e,
+inside each temperature block right after Card 12
+([input reference](input-reference.md#card-12e-partial-phonon-spectra-iel10-inelastic_mode0)):
+
+| You wrote | IRMA says (paraphrased) | To fix |
+|---|---|---|
+| spectra after Card 6d (the Card 6e position of earlier versions) | "found a partial spectrum after Card 6d; partial spectra … now go in each temperature block as Card 12e" | put them after Card 12 of the first block and of each later block with a positive temperature |
+| a Card 12e spectrum for the principal | "… is for the principal scatterer …, whose spectrum is Cards 11-12" | remove it and lower `nspec` on Card 6b by one: the principal's spectrum is Cards 11–12 |
+| different species in two temperature blocks | "every temperature block must give Card 12e spectra for the same species as the first block" | give each block the same species |
+| a (`Z`, `A`) that no Card 6d row has | "… does not match any Card 6d atom type" | correct `Z`/`A`, or add the atom type to Card 6d |
 
 ## The `nphon` auto-size warning, and what to do
 

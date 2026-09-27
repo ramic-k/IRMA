@@ -249,13 +249,23 @@ follow NJOY's own source, and each entry names its consequence for users.
   SCT tail reached from `discre` and `coldh`; the validation-set input
   files and the NJOY minitapes do not reach it and stay byte-identical.
   Both implementations (`sint_vec`, `_sint_batch_exact`) carry it.
+* **Coherent-elastic edge thinning at later temperatures (ENDF writer).**
+  NJOY's `endout` drops the Bragg edges that no longer change the running
+  cumulative S at the first temperature, and each later temperature's LIST
+  block then adds the last kept edge's contribution once for every dropped
+  edge. While no edge contributes noticeably more at a later temperature,
+  IRMA writes exactly NJOY's table. When some edge does (a stiffer Card
+  11-12 or Card 12e spectrum given for that temperature), NJOY's later
+  blocks come out far too large; IRMA then keeps the edges that
+  temperature needs and adds each edge's own contribution once.
 
-The first two have been reported upstream (the SCT square root is not
-yet):
+Four have been reported upstream:
 [njoy/NJOY2016#402](https://github.com/njoy/NJOY2016/issues/402) (`discre`
-delta lines) and
+delta lines),
 [njoy/NJOY2016#403](https://github.com/njoy/NJOY2016/issues/403) (lead
-`pb4`).
+`pb4`) and
+[njoy/NJOY2016#413](https://github.com/njoy/NJOY2016/issues/413) (the SCT
+square root and the accumulated SCT effective temperature).
 
 ## How the validation record compared S(α,β) tables (`thermr_mimic`)
 
