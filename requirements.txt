@@ -8,7 +8,7 @@
 #              end (pip install -e ".[mlip]"); the potential packages
 #              themselves are never listed -- see INSTALL.md.
 numpy>=2.0
-endf-parserpy>=0.12,<0.18
+endf-parserpy>=0.12,<0.19
 # threadpoolctl backs limit_native_threads_to_one() (irma.core.noncubic_workers);
 # required, not optional -- see the comment in pyproject.toml [project.dependencies].
 threadpoolctl>=3.0
