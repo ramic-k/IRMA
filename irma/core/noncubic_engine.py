@@ -931,6 +931,10 @@ def compute_from_args(
                     "sigma0_emission_lookup": signed_emission_lookup,
                     "sigma0_absorption_lookup": signed_absorption_lookup,
                     "emit_gain_side": emit_gain_side,
+                    # With fewer direction blocks than workers, the spare cores convolve rows inside the blocks:
+                    # each block then uses num_jobs // blocks threads, so the run uses the ncpu cores asked for.
+                    # Rows are independent, so the result does not depend on this.
+                    "multiphonon_row_threads": max(1, num_jobs // max(1, len(multiphonon_direction_blocks))),
                 }
             )
             multiphonon_results = run_blocks(

@@ -160,6 +160,56 @@ def build_star_averaged_projection_components(
     return projection_components, star_counts
 
 
+# Values of an order below this fraction of its largest value are not carried to the next order. The orders are
+# unit-area densities, so such values are below 1e-300 in absolute terms as well: far below anything an ENDF file
+# stores (THERMR treats S below about 1e-98 as zero) and below what float64 holds once scaled.
+MULTIPHONON_TRIM = 1.0e-300
+
+
+def exact_multiphonon_orders(row, de_mev, horizon, write):
+    """The multiphonon orders T_n = T_1 * T_(n-1), n = 2 .. ``horizon``, of one unit-area one-phonon seed ``row``
+    (a density on a signed grid with zero at its centre), by direct convolution.
+
+    Every term of the sum is nonnegative, so each value keeps its relative precision however far it lies below the
+    peak of its order. An FFT does not: its rounding error is a fraction of the largest value, so the tails of the
+    orders (most of an S(alpha, beta) table at large energy transfer) came out as noise, zeros or negative values.
+
+    Each order is an exact linear convolution: it is kept on the window widened by the reach of the orders still to
+    come (``horizon - n`` one-phonon steps), which is all the remaining orders on the window draw from; values below
+    MULTIPHONON_TRIM of an order's largest value are dropped from its ends. ``write(n, start, values)`` receives order
+    n on window bins start .. start + len(values) - 1 (as densities); bins not written are zero.
+    """
+    n_points = len(row)
+    zero = n_points // 2
+    support = np.flatnonzero(row)
+    first, last = int(support[0]), int(support[-1]) + 1
+    seed = row[first:last] * de_mev                          # one-phonon masses
+    below, above = zero - first, last - 1 - zero             # reach of one phonon below and above zero, in bins
+    prev = row[first:last] / row[first:last].max()
+    low = first - zero                                       # energy bin of prev[0], counted from zero
+    log_scale = math.log(row[first:last].max())              # the order is prev * exp(log_scale)
+    for order in range(2, horizon + 1):
+        prev = np.convolve(prev, seed)
+        low += first - zero
+        remaining = horizon - order
+        keep_low = max(low, -zero - remaining * above)
+        keep_high = min(low + len(prev) - 1, zero + remaining * below)
+        prev = prev[keep_low - low:keep_high - low + 1]
+        low = keep_low
+        top = prev.max()
+        if not top > 0.0:
+            return
+        prev = prev / top
+        log_scale += math.log(top)
+        kept = np.flatnonzero(prev >= MULTIPHONON_TRIM)
+        prev = prev[kept[0]:kept[-1] + 1]
+        low += int(kept[0])
+        a, b = max(0, -zero - low), min(len(prev), zero - low + 1)
+        if a < b:
+            with np.errstate(under="ignore"):
+                write(order, low + a + zero, prev[a:b] * math.exp(log_scale))
+
+
 def precompute_directional_multiphonon_orders(
     directions: np.ndarray,
     base_prefactors: np.ndarray,
@@ -176,6 +226,7 @@ def precompute_directional_multiphonon_orders(
     sigma0_absorption_lookup: tuple[np.ndarray, np.ndarray, np.ndarray],
     emit_gain_side: bool = False,
     q2_max: float | None = None,
+    row_threads: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, "np.ndarray | None"]:
     """Precompute per-direction, per-atom signed self orders at unit Q^2.
 
@@ -211,9 +262,7 @@ def precompute_directional_multiphonon_orders(
     # against the analytic directional MSD.
     kernel_areas = np.zeros((n_dirs, n_atoms), dtype=float)
 
-    # Valid (direction, atom) kernels are collected and self-convolved in ONE
-    # batched FFT recursion after the loops instead of one single-row FFT
-    # call per kernel.
+    # Valid (direction, atom) kernels are collected, then convolved row by row after the loops.
     pending_rows: list[np.ndarray] = []
     pending_dirs: list[int] = []
     pending_atoms: list[int] = []
@@ -265,14 +314,13 @@ def precompute_directional_multiphonon_orders(
             pending_dirs.append(idir)
             pending_atoms.append(atom_index)
 
-    # T1**n for all rows at once, one batched rfft/irfft per order. Each row
-    # stops at its own order horizon: the last order whose Poisson weight at
-    # Q_max stays above float64 underflow (log weight >= -760, below exp's
-    # ~-745.8 zero line). Later orders have weight exactly 0.0, so leaving
-    # their tables zero changes no output bit. Rows are sorted by horizon and
-    # the batch shrinks as orders pass each row's horizon.
+    # Orders 2 .. horizon of every row by direct convolution (exact_multiphonon_orders). Each row stops at its own
+    # order horizon: the last order whose Poisson weight at Q_max stays above float64 underflow (log weight >= -760,
+    # below exp's ~-745.8 zero line); later orders have weight exactly 0.0, so their tables stay zero. Rows are
+    # independent and run on row_threads threads (spare cores of the run, see the engine) or IRMA_WORKER_THREADS,
+    # whichever is larger; the convolution releases the interpreter lock, and the result does not depend on the
+    # thread count.
     if pending_rows and max_order >= 2:
-        rows_hat = np.array(pending_rows, dtype=float)        # (n_rows, n_e)
         dir_idx = np.asarray(pending_dirs, dtype=np.intp)
         atom_idx = np.asarray(pending_atoms, dtype=np.intp)
         if q2_max is not None and q2_max > 0.0:
@@ -292,36 +340,32 @@ def precompute_directional_multiphonon_orders(
             )
         else:
             row_horizon = np.full(len(dir_idx), max_order, dtype=int)
-        horizon_order = np.argsort(-row_horizon, kind="stable")
-        rows_hat = rows_hat[horizon_order]
-        dir_idx = dir_idx[horizon_order]
-        atom_idx = atom_idx[horizon_order]
-        row_horizon = row_horizon[horizon_order]
-        n_rows, n_points = rows_hat.shape
-        n_full = 2 * n_points - 1
-        start = (n_full - n_points) // 2
-        n_fft = 1 << (n_full - 1).bit_length()
-        base_fft = np.fft.rfft(rows_hat, n=n_fft, axis=-1)
-        prev = rows_hat
-        active = n_rows
-        for order_index in range(2, max_order + 1):
-            new_active = int(np.searchsorted(
-                -row_horizon, -order_index, side="right"))
-            if new_active == 0:
-                break
-            if new_active < active:
-                prev = prev[:new_active]
-                base_fft = base_fft[:new_active]
-                active = new_active
-            prev_fft = np.fft.rfft(prev, n=n_fft, axis=-1)
-            full = np.fft.irfft(base_fft * prev_fft, n=n_fft, axis=-1)[:, :n_full]
-            full *= de_mev
-            prev = full[:, start:start + n_points]
-            order_tables[dir_idx[:active], atom_idx[:active], order_index - 1] = (
-                prev[:, positive_slice])
-            if order_tables_gain is not None:
-                order_tables_gain[dir_idx[:active], atom_idx[:active],
-                                  order_index - 1] = prev[:, gain_slice]
+        positive_start, positive_stop = positive_slice.start, positive_slice.stop
+
+        def one_row(k):
+            idir, iatom = dir_idx[k], atom_idx[k]
+
+            def write(order, start, values):
+                stop = start + len(values)
+                lo, hi = max(start, positive_start), min(stop, positive_stop)
+                if lo < hi:
+                    order_tables[idir, iatom, order - 1, lo - positive_start:hi - positive_start] = \
+                        values[lo - start:hi - start]
+                if order_tables_gain is not None:
+                    lo, hi = max(start, gain_slice.start), min(stop, gain_slice.stop)
+                    if lo < hi:
+                        order_tables_gain[idir, iatom, order - 1, lo - gain_slice.start:hi - gain_slice.start] = \
+                            values[lo - start:hi - start]
+            exact_multiphonon_orders(pending_rows[k], de_mev, int(row_horizon[k]), write)
+
+        threads = min(max(row_threads, _worker_thread_limit()), len(pending_rows))
+        if threads > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(threads) as pool:
+                list(pool.map(one_row, range(len(pending_rows))))
+        else:
+            for k in range(len(pending_rows)):
+                one_row(k)
 
     return order_tables, order_tables_gain
 
@@ -805,6 +849,7 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         sigma0_absorption_lookup=state["sigma0_absorption_lookup"],
         emit_gain_side=emit_gain,
         q2_max=float(np.max(state["q_grid_ang_inv"])) ** 2,
+        row_threads=int(state.get("multiphonon_row_threads", 1)),
     )
     sqe_multiphonon_approx = np.zeros((state["num_q"], state["num_e"]), dtype=float)
     sqe_multiphonon_gain = np.zeros_like(sqe_multiphonon_approx) if emit_gain else None

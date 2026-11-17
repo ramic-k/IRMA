@@ -49,8 +49,11 @@ _DECK = """20 /
 /
 """
 
-# Frozen regression pins; re-bless only for an intended physics change.
-_PINS = {1: 9.098600568286e-01, 2: 2.633836729729e+00}
+# Frozen regression pins; re-bless only for an intended physics change. Re-blessed when the multiphonon orders
+# became exact (direct convolution, no crop at the top of the energy window): the crop had lost contributions
+# near the window top (this deck's window ends at beta = 12, below the reach of orders 2-6); an uncropped FFT
+# gives the same sums to all printed digits.
+_PINS = {1: 9.098616206943e-01, 2: 2.633838637500e+00}
 _TEFF0 = 707.2741
 
 
