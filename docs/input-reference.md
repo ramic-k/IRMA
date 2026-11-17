@@ -63,7 +63,7 @@ against the line where the offending card *started*.
 ## Card-by-card reference
 
 The cards below are read in order. Cards 1–6 and Cards 7–9 are read for every
-input file. The generalized-elastic block (Cards 6b–6g) is read only when `iel=10`,
+input file. The generalized-elastic block (Cards 6b–6h) is read only when `iel=10`,
 between Card 6 and Card 7. The per-temperature detail block (Cards 11–19) is
 read only for the classic kernels and `inelastic_mode=0`.
 
@@ -109,7 +109,7 @@ not resolve.
 |-------|---------|
 | `0` | No coherent elastic. (Falls back to incoherent elastic when there is also no translational mode.) |
 | `1`–`6` | Built-in coherent elastic for graphite, Be, BeO, Al, Pb, Fe (in that order). |
-| `10` | Generalized coherent elastic: Bragg edges computed from the user's crystal structure (any material). Cards 6b–6g follow. Recommended for new evaluations. |
+| `10` | Generalized coherent elastic: Bragg edges computed from the user's crystal structure (any material). Cards 6b–6h follow. Recommended for new evaluations. |
 
 **`ncold` (Card 5): cold hydrogen/deuterium option**
 
