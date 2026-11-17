@@ -33,6 +33,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   as missing and switches to its short-collision-time form there); they
   wrote 1e-75 before. A deck that leaves `smin` out keeps LEAPR's 1e-75, so
   NJOY decks give the same tapes as before.
+- The GUI's calculations print UTF-8 on every platform: on Windows a child
+  process with redirected output wrote in the ANSI code page, and a progress
+  line with a Greek letter stopped a valid calculation.
 - Mode-0 `iel=10` input files give the other species' partial phonon
   spectra per temperature, as Card 12e right after Card 12 in each
   temperature block, instead of once as Card 6e after Card 6d. Each
