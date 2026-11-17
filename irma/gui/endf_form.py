@@ -1389,11 +1389,14 @@ class EndfFormMixin:
                       "across a peak that the grid does not resolve.")
         self.iint.pack(fill=tk.X, pady=2)
         self.smin = LabeledEntry(
-            ef, "smin:", "1e-75",
+            ef, "smin:", "2e-98",
             help_title="smin (Minimum S Threshold, Card 4)",
             help_text="S(alpha,beta) values below this threshold are "
-                      "treated as zero in the output.\n\n"
-                      "Default: 1e-75 (LEAPR convention).")
+                      "written as zero.\n\n"
+                      "Default: 2e-98, the smallest value NJOY's THERMR uses: it "
+                      "treats any S at or below exp(-225) = 1.9e-98 as missing "
+                      "and uses its short-collision-time form there. A deck "
+                      "that leaves smin out keeps LEAPR's 1e-75.")
         self.smin.pack(fill=tk.X, pady=2)
 
         # Cold/Skold
@@ -2454,7 +2457,7 @@ class EndfFormMixin:
         lines.append(f"{ntempr} {self._imported_iprint} {self.nphon.get()} /")
         # Card 4 (iint, nver and lrel appended only when non-default, so
         # classic decks round-trip byte-identically)
-        smin_s = self.smin.get().strip() or '1e-75'
+        smin_s = self.smin.get().strip() or '2e-98'
         card4 = f"{self.mat.get()} {self.za.get()} {isabt} {ilog} {smin_s}"
         nver = self.nver.get().strip() or "8"
         lrel = self.lrel.get().strip() or "1"
@@ -2886,7 +2889,7 @@ class EndfFormMixin:
         self.isabt.set("0 — S(α,β) (standard)")
         self.ilog.set("0 — S values")
         self.iint.set("0 — log-lin (INT=4)")
-        self.smin.set("1e-75")
+        self.smin.set("2e-98")
         self.awr.set("")
         self.spr.set("")
         self.npr.set("1")

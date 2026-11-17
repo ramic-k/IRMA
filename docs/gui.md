@@ -238,7 +238,7 @@ Each input file evaluates one principal scatterer: for `inelastic_mode=1/2`, IRM
 | `nphon` | `100` | Maximum phonon expansion order. Light scatterers (H, D) reach much larger α for the same β grid and generally need *more* terms; heavy scatterers converge with fewer. For modes 1/2 this is also the multiphonon maximum order (unless Auto-size is on, the GUI default). |
 | `isabt` | `0 — S(α,β)` | Which form of S(α,β) is stored. `0` is the standard symmetric S(α,β) required by THERMR; `1` writes the asymmetric S̃ form (diagnostics only, not for library production). |
 | `ilog` | `0 — S values` | Storage form. `0` stores S directly; `1` stores ln(S) (ENDF LLN=1), useful when the table spans many decades and the processor supports it. |
-| `smin` | `1e-75` | S(α,β) values below this threshold are treated as zero (LEAPR convention). |
+| `smin` | `2e-98` | S(α,β) values below this threshold are written as zero. 2e-98 is the smallest value NJOY's THERMR uses: it treats any S at or below exp(−225) ≈ 1.9e-98 as missing and switches to its short-collision-time form there. A deck that leaves `smin` out keeps LEAPR's 1e-75. |
 
 ### Special Modes
 

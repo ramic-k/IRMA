@@ -28,6 +28,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   direction blocks than workers, among threads inside a block, with the same
   tape for any count. Regenerate mode 1 and 2 tapes to get the corrected
   tails.
+- The GUI and `irma mlip emit` write `smin = 2e-98` on Card 4, the smallest
+  value NJOY's THERMR uses (it treats any S at or below exp(-225) = 1.9e-98
+  as missing and switches to its short-collision-time form there); they
+  wrote 1e-75 before. A deck that leaves `smin` out keeps LEAPR's 1e-75, so
+  NJOY decks give the same tapes as before.
 - Mode-0 `iel=10` input files give the other species' partial phonon
   spectra per temperature, as Card 12e right after Card 12 in each
   temperature block, instead of once as Card 6e after Card 6d. Each
