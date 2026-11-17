@@ -165,14 +165,17 @@ def build_star_averaged_projection_components(
 # stores (THERMR treats S below about 1e-98 as zero) and below what float64 holds once scaled.
 MULTIPHONON_TRIM = 1.0e-300
 
+# How the multiphonon orders are computed (Card 6h): "fft" (the default) or "direct" (exact_multiphonon_orders).
+MULTIPHONON_CONVOLUTIONS = ("fft", "direct")
+
 
 def exact_multiphonon_orders(row, de_mev, horizon, write):
     """The multiphonon orders T_n = T_1 * T_(n-1), n = 2 .. ``horizon``, of one unit-area one-phonon seed ``row``
-    (a density on a signed grid with zero at its centre), by direct convolution.
+    (a density on a signed grid with zero at its centre), by direct convolution: the "direct" method of Card 6h.
 
     Every term of the sum is nonnegative, so each value keeps its relative precision however far it lies below the
-    peak of its order. An FFT does not: its rounding error is a fraction of the largest value, so the tails of the
-    orders (most of an S(alpha, beta) table at large energy transfer) came out as noise, zeros or negative values.
+    peak of its order. The FFT (the default method) does not: its rounding error is a fraction of the largest value,
+    so values of an order more than about 16 decades below its peak come out as noise, zeros or negative values.
 
     Each order is an exact linear convolution: it is kept on the window widened by the reach of the orders still to
     come (``horizon - n`` one-phonon steps), which is all the remaining orders on the window draw from; values below
@@ -227,6 +230,7 @@ def precompute_directional_multiphonon_orders(
     emit_gain_side: bool = False,
     q2_max: float | None = None,
     row_threads: int = 1,
+    convolution: str = "fft",
 ) -> tuple[np.ndarray, np.ndarray, "np.ndarray | None"]:
     """Precompute per-direction, per-atom signed self orders at unit Q^2.
 
@@ -243,7 +247,11 @@ def precompute_directional_multiphonon_orders(
             -e_work[::-1]`` (the negative half of the SAME signed convolution,
             for free) -- shape matches ``order_tables`` because the gain window
             length ``start+1`` equals the positive length ``n_e``.
+
+    ``convolution`` is one of MULTIPHONON_CONVOLUTIONS (see the comment above the orders below).
     """
+    if convolution not in MULTIPHONON_CONVOLUTIONS:
+        raise ValueError(f"multiphonon convolution must be one of {MULTIPHONON_CONVOLUTIONS}, got {convolution!r}")
     n_dirs = len(directions)
     n_atoms = len(base_prefactors)
     n_orders = max_order
@@ -262,7 +270,8 @@ def precompute_directional_multiphonon_orders(
     # against the analytic directional MSD.
     kernel_areas = np.zeros((n_dirs, n_atoms), dtype=float)
 
-    # Valid (direction, atom) kernels are collected, then convolved row by row after the loops.
+    # Valid (direction, atom) kernels are collected, then convolved after the loops (all rows at once by FFT, or
+    # row by row by direct convolution).
     pending_rows: list[np.ndarray] = []
     pending_dirs: list[int] = []
     pending_atoms: list[int] = []
@@ -314,12 +323,16 @@ def precompute_directional_multiphonon_orders(
             pending_dirs.append(idir)
             pending_atoms.append(atom_index)
 
-    # Orders 2 .. horizon of every row by direct convolution (exact_multiphonon_orders). Each row stops at its own
-    # order horizon: the last order whose Poisson weight at Q_max stays above float64 underflow (log weight >= -760,
-    # below exp's ~-745.8 zero line); later orders have weight exactly 0.0, so their tables stay zero. Rows are
-    # independent and run on row_threads threads (spare cores of the run, see the engine) or IRMA_WORKER_THREADS,
-    # whichever is larger; the convolution releases the interpreter lock, and the result does not depend on the
-    # thread count.
+    # Orders 2 .. horizon of every row. Each row stops at its own order horizon: the last order whose Poisson
+    # weight at Q_max stays above float64 underflow (log weight >= -760, below exp's ~-745.8 zero line); later
+    # orders have weight exactly 0.0, so their tables stay zero.
+    #   "fft" (default): T1**n for all rows at once, one batched rfft/irfft per order, each order cut to the energy
+    #     window before the next is built from it. Values more than about 16 decades below an order's peak are FFT
+    #     rounding noise; the writer stores negative values as zero.
+    #   "direct": exact_multiphonon_orders, row by row; exact in every value, at several times the cost. Rows are
+    #     independent and run on row_threads threads (spare cores of the run, see the engine) or
+    #     IRMA_WORKER_THREADS, whichever is larger; the convolution releases the interpreter lock, and the result
+    #     does not depend on the thread count.
     if pending_rows and max_order >= 2:
         dir_idx = np.asarray(pending_dirs, dtype=np.intp)
         atom_idx = np.asarray(pending_atoms, dtype=np.intp)
@@ -340,6 +353,40 @@ def precompute_directional_multiphonon_orders(
             )
         else:
             row_horizon = np.full(len(dir_idx), max_order, dtype=int)
+        if convolution == "fft":
+            rows_hat = np.array(pending_rows, dtype=float)        # (n_rows, n_e)
+            horizon_order = np.argsort(-row_horizon, kind="stable")
+            rows_hat = rows_hat[horizon_order]
+            dir_idx = dir_idx[horizon_order]
+            atom_idx = atom_idx[horizon_order]
+            row_horizon = row_horizon[horizon_order]
+            n_rows, n_points = rows_hat.shape
+            n_full = 2 * n_points - 1
+            start = (n_full - n_points) // 2
+            n_fft = 1 << (n_full - 1).bit_length()
+            base_fft = np.fft.rfft(rows_hat, n=n_fft, axis=-1)
+            prev = rows_hat
+            active = n_rows
+            for order_index in range(2, max_order + 1):
+                new_active = int(np.searchsorted(
+                    -row_horizon, -order_index, side="right"))
+                if new_active == 0:
+                    break
+                if new_active < active:
+                    prev = prev[:new_active]
+                    base_fft = base_fft[:new_active]
+                    active = new_active
+                prev_fft = np.fft.rfft(prev, n=n_fft, axis=-1)
+                full = np.fft.irfft(base_fft * prev_fft, n=n_fft, axis=-1)[:, :n_full]
+                full *= de_mev
+                prev = full[:, start:start + n_points]
+                order_tables[dir_idx[:active], atom_idx[:active], order_index - 1] = (
+                    prev[:, positive_slice])
+                if order_tables_gain is not None:
+                    order_tables_gain[dir_idx[:active], atom_idx[:active],
+                                      order_index - 1] = prev[:, gain_slice]
+            return order_tables, order_tables_gain
+
         positive_start, positive_stop = positive_slice.start, positive_slice.stop
 
         def one_row(k):
@@ -850,6 +897,7 @@ def accumulate_incoherent_multiphonon_direction_block(direction_indices: np.ndar
         emit_gain_side=emit_gain,
         q2_max=float(np.max(state["q_grid_ang_inv"])) ** 2,
         row_threads=int(state.get("multiphonon_row_threads", 1)),
+        convolution=state.get("multiphonon_convolution", "fft"),
     )
     sqe_multiphonon_approx = np.zeros((state["num_q"], state["num_e"]), dtype=float)
     sqe_multiphonon_gain = np.zeros_like(sqe_multiphonon_approx) if emit_gain else None

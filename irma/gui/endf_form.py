@@ -559,6 +559,31 @@ class EndfFormMixin:
             justify=tk.LEFT,
         ).pack(side=tk.LEFT, anchor="w")
 
+        # Card 6h: how the multiphonon orders are computed. The deck carries the
+        # card only for "direct"; without it a deck means "fft".
+        conv_row = ttk.Frame(self._nc_subframe)
+        conv_row.pack(fill=tk.X, pady=2)
+        ttk.Label(conv_row, text="Multiphonon convolution:", width=LBL,
+                  anchor="e").pack(side=tk.LEFT, padx=(0, 5))
+        self.nc_convolution_var = tk.StringVar(value="fft")
+        ttk.Radiobutton(
+            conv_row, text="FFT (fast)", variable=self.nc_convolution_var,
+            value="fft").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Radiobutton(
+            conv_row, text="Direct (exact tails)",
+            variable=self.nc_convolution_var,
+            value="direct").pack(side=tk.LEFT, padx=(0, 4))
+        InfoLabel(conv_row, "Multiphonon Convolution",
+                  "Card 6h. How the multiphonon orders are computed.\n\n"
+                  "FFT (default): fast. Values more than about 16 decades "
+                  "below the peak of each order are rounding noise or zero. "
+                  "In the validation cases this does not change the cross "
+                  "sections NJOY computes from the file.\n\n"
+                  "Direct: every value of the scattering law is exact, "
+                  "including the far tails. Several times slower: about five "
+                  "times on the graphite validation deck."
+                  ).pack(side=tk.LEFT)
+
         # BORN corrections row
         born_row = ttk.Frame(self._nc_subframe)
         born_row.pack(fill=tk.X, pady=2)
@@ -2597,6 +2622,8 @@ class EndfFormMixin:
                     lines.append(f"{ndir_v} {mpdir_v} {auto_order_v} /")
                 else:
                     lines.append(f"{ndir_v} {mpdir_v} /")
+                if self.nc_convolution_var.get() == "direct":
+                    lines.append("convolution_method direct /")
 
             # Optional extinction card (last card of the iel=10 block, before
             # Card 7). Emitted only when the toggle is on; off => ideal edges.
@@ -2929,6 +2956,7 @@ class EndfFormMixin:
         # for import faithfulness: any mode-1/2 deck carries Card 6g, whose
         # parsed auto_order (0 when the 3rd field is omitted) overwrites this.
         self.nc_auto_order_var.set(1)
+        self.nc_convolution_var.set("fft")
 
         # Grid. LAT matches the builder default (Card 7 always carries lat on
         # import, so this only governs a reset form — keeping the two defaults
@@ -3050,6 +3078,7 @@ class EndfFormMixin:
                 self.nc_num_directions.set(str(nc['ndir']))
                 self.nc_multiphonon_num_directions.set(str(nc['mpdir']))
                 self.nc_auto_order_var.set(nc['auto_order'])
+                self.nc_convolution_var.set(nc['convolution'])
 
         # Grid (manual; populated from the deck)
         self._set_code(self.lat, st['lat'])

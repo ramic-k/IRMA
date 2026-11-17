@@ -5,29 +5,29 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Modes 1 and 2: the multiphonon orders are computed exactly. They were
-  built by FFT, whose rounding error is a fraction (about 1e-16) of the
-  largest value, so the tails of the orders, which fill most of an S(α,β)
-  table at large energy transfer, came out as noise, zeros or negative
-  numbers, and each order was cut at the top of the energy grid before the
-  next was built from it, which lost real contributions near the top. The
-  orders are now summed directly (nonnegative terms, so every value keeps
-  its relative precision) and kept on the grid widened by the reach of the
-  orders still to come. On the production graphite deck at 296 K (10,000 and
-  1,000 directions) every stored value above 1e-16 is unchanged; 5,124
-  zeros became values and about 15,000 values below 1e-16 changed, by up to
-  33 orders of magnitude; with log storage (`ilog=1`) no zeros remain.
-  Through NJOY the graphite, beryllium and BeO validation tapes give the
-  same cross sections to the printed digits, and byte-identical ACE files
-  except three lines of BeO's beryllium (a scattering cosine changed by at
-  most 3.4e-7); the validation results stand. Small grids that end inside
-  the reach of the multiphonon orders change more: two pinned integrals
-  moved by 2e-6 and 2e-4. The multiphonon
-  step costs five to nine times as long (graphite: 275 s against 32 s on 14
-  workers); it is shared among the Card 6f workers and, when there are fewer
-  direction blocks than workers, among threads inside a block, with the same
-  tape for any count. Regenerate mode 1 and 2 tapes to get the corrected
-  tails.
+- Modes 1 and 2: optional Card 6h chooses how the multiphonon orders are
+  computed: `convolution_method fft /` (the default, as before) or
+  `convolution_method direct /`. The FFT's rounding error is a fraction
+  (about 1e-16) of the largest value, so the tails of the orders, which fill
+  most of an S(α,β) table at large energy transfer, come out as noise, zeros
+  or negative numbers, and each order is cut at the top of the energy grid
+  before the next is built from it. `direct` sums the convolutions directly
+  (nonnegative terms, so every value keeps its relative precision) on the grid
+  widened by the reach of the orders still to come. On the production graphite
+  deck at 296 K (10,000 and 1,000 directions) every stored value above 1e-16
+  is the same with both; with `direct`, 5,124 zeros become values and about
+  15,000 values below 1e-16 change, by up to 33 orders of magnitude, and with
+  log storage (`ilog=1`) no zeros remain. Through NJOY the graphite, beryllium
+  and BeO validation tapes give the same cross sections with both methods to
+  the printed digits, and byte-identical ACE files except three lines of BeO's
+  beryllium (a scattering cosine differs by at most 3.4e-7). Small grids that
+  end inside the reach of the multiphonon orders differ more (2e-6 and 2e-4 in
+  two test integrals). `direct` costs five to nine times as long in this step
+  (graphite: 275 s against 32 s on 14 workers); it is shared among the Card 6f
+  workers and, when there are fewer direction blocks than workers, among
+  threads inside a block, with the same tape for any count. The GUI offers the
+  choice and writes Card 6h only for `direct`; decks that already carry
+  `convolution_method fft /` run unchanged.
 - The GUI and `irma mlip emit` write `smin = 2e-98` on Card 4, the smallest
   value NJOY's THERMR uses (it treats any S at or below exp(-225) = 1.9e-98
   as missing and switches to its short-collision-time form there); they

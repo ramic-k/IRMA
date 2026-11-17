@@ -35,10 +35,8 @@ _LIVE = dict(
 
 # Frozen pins (trapezoid integrals over the output E axis); rel 1e-4 because
 # the spectra layer jitters about 1e-5 across platforms. The axis starts at
-# E=0, so the elastic pin is half the line's area. The inelastic pin was re-blessed when the multiphonon orders
-# became exact (direct convolution, no crop at the top of the 120 meV grid, which the orders reach beyond); an
-# uncropped FFT gives the same integral to 13 digits.
-_I_INELASTIC = 2.889147353704e-02
+# E=0, so the elastic pin is half the line's area.
+_I_INELASTIC = 2.888525860058e-02
 _I_ELASTIC = 3.915718308255e-05
 
 

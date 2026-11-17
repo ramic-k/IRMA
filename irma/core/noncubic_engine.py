@@ -113,6 +113,7 @@ THz = 1000000000000.0
 from irma.core.noncubic_workers import (  # noqa: F401  (re-exported for callers)
     NATIVE_THREAD_ENV_VARS,
     BARN_PER_M2,
+    MULTIPHONON_CONVOLUTIONS,
     limit_native_threads_to_one,
     _pool_worker_init,
     _dispatch_block,
@@ -197,6 +198,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--q-chunk-size", type=int, default=20000)
     parser.add_argument("--multiphonon-max-order", type=int, default=100)
+    parser.add_argument("--multiphonon-convolution", choices=("fft", "direct"), default="fft")
     parser.add_argument(
         "--auto-multiphonon-order",
         action="store_true",
@@ -291,6 +293,10 @@ def compute_from_args(
     mesh context provides no thermal-displacement data).
     """
     limit_native_threads_to_one()
+    multiphonon_convolution = str(getattr(args, "multiphonon_convolution", "fft")).lower()
+    if multiphonon_convolution not in MULTIPHONON_CONVOLUTIONS:
+        raise ValueError(f"multiphonon convolution must be one of {MULTIPHONON_CONVOLUTIONS}, "
+                         f"got {multiphonon_convolution!r}")
     # One spawned pool serves every compute phase of the run; run_blocks
     # creates it on first use and the finally clause retires it.
     pool_holder: dict = {}
@@ -931,9 +937,10 @@ def compute_from_args(
                     "sigma0_emission_lookup": signed_emission_lookup,
                     "sigma0_absorption_lookup": signed_absorption_lookup,
                     "emit_gain_side": emit_gain_side,
-                    # With fewer direction blocks than workers, the spare cores convolve rows inside the blocks:
-                    # each block then uses num_jobs // blocks threads, so the run uses the ncpu cores asked for.
-                    # Rows are independent, so the result does not depend on this.
+                    "multiphonon_convolution": multiphonon_convolution,
+                    # Direct convolution only: with fewer direction blocks than workers, the spare cores convolve
+                    # rows inside the blocks; each block then uses num_jobs // blocks threads, so the run uses the
+                    # ncpu cores asked for. Rows are independent, so the result does not depend on this.
                     "multiphonon_row_threads": max(1, num_jobs // max(1, len(multiphonon_direction_blocks))),
                 }
             )
@@ -1112,6 +1119,7 @@ def compute_from_args(
             "num_directions": args.num_directions,
             "multiphonon_num_directions": multiphonon_num_directions,
             "multiphonon_max_order": args.multiphonon_max_order,
+            "multiphonon_convolution": multiphonon_convolution,
             "min_phonon_energy_meV": cutoff_mev,
             "phonon_cutoff": phonon_cutoff_summary,
             "multiphonon_model": "incoherent_approximation",
@@ -1202,6 +1210,7 @@ def run_noncubic_sab_inprocess(
     jobs: int = 1,
     multiphonon_max_order: int = 100,
     auto_multiphonon_order: bool = False,
+    multiphonon_convolution: str = "fft",
     min_phonon_energy_mev: float = 0.0,
     material_name: str = "material",
     represented_principal_site_count: int | None = None,
@@ -1254,6 +1263,7 @@ def run_noncubic_sab_inprocess(
         q_chunk_size=20000,
         multiphonon_max_order=int(multiphonon_max_order),
         auto_multiphonon_order=bool(auto_multiphonon_order),
+        multiphonon_convolution=str(multiphonon_convolution),
         min_phonon_energy_mev=float(min_phonon_energy_mev),
         inelastic_mode=0 if inelastic_mode is None else int(inelastic_mode),
         represented_principal_site_count=(

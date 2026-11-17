@@ -304,24 +304,28 @@ Card 6g `mpdir` (converges by ~50–100; 1000 recommended, cost linear).
 Transfers beyond the tabulated grid are covered downstream by THERMR's
 short-collision-time extension.
 
-The convolutions are summed directly, as the classic kernel's `convol`
-does, not by FFT. Every term of the sum is nonnegative, so each value of
-an order keeps its relative precision however far it lies below the
-order's peak. An FFT's rounding error is a fraction of the largest value
-of the array (about 1e-16), so the tails of the orders, which fill most
-of an S(α,β) table at large energy transfer, came out as noise, zeros or
-negative numbers; on the production graphite deck at 296 K that affected
-about 10% of the 198,303 stored values (all below 1e-16; 5,124 zeros became
-values and the rest were off by up to 33 orders of magnitude). The orders are also exact linear
-convolutions: each order is kept on the work grid widened by the reach of
-the orders still to come, so the values near the top of the grid keep the
-contributions of the energies above it, which a cropped order lost. Values
-below 1e-300 of an order's peak are not carried to the next order. The
-direct sum costs five to nine times the FFT in this step (on the production
-graphite deck, 275 s against 32 s on 14 workers); rows
-(direction, atom) are independent, so the step is shared among the Card 6f
-workers and, when there are fewer direction blocks than workers, among
-threads inside a block, with the same result for any count.
+The convolutions are computed by FFT unless Card 6h asks for direct
+summation (`convolution_method direct`), as the classic kernel's `convol`
+does. The FFT is fast, but its rounding error is a fraction of the largest
+value of the array (about 1e-16), so the tails of the orders, which fill most
+of an S(α,β) table at large energy transfer, come out as noise, zeros or
+negative numbers (written as zero); it also cuts each order at the top of the
+work grid before building the next one from it. In the direct sum every term
+is nonnegative, so each value of an order keeps its relative precision however
+far it lies below the order's peak, and each order is kept on the work grid
+widened by the reach of the orders still to come, so the values near the top of
+the grid keep the contributions of the energies above it. Values below 1e-300
+of an order's peak are not carried to the next order.
+
+On the production graphite deck at 296 K the two methods give the same value
+for every stored value above 1e-16. About 10% of the 198,303 stored values lie
+below that; there the FFT gives noise or zeros (5,124 zeros, and values off by
+up to 33 orders of magnitude). The cross sections NJOY computes from the two
+tapes are the same. The direct sum costs five to nine times the FFT in this
+step (275 s against 32 s on 14 workers); rows (direction, atom) are
+independent, so the step is shared among the Card 6f workers and, when there
+are fewer direction blocks than workers, among threads inside a block, with
+the same result for any count.
 
 ### Directional anisotropic Debye-Waller: why isotropic fails
 

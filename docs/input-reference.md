@@ -306,10 +306,32 @@ converge the anisotropic-DW Poisson sum at the grid's Q-max; a graphite
 grid reaching Q ≈ 100 Å⁻¹ needs an order near 223, and a fixed `nphon=100`
 truncates the high-Q part of the table (the engine warns).
 
+#### Card 6h: multiphonon convolution (`inelastic_mode=1/2`, optional)
+
+```
+convolution_method fft /
+convolution_method direct /
+```
+
+A named card right after Card 6g. It chooses how the multiphonon orders are
+computed; without it, `fft`.
+
+- `fft` (default): fast. The FFT's rounding error is about 1e-16 of the
+  largest value of each order, so values further below an order's peak come
+  out as noise or zero, and each order is cut at the top of the energy grid
+  before the next is built from it.
+- `direct`: the convolutions are summed directly, so every value is exact,
+  down to the far tails of S(α,β). It costs five to nine times as long in
+  this step (graphite validation deck: 275 s against 32 s on 14 workers).
+
+In the graphite, beryllium and BeO validation cases the two give the same
+stored values above 1e-16 and the same cross sections after NJOY
+([validation methodology](validation/methodology.md#fft-and-direct-multiphonon-orders)).
+
 #### Extinction card: crystalline extinction (optional)
 
 An optional card placed **last in the `iel=10` block** (after Card 6d, or
-Card 6g for `inelastic_mode=1/2`), before Card 7. It is off by default; when
+Cards 6g/6h for `inelastic_mode=1/2`), before Card 7. It is off by default; when
 present it reduces the coherent-elastic Bragg edges of MF7/MT2 for
 dynamical-diffraction extinction, a property of the physical specimen. The
 card needs a coherent-elastic component: `elastic_mode=2` (MEF)
