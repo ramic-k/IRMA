@@ -33,7 +33,7 @@ dependencies = [
     # tape gates) past this cap, so a green preview against a new minor IS the
     # revalidation -- raise the cap in the same change that cites that run, and
     # keep the conda recipe's pin in step.
-    "endf-parserpy>=0.12,<0.18",
+    "endf-parserpy>=0.12,<0.19",
     # threadpoolctl backs limit_native_threads_to_one() (irma.core.noncubic_workers):
     # the noncubic mode-1/2 spawn ProcessPool pins native BLAS/OMP threads to 1 in the
     # parent and in every spawned worker. Without it the pin silently no-ops and a
