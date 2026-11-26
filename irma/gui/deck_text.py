@@ -211,7 +211,7 @@ def parse_deck_to_staging(reader, path):
                 'use_born': c['use_born'], 'born_path': c['born_path'] or '',
                 'min_phonon_energy_mev': c['min_phonon_energy_mev'],
                 'ndir': c['ndir'], 'mpdir': c['mpdir'],
-                'auto_order': c['auto_order'],
+                'auto_order': c['auto_order'], 'convolution': c['convolution'],
             }
 
         # Optional extinction card (last card of the iel=10 block, before Card 7).

@@ -6,6 +6,7 @@ Generates physically motivated grids with:
 - Logarithmic spacing in the high-energy tail
 - Alpha grid linear in momentum transfer Q (alpha quadratic) through the
   thermal scattering window, with a logarithmic high-Q tail
+- Tail steps on the recoil ridge divided to a fraction of the ridge width
 """
 
 import warnings
@@ -55,6 +56,14 @@ DELTA_BETA_MAX_LINLIN = 0.5
 # calibration in docs/grids.md.
 RIDGE_MARGIN_SIGMAS = 2.0
 
+# Largest alpha or beta step on the recoil ridge, in standard deviations of
+# the ridge, sqrt(2 x T_eff/T) at x = alpha = beta. THERMR interpolates
+# linearly in ln S across such steps, and a chord under the ridge loses about
+# step^2 / (12 sd^2) of its area: 0.19% at 0.15 widths. The generator does not
+# know T_eff and uses its lower bound, T_eff >= T, so the step is at most this
+# many true widths (docs/grids.md).
+RIDGE_STEP_SIGMAS = 0.15
+
 # Deck files carry the grids with six decimals in scientific notation
 # (``irma.mlip.emit._array_lines`` and the GUI writer), so two nodes closer
 # than that print as one value and the engine rejects the deck as
@@ -98,16 +107,48 @@ def linlin_fine_beta_limit(beta_max, awr, freq_max_eV, temperature_K,
     where the factor would be 1; since deck temperatures ascend, T_grid =
     temps[0] is the coldest and the limit errs on the wide side.
     """
-    alpha_max = 4.0 * float(beta_max) / float(awr)
-    t_grid = float(temperature_K)
-    temps = ([t_grid] if evaluation_temperatures_K is None
+    return _ridge_limit(4.0 * float(beta_max) / float(awr), freq_max_eV,
+                        temperature_K, evaluation_temperatures_K)
+
+
+def _evaluation_temperatures(temperature_K, evaluation_temperatures_K):
+    temps = ([float(temperature_K)] if evaluation_temperatures_K is None
              else [float(t) for t in np.atleast_1d(evaluation_temperatures_K)])
     if not temps or not all(np.isfinite(t) and t > 0.0 for t in temps):
         raise ValueError(
             f"evaluation_temperatures_K must be finite and > 0, got {temps}")
-    widths = [np.sqrt(2.0 * alpha_max * effective_temperature_bound_ratio(freq_max_eV, t)
+    return temps
+
+
+def _ridge_limit(centre, freq_max_eV, temperature_K, evaluation_temperatures_K):
+    """``centre`` plus ``RIDGE_MARGIN_SIGMAS`` ridge widths there, the widths
+    from the upper bound on T_eff at the hottest evaluation temperature."""
+    t_grid = float(temperature_K)
+    temps = _evaluation_temperatures(t_grid, evaluation_temperatures_K)
+    widths = [np.sqrt(2.0 * centre * effective_temperature_bound_ratio(freq_max_eV, t)
                       * t / t_grid) for t in temps]
-    return alpha_max + RIDGE_MARGIN_SIGMAS * max(widths)
+    return centre + RIDGE_MARGIN_SIGMAS * max(widths)
+
+
+def _resolve_recoil_ridge(grid, lower, upper, width_ratio):
+    """Insert nodes so that no step between ``lower`` and ``upper`` exceeds
+    ``RIDGE_STEP_SIGMAS`` ridge widths.
+
+    The width at x is sqrt(2 x width_ratio), with ``width_ratio`` a lower
+    bound on T_eff/T in the grid's units, taken at the lower end of each
+    step. The existing nodes are kept; a step that is too wide is divided
+    into equal parts.
+    """
+    grid = np.asarray(grid, dtype=float)
+    out = [grid[:1]]
+    for lo, hi in zip(grid[:-1], grid[1:]):
+        if lower <= lo < upper:
+            limit = RIDGE_STEP_SIGMAS * np.sqrt(2.0 * lo * width_ratio)
+            parts = max(1, int(np.ceil((hi - lo) / limit - 1e-9)))
+        else:
+            parts = 1
+        out.append(lo + (hi - lo) * np.arange(1, parts + 1) / parts)
+    return np.concatenate(out)
 
 
 def _drop_nodes_indistinct_in_a_deck(beta):
@@ -158,7 +199,7 @@ def _upper_beta_tail(beta_lo, beta_hi, n_upper, delta_beta_max, beta_fine):
 def generate_beta_grid(freq_max_eV, temperature_K,
                        n_lower=50, n_phonon=300, n_upper=None,
                        beta_max_eV=5.0, *, iint=0, awr=None,
-                       evaluation_temperatures_K=None):
+                       evaluation_temperatures_K=None, resolve_ridge=True):
     """Generate a beta grid with logarithmic tails and linear phonon region.
 
     Parameters
@@ -183,18 +224,27 @@ def generate_beta_grid(freq_max_eV, temperature_K,
         linear region the upper tail is dropped with a UserWarning; the
         linear region is never truncated.
     iint : int
-        Card 4 interpolation flag. 0 (log-lin, INT=4) keeps the pure log
-        tail. 1 (lin-lin, INT=2) caps the tail step at
+        Card 4 interpolation flag. 0 (log-lin, INT=4) keeps the log tail and,
+        given ``awr``, resolves the recoil ridge on it (``resolve_ridge``).
+        1 (lin-lin, INT=2) caps the tail step at
         ``DELTA_BETA_MAX_LINLIN`` up to ``linlin_fine_beta_limit`` so linear
         interpolation of exp(-beta/2) does not overshoot the free-atom cross
         section at high incident energy.
     awr : float
-        Atomic weight ratio; required for iint=1.
+        Atomic weight ratio; required for iint=1 and for the ridge rule of
+        iint=0 (without it the log-lin tail stays purely logarithmic).
     evaluation_temperatures_K : sequence or None
-        Temperatures the law is evaluated at (iint=1 only; default the grid
-        temperature). A lat=1 grid is written in kT(293.6 K) units, so below
-        that temperature the stored cap is scaled by T_lowest/T_grid; the
-        fine limit is taken at the hottest temperature.
+        Temperatures the law is evaluated at (default the grid temperature).
+        A lat=1 grid is written in kT(293.6 K) units, so below that
+        temperature the stored lin-lin cap and the ridge width are scaled
+        with T_lowest/T_grid; the ridge limit is taken at the hottest
+        temperature.
+    resolve_ridge : bool
+        Log-lin tail only: divide every tail step below the ridge limit
+        (``linlin_fine_beta_limit``) so that it does not exceed
+        ``RIDGE_STEP_SIGMAS`` widths of the recoil ridge. THERMR interpolates
+        linearly in ln S there, and a coarser step loses cross section at
+        high incident energy. Default True; a lin-lin tail is already finer.
 
     Returns
     -------
@@ -214,14 +264,11 @@ def generate_beta_grid(freq_max_eV, temperature_K,
         raise ValueError(f"temperature_K must be finite and > 0, got {temperature_K}")
     if not np.isfinite(beta_max_eV) or beta_max_eV <= 0.0:
         raise ValueError(f"beta_max_eV must be finite and > 0, got {beta_max_eV}")
-    if iint == 1:
-        if awr is None or not (np.isfinite(awr) and awr > 0.0):
-            raise ValueError(f"awr must be finite and > 0 for iint=1, got {awr}")
-        temps = ([float(temperature_K)] if evaluation_temperatures_K is None
-                 else [float(t) for t in np.atleast_1d(evaluation_temperatures_K)])
-        if not temps or not all(np.isfinite(t) and t > 0.0 for t in temps):
-            raise ValueError(
-                f"evaluation_temperatures_K must be finite and > 0, got {temps}")
+    if iint == 1 and (awr is None or not (np.isfinite(awr) and awr > 0.0)):
+        raise ValueError(f"awr must be finite and > 0 for iint=1, got {awr}")
+    if awr is not None and not (np.isfinite(awr) and awr > 0.0):
+        raise ValueError(f"awr must be finite and > 0, got {awr}")
+    temps = _evaluation_temperatures(temperature_K, evaluation_temperatures_K)
     kT_eV = BK * temperature_K
 
     # Linear region covering the phonon spectrum
@@ -246,6 +293,13 @@ def generate_beta_grid(freq_max_eV, temperature_K,
                                           n_upper, cap, beta_fine)
         else:
             beta_upper = np.geomspace(beta_linear[-1], beta_upper_max, n_upper + 1)[1:]
+            if resolve_ridge and awr is not None:
+                tail = _resolve_recoil_ridge(
+                    np.concatenate((beta_linear[-1:], beta_upper)), beta_linear[-1],
+                    linlin_fine_beta_limit(beta_upper_max, awr, freq_max_eV,
+                                           temperature_K, temps),
+                    min(1.0, min(temps) / float(temperature_K)))
+                beta_upper = tail[1:]
     else:
         beta_upper = np.array([])
         if n_upper > 0:
@@ -270,7 +324,8 @@ def describe_beta_grid(beta, temperature_K, iint):
 
 
 def generate_alpha_grid(beta, awr, temperature_K, dq_ang_inv=0.05,
-                        q_cut_ang_inv=12.0, n_log=160):
+                        q_cut_ang_inv=12.0, n_log=160, *, resolve_ridge=True,
+                        freq_max_eV=None, evaluation_temperatures_K=None):
     """Generate an alpha grid linear in momentum transfer Q.
 
     Two segments: Q = dq, 2*dq, ... up to q_cut (the thermal scattering
@@ -299,6 +354,18 @@ def generate_alpha_grid(beta, awr, temperature_K, dq_ang_inv=0.05,
         Sets the logarithmic tail from q_cut to the grid's maximum Q. The
         node coinciding with q_cut is dropped (it duplicates the last linear
         point), so the tail contributes n_log - 1 points. Default 160.
+    resolve_ridge : bool
+        Divide every step of the logarithmic tail that lies on the recoil
+        ridge so that it does not exceed ``RIDGE_STEP_SIGMAS`` ridge widths
+        (see ``generate_beta_grid``); the tail then has more than ``n_log``
+        points. Default True.
+    freq_max_eV : float or None
+        Maximum phonon frequency. With it the ridge rule stops
+        ``RIDGE_MARGIN_SIGMAS`` widths above the largest alpha on the ridge,
+        min(beta_max, 4 beta_max/awr); without it the whole tail is resolved.
+    evaluation_temperatures_K : sequence or None
+        Temperatures the law is evaluated at (default the grid temperature),
+        as for ``generate_beta_grid``.
 
     Returns
     -------
@@ -356,4 +423,13 @@ def generate_alpha_grid(beta, awr, temperature_K, dq_ang_inv=0.05,
         q = np.concatenate((q_linear, q_log))
 
     alpha = q**2 * HBAR2_OVER_2MN_MEV_A2 / (awr * kt_mev)
+    if resolve_ridge and q_max > q_cut_ang_inv:
+        temps = _evaluation_temperatures(temperature_K, evaluation_temperatures_K)
+        tail_start = q_cut_ang_inv**2 * HBAR2_OVER_2MN_MEV_A2 / (awr * kt_mev)
+        ridge_top = alpha_max
+        if freq_max_eV is not None:
+            ridge_top = _ridge_limit(min(float(beta_nonzero[-1]), alpha_max), freq_max_eV,
+                                     temperature_K, temps)
+        alpha = _resolve_recoil_ridge(alpha, tail_start * (1.0 - 1e-12), ridge_top,
+                                      min(1.0, min(temps) / float(temperature_K)))
     return alpha

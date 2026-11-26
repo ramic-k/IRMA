@@ -67,7 +67,7 @@ The default `dq_ang_inv = 0.05` is already converged. The largest local differen
 | `beta_max_eV` | Beta max | 5.0 eV | Upper bound of the $\beta$ grid |
 | `dq_ang_inv` | Alpha dQ | 0.05 Å⁻¹ | $Q$ spacing of the linear $\alpha$ segment |
 | `q_cut_ang_inv` | Alpha Q cut | 12.0 Å⁻¹ | End of the linear segment (set by neutron kinematics, not the material) |
-| `n_log` | Alpha N log | 160 | Logarithmic $\alpha$ points from $Q_\text{cut}$ to $Q_\max$ |
+| `n_log` | Alpha N log | 160 | Logarithmic $\alpha$ points from $Q_\text{cut}$ to $Q_\max$ (more on the recoil ridge, see below) |
 
 The $\alpha$ and $\beta$ grids are independent: `nalpha` is decoupled from `nbeta`, so you can refine one axis without inflating the other.
 
@@ -77,9 +77,9 @@ The **Alpha Q cut** is set by neutron kinematics, not by the material's phonon c
 
 The two flag names map one-to-one: the input file's Card 4 `iint=0` writes ENDF interpolation law INT=4 (log-lin), and `iint=1` writes INT=2 (lin-lin).
 
-A purely logarithmic tail lets the step grow without bound: $\Delta\beta \approx 30$ near the default $\beta_\max$ for the coarse `n_upper=20` tail. Log-lin (INT=4) interpolation tolerates that, because INT=4 reproduces the $\exp(-\beta/2)$ detailed-balance tail exactly on any grid. Lin-lin (INT=2) interpolation instead connects the tabulated points with straight lines, and across a step that wide the straight segments lie far above the decaying exponential between the points, so the reconstructed cross section overshoots the free-atom cross section by more than 100% at high incident energy. The grid builder therefore keys the tail on the input file's Card 4 `iint` flag (`generate_beta_grid(..., iint=...)`; the GUI, `irma mlip emit`, and the NCrystal pack exporter all build their $\beta$ grids through it):
+A purely logarithmic tail lets the step grow without bound: $\Delta\beta \approx 30$ near the default $\beta_\max$ for the coarse `n_upper=20` tail. Log-lin (INT=4) interpolation tolerates that for the $\exp(-\beta/2)$ detailed-balance factor, which INT=4 reproduces exactly on any grid (the recoil ridge itself needs the rule of the next section). Lin-lin (INT=2) interpolation instead connects the tabulated points with straight lines, and across a step that wide the straight segments lie far above the decaying exponential between the points, so the reconstructed cross section overshoots the free-atom cross section by more than 100% at high incident energy. The grid builder therefore keys the tail on the input file's Card 4 `iint` flag (`generate_beta_grid(..., iint=...)`; the GUI, `irma mlip emit`, and the NCrystal pack exporter all build their $\beta$ grids through it):
 
-- **`iint=0` (log-lin):** the tail is purely logarithmic with `n_upper` points.
+- **`iint=0` (log-lin):** the tail is logarithmic with `n_upper` points, and its steps on the recoil ridge are divided as described under [The recoil ridge](#the-recoil-ridge-on-the-tails) (so the final tail count exceeds `n_upper` for light scatterers).
 - **`iint=1` (lin-lin):** the tail is step-capped up to a limit set by the recoil ridge, then logarithmic:
     - *Step cap.* The logarithmic step is capped at $\Delta\beta = 0.5$ (`DELTA_BETA_MAX_LINLIN`; the exact midpoint overshoot of $\exp(-\beta/2)$ at that step is $\cosh(0.125) - 1 \approx 0.78\%$) from the end of the phonon region up to `linlin_fine_beta_limit`.
     - *Ridge margin.* That limit is the back-scatter $\alpha$ at the highest incident energy (the largest $\alpha$ the $\beta$ grid can reach, $\alpha_\max = 4\beta_\max/A$), plus `RIDGE_MARGIN_SIGMAS` widths of the down-scattering kernel there. Above the limit $S(\alpha,\beta)$ is the off-ridge tail and the coarse log spacing resumes.
@@ -98,6 +98,25 @@ A purely logarithmic tail lets the step grow without bound: $\Delta\beta \approx
   so 2 widths reach the converged value at both extents. What remains is the cost of the 0.5 step itself: halving the step to 0.25 lowers the whole lin-lin curve by about 0.3% (the step's own bias, consistent with the 0.78% midpoint overshoot) and leaves a rise of 0.02% (5 eV) and 0.03% (10 eV) from 2 eV to the requested energy, at 747 and 1089 $\beta$ points. The margin costs points: a lin-lin graphite grid to 5 eV has 541 $\beta$ points against 395 for log-lin, and one to 10 eV has 710.
 
 The GUI defaults `n_upper` to 80; the `generate_beta_grid` log-lin default is 20.
+
+#### The recoil ridge on the tails
+
+At large momentum and energy transfer $S(\alpha,\beta)$ is the recoil ridge: in the short-collision-time form, the stored symmetric law times $e^{+\beta/2}$ is a Gaussian centered at $\beta = \alpha$ with standard deviation $\sqrt{2\alpha T_\text{eff}/T}$. Log-lin interpolation reproduces the $\exp(-\beta/2)$ factor exactly, but not the ridge: stock NJOY THERMR interpolates quadratically in $\ln S$ only while neighboring values differ by less than 2 in the logarithm, and falls back to linear in $\ln S$ otherwise, which is always the case on a tail whose $\beta$ step exceeds 4. A straight line under a Gaussian in $\ln S$ loses about $\text{step}^2 / (12\,\text{sd}^2)$ of the ridge's area, and the processed cross section falls below the free-atom value at high incident energy.
+
+Measured on hydrogen in polyethylene at 293.6 K (mode 0, IRMA 1.1.0, stock NJOY2016.79; total per CH$_2$ relative to the free-atom value, which the cross section must approach from above as $1 + kT_\text{eff}/(2AE)$):
+
+| Incident energy | plain 20-point log tail, 5 eV grid | plain 20-point log tail, 10 eV grid | ridge resolved, 5 or 10 eV grid | expected |
+|---|---|---|---|---|
+| 1 eV | +4.11% | +3.85% | +4.36% | |
+| 5 eV | −0.62% | −1.55% | +0.86% | +0.87% |
+| 10 eV | −0.34% | −4.48% | +0.43% | +0.44% |
+
+On the plain tail one $\beta$ step was 0.2 to 0.5 ridge widths (5 eV grid) or 0.5 to 1.1 (10 eV grid). The generators therefore divide the tail steps (`RIDGE_STEP_SIGMAS = 0.15`, a loss of at most 0.19% of the ridge):
+
+- **$\beta$ tail (`generate_beta_grid`, `iint=0`, with `awr`):** every step above the phonon region and below `linlin_fine_beta_limit` (the largest $\beta$ on the ridge plus `RIDGE_MARGIN_SIGMAS` widths) is divided into equal parts no wider than 0.15 ridge widths. A lin-lin tail is already finer than that. Without `awr` the tail stays purely logarithmic.
+- **$\alpha$ tail (`generate_alpha_grid`):** the same rule on the logarithmic tail above `q_cut`, up to $\min(\beta_\max, 4\beta_\max/A)$ plus the margin when `freq_max_eV` is given, and over the whole tail otherwise.
+- **Width bound.** The generator does not know $T_\text{eff}$ and uses its lower bound $T_\text{eff} \ge T$, so a step is at most 0.15 true widths (0.07 for hydrogen in polyethylene, where $T_\text{eff}/T = 4.1$). On a `lat=1` grid evaluated below 293.6 K the bound is scaled by $T_\text{lowest}/293.6\,\text{K}$.
+- **Cost.** The existing nodes are kept and points are added: hydrogen in polyethylene goes from 370 × 399 to 460 × 465 (5 eV) or 520 × 523 (10 eV) $\beta \times \alpha$ points, carbon in polyethylene to 437 × 401 or 478 × 433, graphite with the GUI defaults from 395 × 399 to 431 × 400; a scatterer as heavy as uranium is unchanged. `resolve_ridge=False` restores the plain tails (the coarse preview grids of `irma mlip emit` and the NCrystal pack exporter, which does not go through THERMR, use it).
 
 ## Manual grids: matching a reference evaluation
 

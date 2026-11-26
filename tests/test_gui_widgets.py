@@ -129,7 +129,7 @@ def test_fresh_form_keeps_the_methodology_defaults(fresh_app):
     assert fresh_app.npr.get() == "1"
     assert float(fresh_app.temps_var.get()) == 296.0
     assert fresh_app.nphon.get() == "100"
-    assert fresh_app.smin.get() == "1e-75"
+    assert fresh_app.smin.get() == "1e-295"
     assert fresh_app.coh_edge_group_enable_var.get() is True
     assert fresh_app.coh_edge_group_bpd.get() == "50"
     assert fresh_app.lat.get().startswith("1 —")

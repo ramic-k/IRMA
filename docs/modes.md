@@ -131,6 +131,8 @@ controls between Cards 6d and 7:
   (`force_constants.hdf5`, `FORCE_CONSTANTS`, `FORCE_SETS`, in that order).
   The process working directory is never consulted.
 - **Card 6g**: the powder-averaging sampling controls (next section).
+- **Card 6h** (optional): how the multiphonon orders are computed, by FFT
+  (the default) or by direct sums (see below).
 
 These modes need the optional phonopy dependency:
 
@@ -221,6 +223,26 @@ appropriate when you want full control, but make sure `nphon` (or
 requested beta grid. Energy transfers beyond the tabulated range are
 covered downstream by the short-collision-time extension of THERMR,
 NJOY's thermal processing module.
+
+## Card 6h: multiphonon convolution (optional)
+
+A named card right after Card 6g chooses how the multiphonon orders are
+computed:
+
+```
+convolution_method fft /
+convolution_method direct /
+```
+
+Without the card the orders are computed by FFT. The FFT is fast, but its
+rounding error is about 1e-16 of the largest value of each order, so values
+further below an order's peak come out as noise or zero. `direct` sums the
+convolutions directly, so every value of S(α,β) is exact, down to the far
+tails, at five to nine times the cost of this step. In the graphite,
+beryllium and BeO validation cases both give the same stored values above
+1e-16 and the same cross sections after NJOY. The GUI offers the choice as
+**Multiphonon convolution**; details are in the
+[input reference](input-reference.md#card-6h-multiphonon-convolution-inelastic_mode12-optional).
 
 ## Bragg-edge grouping (optional)
 

@@ -559,6 +559,31 @@ class EndfFormMixin:
             justify=tk.LEFT,
         ).pack(side=tk.LEFT, anchor="w")
 
+        # Card 6h: how the multiphonon orders are computed. The deck carries the
+        # card only for "direct"; without it a deck means "fft".
+        conv_row = ttk.Frame(self._nc_subframe)
+        conv_row.pack(fill=tk.X, pady=2)
+        ttk.Label(conv_row, text="Multiphonon convolution:", width=LBL,
+                  anchor="e").pack(side=tk.LEFT, padx=(0, 5))
+        self.nc_convolution_var = tk.StringVar(value="fft")
+        ttk.Radiobutton(
+            conv_row, text="FFT (fast)", variable=self.nc_convolution_var,
+            value="fft").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Radiobutton(
+            conv_row, text="Direct (exact tails)",
+            variable=self.nc_convolution_var,
+            value="direct").pack(side=tk.LEFT, padx=(0, 4))
+        InfoLabel(conv_row, "Multiphonon Convolution",
+                  "Card 6h. How the multiphonon orders are computed.\n\n"
+                  "FFT (default): fast. Values more than about 16 decades "
+                  "below the peak of each order are rounding noise or zero. "
+                  "In the validation cases this does not change the cross "
+                  "sections NJOY computes from the file.\n\n"
+                  "Direct: every value of the scattering law is exact, "
+                  "including the far tails. Several times slower: about five "
+                  "times on the graphite validation deck."
+                  ).pack(side=tk.LEFT)
+
         # BORN corrections row
         born_row = ttk.Frame(self._nc_subframe)
         born_row.pack(fill=tk.X, pady=2)
@@ -1389,11 +1414,20 @@ class EndfFormMixin:
                       "across a peak that the grid does not resolve.")
         self.iint.pack(fill=tk.X, pady=2)
         self.smin = LabeledEntry(
-            ef, "smin:", "1e-75",
+            ef, "smin:", "1e-295",
             help_title="smin (Minimum S Threshold, Card 4)",
             help_text="S(alpha,beta) values below this threshold are "
-                      "treated as zero in the output.\n\n"
-                      "Default: 1e-75 (LEAPR convention).")
+                      "written as zero.\n\n"
+                      "Default: 1e-295, the smallest value the tape writer "
+                      "stores in linear (ilog=0) storage; with it nothing the "
+                      "writer can hold is set to zero. NJOY's THERMR treats "
+                      "any S at or below exp(-225) = 1.9e-98 as missing, uses "
+                      "its short-collision-time form there, and prints "
+                      "'sab contains numbers that are too small to represent "
+                      "on this machine' when a tape has such values; its "
+                      "results are the same as with smin = 2e-98, which avoids "
+                      "the message. A deck that leaves smin out keeps LEAPR's "
+                      "1e-75.")
         self.smin.pack(fill=tk.X, pady=2)
 
         # Cold/Skold
@@ -2022,7 +2056,8 @@ class EndfFormMixin:
 
         Under lat=1 the deck stores alpha/beta in fixed 0.0253 eV units, so
         the grids are anchored at that temperature, not at temps[0]; iint=1
-        gets the step-capped lin-lin beta tail, iint=0 the log tail.
+        gets the step-capped lin-lin beta tail, iint=0 the log tail; both
+        tails resolve the recoil ridge (irma.core.grids).
         """
         from irma.core.grids import (generate_beta_grid, generate_alpha_grid,
                                      grid_reference_temperature_K)
@@ -2041,7 +2076,8 @@ class EndfFormMixin:
             dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),
             q_cut_ang_inv=parse_float("Alpha Q cut [1/A]",
                                       self.alpha_qcut.get()),
-            n_log=parse_int("Alpha N log", self.alpha_nlog.get()))
+            n_log=parse_int("Alpha N log", self.alpha_nlog.get()),
+            freq_max_eV=freq_max, evaluation_temperatures_K=temps)
         return alpha, beta, t_ref
 
     def _toggle_dos_source(self):
@@ -2454,7 +2490,7 @@ class EndfFormMixin:
         lines.append(f"{ntempr} {self._imported_iprint} {self.nphon.get()} /")
         # Card 4 (iint, nver and lrel appended only when non-default, so
         # classic decks round-trip byte-identically)
-        smin_s = self.smin.get().strip() or '1e-75'
+        smin_s = self.smin.get().strip() or '1e-295'
         card4 = f"{self.mat.get()} {self.za.get()} {isabt} {ilog} {smin_s}"
         nver = self.nver.get().strip() or "8"
         lrel = self.lrel.get().strip() or "1"
@@ -2594,6 +2630,8 @@ class EndfFormMixin:
                     lines.append(f"{ndir_v} {mpdir_v} {auto_order_v} /")
                 else:
                     lines.append(f"{ndir_v} {mpdir_v} /")
+                if self.nc_convolution_var.get() == "direct":
+                    lines.append("convolution_method direct /")
 
             # Optional extinction card (last card of the iel=10 block, before
             # Card 7). Emitted only when the toggle is on; off => ideal edges.
@@ -2886,7 +2924,7 @@ class EndfFormMixin:
         self.isabt.set("0 — S(α,β) (standard)")
         self.ilog.set("0 — S values")
         self.iint.set("0 — log-lin (INT=4)")
-        self.smin.set("1e-75")
+        self.smin.set("1e-295")
         self.awr.set("")
         self.spr.set("")
         self.npr.set("1")
@@ -2926,6 +2964,7 @@ class EndfFormMixin:
         # for import faithfulness: any mode-1/2 deck carries Card 6g, whose
         # parsed auto_order (0 when the 3rd field is omitted) overwrites this.
         self.nc_auto_order_var.set(1)
+        self.nc_convolution_var.set("fft")
 
         # Grid. LAT matches the builder default (Card 7 always carries lat on
         # import, so this only governs a reset form — keeping the two defaults
@@ -3047,6 +3086,7 @@ class EndfFormMixin:
                 self.nc_num_directions.set(str(nc['ndir']))
                 self.nc_multiphonon_num_directions.set(str(nc['mpdir']))
                 self.nc_auto_order_var.set(nc['auto_order'])
+                self.nc_convolution_var.set(nc['convolution'])
 
         # Grid (manual; populated from the deck)
         self._set_code(self.lat, st['lat'])

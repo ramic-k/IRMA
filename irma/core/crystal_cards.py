@@ -1,6 +1,6 @@
 """Crystal/elastic card parsing for the generalized ``iel=10`` path.
 
-The card-by-card reference for the Cards 6b-6g parsed here (fields, defaults,
+The card-by-card reference for the Cards 6b-6h parsed here (fields, defaults,
 mode interactions, worked decks) is ``docs/input-reference.md``.
 """
 import os
@@ -325,10 +325,10 @@ def match_partial_spectra(reader, crystal_info, spectra, species=None):
 
 
 def read_cards_6f_6g(reader):
-    """Cards 6f-1 to 6f-3, the optional minimum-phonon-energy card and Card
-    6g, checked: a dict of phonopy_yaml, mesh, ncpu (as written), use_born,
-    born_path (None without BORN), min_phonon_energy_mev, ndir, mpdir and
-    auto_order."""
+    """Cards 6f-1 to 6f-3, the optional minimum-phonon-energy card, Card 6g and
+    the optional Card 6h, checked: a dict of phonopy_yaml, mesh, ncpu (as
+    written), use_born, born_path (None without BORN), min_phonon_energy_mev,
+    ndir, mpdir, auto_order and convolution."""
     reader.card("Card 6f-1 (phonopy.yaml path)")
     phonopy_yaml_path = reader.read_string()
     reader.card("Card 6f-2 (mesh_nx mesh_ny mesh_nz ncpu use_born)")
@@ -379,11 +379,28 @@ def read_cards_6f_6g(reader):
     return {'phonopy_yaml': phonopy_yaml_path, 'mesh': (mesh_nx, mesh_ny, mesh_nz),
             'ncpu': nc_ncpu, 'use_born': nc_use_born, 'born_path': born_path_nc,
             'min_phonon_energy_mev': min_phonon_energy_mev, 'ndir': ndir,
-            'mpdir': mpdir, 'auto_order': auto_order}
+            'mpdir': mpdir, 'auto_order': auto_order,
+            'convolution': _read_card_6h(reader)}
+
+
+def _read_card_6h(reader):
+    """Optional Card 6h after Card 6g, ``convolution_method fft /`` or ``convolution_method direct /``: how the
+    multiphonon orders are computed. Without the card, ``fft``."""
+    tok = reader.peek_token()
+    if not (isinstance(tok, str) and tok.lower() == "convolution_method"):
+        return "fft"
+    from irma.core.noncubic_workers import MULTIPHONON_CONVOLUTIONS
+    reader.card("Card 6h (convolution_method fft|direct)")
+    fields = reader.read_card_tokens()
+    method = fields[1] if len(fields) == 2 else None
+    reader.require(
+        isinstance(method, str) and method.lower() in MULTIPHONON_CONVOLUTIONS,
+        "Card 6h must read 'convolution_method fft /' or 'convolution_method direct /'")
+    return method.lower()
 
 
 def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
-    """Parse the generalized-elastic card block (iel=10): Cards 6b-6g.
+    """Parse the generalized-elastic card block (iel=10): Cards 6b-6h.
 
     Reads the elastic/inelastic mode controls, lattice, atom types and
     positions, and — for inelastic_mode=1/2 —
@@ -560,13 +577,15 @@ def _parse_crystal_cards(reader, za, nphon, ncold=0, nsk=0, nss=0, b7=0.0):
             multiphonon_max_order=multiphonon_max_order_nc,
             auto_multiphonon_order=bool(auto_multiphonon_order_nc),
             min_phonon_energy_mev=min_phonon_energy_mev,
+            multiphonon_convolution=nc['convolution'],
         )
         print(
             "  Non-cubic controls: "
             f"ndir={nc_inelastic_controls.num_directions}, "
             f"mpdir={nc_inelastic_controls.multiphonon_num_directions}, "
             f"mporder(from nphon)={nc_inelastic_controls.multiphonon_max_order}"
-            f"{' [auto-size]' if nc_inelastic_controls.auto_multiphonon_order else ''}"
+            f"{' [auto-size]' if nc_inelastic_controls.auto_multiphonon_order else ''}, "
+            f"convolution={nc_inelastic_controls.multiphonon_convolution}"
         )
 
         # Load phonopy mesh once (temperature-independent). Only the load

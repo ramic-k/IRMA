@@ -169,7 +169,7 @@ What each control card carries, at a glance:
 | 11-16 | `delta ni`, `rho`, `twt c tbeta`, `nd`, ... | The S(α,β) detail block (DOS, translational, oscillators). |
 
 This table is an orientation, not the full specification. Field meanings,
-defaults, valid ranges, the generalized-elastic cards (`iel=10`, Cards 6b-6g),
+defaults, valid ranges, the generalized-elastic cards (`iel=10`, Cards 6b-6h),
 and the phonopy-backed `inelastic_mode=1/2` workflows are documented card by card in
 the [Input file reference](input-reference.md); reach for it whenever a field
 above is unclear.

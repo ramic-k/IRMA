@@ -3,8 +3,77 @@
 Notable changes to IRMA. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] — 2026-11-26
 
+The fixes made since 1.1.0. One changes the input layout: mode-0 `iel=10`
+input files with more than one species give the other species' spectra per
+temperature (Card 12e), and a file with the old layout is refused. Tapes
+change in three cases, listed below: grids built anew by the automatic
+generators, coherent elastic output at later temperatures when an edge
+contributes more there, and `smin` in input files written by the GUI and
+the MLIP emitter. Card 6h is new and optional.
+
+- Automatic alpha and beta grids resolve the recoil ridge on their tails.
+  NJOY's THERMR interpolates linearly in ln S across the coarse logarithmic
+  tail, and a step wider than a fraction of the ridge's width,
+  sqrt(2 beta T_eff/T), loses cross section at high incident energy: for
+  hydrogen in polyethylene with a 20-point log tail the processed total fell
+  0.6% below the free-atom value at 5 eV, and 4.5% below it at 10 eV on a
+  10 eV grid. `generate_beta_grid` (log-lin tail, given `awr`) and
+  `generate_alpha_grid` now divide every tail step on the ridge to at most
+  0.15 ridge widths, with T_eff >= T as the lower bound of the width; the
+  existing nodes are kept. The same case then gives +0.86% at 5 eV and
+  +0.43% at 10 eV, against the expected +0.87% and +0.44%. Grids grow for
+  light scatterers (hydrogen in polyethylene to 5 eV: 370 x 399 to 460 x 465
+  beta x alpha points; graphite with the GUI defaults: 395 x 399 to
+  431 x 400) and not for heavy ones. Decks carry their grids, so existing
+  decks give the same tapes; grids built anew by the GUI, `irma mlip emit`
+  or a direct call differ. `resolve_ridge=False` restores the plain tails;
+  the NCrystal pack exporter and the coarse preview grids use it.
+  `docs/grids.md` has the measurements.
+- Modes 1 and 2: the check that compares the multiphonon one-phonon seed with
+  the Debye-Waller displacement no longer warns on symmetry-reduced meshes.
+  It took each atom's own eigenvector weight at the irreducible q-points,
+  while the seed is built from the star-averaged tensors, so a crystal with
+  several equivalent atoms got "the multiphonon background loses area" with
+  a deviation of about 1% (polyethylene at 293.6 K) although the seed's area
+  equals the full-mesh displacement to rounding. No output changes.
+- Modes 1 and 2: optional Card 6h chooses how the multiphonon orders are
+  computed: `convolution_method fft /` (the default, as before) or
+  `convolution_method direct /`. The FFT's rounding error is a fraction
+  (about 1e-16) of the largest value, so the tails of the orders, which fill
+  most of an S(α,β) table at large energy transfer, come out as noise, zeros
+  or negative numbers, and each order is cut at the top of the energy grid
+  before the next is built from it. `direct` sums the convolutions directly
+  (nonnegative terms, so every value keeps its relative precision) on the grid
+  widened by the reach of the orders still to come. On the production graphite
+  deck at 296 K (10,000 and 1,000 directions) every stored value above 1e-16
+  is the same with both; with `direct`, 5,124 zeros become values and about
+  15,000 values below 1e-16 change, by up to 33 orders of magnitude, and with
+  log storage (`ilog=1`) no zeros remain. Through NJOY the graphite, beryllium
+  and BeO validation tapes give the same cross sections with both methods to
+  the printed digits, and byte-identical ACE files except three lines of BeO's
+  beryllium (a scattering cosine differs by at most 3.4e-7). Small grids that
+  end inside the reach of the multiphonon orders differ more (2e-6 and 2e-4 in
+  two test integrals). `direct` costs five to nine times as long in this step
+  (graphite: 275 s against 32 s on 14 workers); it is shared among the Card 6f
+  workers and, when there are fewer direction blocks than workers, among
+  threads inside a block, with the same tape for any count. The GUI offers the
+  choice and writes Card 6h only for `direct`; decks that already carry
+  `convolution_method fft /` run unchanged.
+- The GUI and `irma mlip emit` write `smin = 1e-295` on Card 4, the smallest
+  value the tape writer stores in linear (`ilog=0`) storage; they wrote 1e-75
+  before, which set the values below it to zero. NJOY's THERMR uses the
+  values down to exp(-225) = 1.9e-98, treats smaller ones as missing
+  (short-collision-time form), and prints `sab contains numbers that are too
+  small to represent on this machine` when a tape has them. For hydrogen in
+  polyethylene to 10 eV in linear storage, the THERMR output is byte-identical
+  with `smin` 1e-295 and 2e-98, and differs from the 1e-75 tape by up to 8e-5
+  below 10 eV. A deck that leaves `smin` out keeps LEAPR's 1e-75, so NJOY
+  decks give the same tapes as before.
+- The GUI's calculations print UTF-8 on every platform: on Windows a child
+  process with redirected output wrote in the ANSI code page, and a progress
+  line with a Greek letter stopped a valid calculation.
 - Mode-0 `iel=10` input files give the other species' partial phonon
   spectra per temperature, as Card 12e right after Card 12 in each
   temperature block, instead of once as Card 6e after Card 6d. Each

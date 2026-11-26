@@ -22,6 +22,9 @@ class NoncubicInelasticControls:
     # established automatic per-q floors exactly; positive values exclude
     # modes with energy <= this threshold everywhere in the phonon pipeline.
     min_phonon_energy_mev: float = 0.0
+    # Optional Card 6h after Card 6g: how the multiphonon orders are computed,
+    # "fft" (default, fast) or "direct" (exact in every value, slower).
+    multiphonon_convolution: str = "fft"
 
 
 MIN_PHONON_ENERGY_HELP = (
