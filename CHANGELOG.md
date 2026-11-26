@@ -61,11 +61,16 @@ the MLIP emitter. Card 6h is new and optional.
   threads inside a block, with the same tape for any count. The GUI offers the
   choice and writes Card 6h only for `direct`; decks that already carry
   `convolution_method fft /` run unchanged.
-- The GUI and `irma mlip emit` write `smin = 2e-98` on Card 4, the smallest
-  value NJOY's THERMR uses (it treats any S at or below exp(-225) = 1.9e-98
-  as missing and switches to its short-collision-time form there); they
-  wrote 1e-75 before. A deck that leaves `smin` out keeps LEAPR's 1e-75, so
-  NJOY decks give the same tapes as before.
+- The GUI and `irma mlip emit` write `smin = 1e-295` on Card 4, the smallest
+  value the tape writer stores in linear (`ilog=0`) storage; they wrote 1e-75
+  before, which set the values below it to zero. NJOY's THERMR uses the
+  values down to exp(-225) = 1.9e-98, treats smaller ones as missing
+  (short-collision-time form), and prints `sab contains numbers that are too
+  small to represent on this machine` when a tape has them. For hydrogen in
+  polyethylene to 10 eV in linear storage, the THERMR output is byte-identical
+  with `smin` 1e-295 and 2e-98, and differs from the 1e-75 tape by up to 8e-5
+  below 10 eV. A deck that leaves `smin` out keeps LEAPR's 1e-75, so NJOY
+  decks give the same tapes as before.
 - The GUI's calculations print UTF-8 on every platform: on Windows a child
   process with redirected output wrote in the ANSI code page, and a progress
   line with a Greek letter stopped a valid calculation.
