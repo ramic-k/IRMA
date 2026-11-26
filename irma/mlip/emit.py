@@ -209,10 +209,13 @@ def _auto_grids(freq_max_ev, awr, temperature_k, iint, coarse=None):
         float(freq_max_ev), tref, iint=iint, awr=float(awr),
         n_lower=d["n_lower"], n_phonon=d["n_phonon"],
         n_upper=d["n_upper"], beta_max_eV=d["beta_max_eV"],
-        evaluation_temperatures_K=[float(temperature_k)])
+        evaluation_temperatures_K=[float(temperature_k)],
+        resolve_ridge=not coarse)
     alpha = generate_alpha_grid(
         beta, float(awr), tref, dq_ang_inv=d["alpha_dq_invA"],
-        q_cut_ang_inv=d["alpha_qcut_invA"], n_log=d["alpha_nlog"])
+        q_cut_ang_inv=d["alpha_qcut_invA"], n_log=d["alpha_nlog"],
+        resolve_ridge=not coarse, freq_max_eV=float(freq_max_ev),
+        evaluation_temperatures_K=[float(temperature_k)])
     if not coarse:
         print("  " + describe_beta_grid(beta, tref, iint), flush=True)
     return alpha, beta

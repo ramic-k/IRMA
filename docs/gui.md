@@ -303,7 +303,7 @@ The beta grid has three regions: a logarithmic low-β tail, a linear phonon regi
 | Max phonon freq | blank | Upper bound of the linear region (eV). The **Detect from DOS** and **Detect from phonopy.yaml** buttons fill it in; an automatic grid needs a value. |
 | N lower (log) | `15` | Logarithmic points in the low-β (thermal quasi-elastic) tail. |
 | N phonon (linear) | `300` | Linear points across [0, freq_max], where phonon features live. |
-| N upper (log) | `80` | Density of the logarithmic high-β multiphonon tail. On a lin-lin (INT=2) grid the tail near the recoil ridge is protected by the step cap whatever this value is (see [Automatic grids](grids.md#the-upper-tail-on-lin-lin-int2-grids)); `n_upper` sets the density of the log tail beyond it. For log-lin grids fewer points (~20) suffice. |
+| N upper (log) | `80` | Density of the logarithmic high-β multiphonon tail. On a lin-lin (INT=2) grid the tail near the recoil ridge is protected by the step cap whatever this value is (see [Automatic grids](grids.md#the-upper-tail-on-lin-lin-int2-grids)); `n_upper` sets the density of the log tail beyond it. On a log-lin grid the tail steps on the recoil ridge are divided automatically (see [The recoil ridge](grids.md#the-recoil-ridge-on-the-tails)), whatever this value is. |
 | Beta max | `5.0` | Maximum energy transfer (eV) for the upper tail. Hydrogen may need 10 eV or more. |
 
 #### Automatic alpha controls

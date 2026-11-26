@@ -2050,7 +2050,8 @@ class EndfFormMixin:
 
         Under lat=1 the deck stores alpha/beta in fixed 0.0253 eV units, so
         the grids are anchored at that temperature, not at temps[0]; iint=1
-        gets the step-capped lin-lin beta tail, iint=0 the log tail.
+        gets the step-capped lin-lin beta tail, iint=0 the log tail; both
+        tails resolve the recoil ridge (irma.core.grids).
         """
         from irma.core.grids import (generate_beta_grid, generate_alpha_grid,
                                      grid_reference_temperature_K)
@@ -2069,7 +2070,8 @@ class EndfFormMixin:
             dq_ang_inv=parse_float("Alpha dQ [1/A]", self.alpha_dq.get()),
             q_cut_ang_inv=parse_float("Alpha Q cut [1/A]",
                                       self.alpha_qcut.get()),
-            n_log=parse_int("Alpha N log", self.alpha_nlog.get()))
+            n_log=parse_int("Alpha N log", self.alpha_nlog.get()),
+            freq_max_eV=freq_max, evaluation_temperatures_K=temps)
         return alpha, beta, t_ref
 
     def _toggle_dos_source(self):

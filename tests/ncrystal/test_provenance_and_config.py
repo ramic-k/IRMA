@@ -167,7 +167,7 @@ def test_auto_grid_is_the_endf_converged_grid_not_uniform():
         evaluation_temperatures_K=[cfg.material.temperature_K])
     alpha_ref = generate_alpha_grid(beta_ref, awr, t_ref, dq_ang_inv=0.1,
                                     q_cut_ang_inv=_D["alpha_qcut_invA"],
-                                    n_log=_D["alpha_nlog"])
+                                    n_log=_D["alpha_nlog"], resolve_ridge=False)
     assert np.allclose(beta, beta_ref)
     assert np.allclose(alpha, alpha_ref)
     assert np.allclose(beta_out, beta_ref)

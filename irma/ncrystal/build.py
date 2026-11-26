@@ -130,9 +130,10 @@ def _group_grids(cfg, awr, auto_beta, t_ref):
     shared ``auto_beta``. alpha is awr-dependent (per species); beta is shared."""
     if cfg.grid_mode == "explicit":
         return list(cfg.alpha_grid), list(cfg.beta_grid)
+    # (the recoil-ridge rule is for THERMR's interpolation of ENDF tapes; the packs keep their alpha grid)
     alpha = generate_alpha_grid(
         auto_beta, float(awr), t_ref, dq_ang_inv=cfg.alpha_dq_invA,
-        q_cut_ang_inv=cfg.alpha_qcut_invA, n_log=cfg.alpha_nlog)
+        q_cut_ang_inv=cfg.alpha_qcut_invA, n_log=cfg.alpha_nlog, resolve_ridge=False)
     return alpha.tolist(), auto_beta.tolist()
 
 
