@@ -63,7 +63,7 @@ against the line where the offending card *started*.
 ## Card-by-card reference
 
 The cards below are read in order. Cards 1–6 and Cards 7–9 are read for every
-input file. The generalized-elastic block (Cards 6b–6g) is read only when `iel=10`,
+input file. The generalized-elastic block (Cards 6b–6h) is read only when `iel=10`,
 between Card 6 and Card 7. The per-temperature detail block (Cards 11–19) is
 read only for the classic kernels and `inelastic_mode=0`.
 
@@ -74,7 +74,7 @@ read only for the classic kernels and `inelastic_mode=0`.
 | **1** | `nout` | — | Output unit. Kept for LEAPR compatibility; IRMA writes the file named on the command line and ignores this value. |
 | **2** | `'title'` | empty | Quoted title string. A numeric or unquoted token is stringified (this card is free text). |
 | **3** | `ntempr iprint nphon` | `1 1 100` | Temperature count (`≥ 1`), print level, and phonon-expansion order (`≥ 1`). For `inelastic_mode=1/2`, `nphon` is also the multiphonon maximum order. |
-| **4** | `mat za isabt ilog smin [iint nver lrel]` | `0 0 0 0 1.0e-75 0 8 1` | ENDF `MAT` (`≥ 1`; the material number that labels the evaluation in a library, yours to assign) and `za`; `isabt` (0/1) selects S(α,−β) storage; `ilog` (0/1) selects log storage; `smin` is the minimum stored S; optional `iint` (0/1) selects the MF7/MT4 interpolation scheme (see below, default 0); optional `nver` and `lrel` are the library version and release written to MF1/MT451 (ENDF/B-VIII.1 is `8 1`, the default; to set them, give `iint` too). `isabt=1` writes S for both signs of β; THERMR cannot process such tapes, so use it for diagnostics only. **For `iel=10`, `za` must encode the physical nuclide as `1000·Z + A`** so the principal scatterer can be matched to a Card 6d atom (`A = 0` names the natural element on both cards, e.g. `za = 6000` matching a Card 6d row with `A = 0`). |
+| **4** | `mat za isabt ilog smin [iint nver lrel]` | `0 0 0 0 1.0e-75 0 8 1` | ENDF `MAT` (`≥ 1`; the material number that labels the evaluation in a library, yours to assign) and `za`; `isabt` (0/1) selects S(α,−β) storage; `ilog` (0/1) selects log storage; `smin` is the minimum stored S (1e-75 when left out, as in LEAPR; the GUI and `irma mlip emit` write 1e-295, the smallest value the writer stores in linear storage; NJOY's THERMR treats S at or below exp(−225) ≈ 1.9e-98 as missing and prints a message when a tape has such values); optional `iint` (0/1) selects the MF7/MT4 interpolation scheme (see below, default 0); optional `nver` and `lrel` are the library version and release written to MF1/MT451 (ENDF/B-VIII.1 is `8 1`, the default; to set them, give `iint` too). `isabt=1` writes S for both signs of β; THERMR cannot process such tapes, so use it for diagnostics only. **For `iel=10`, `za` must encode the physical nuclide as `1000·Z + A`** so the principal scatterer can be matched to a Card 6d atom (`A = 0` names the natural element on both cards, e.g. `za = 6000` matching a Card 6d row with `A = 0`). |
 | **5** | `awr spr npr iel ncold nsk` | `0 0 0 0 0 0` | Principal scatterer (the atom species the evaluation is written for): mass ratio `awr` (`> 0`), free-atom cross section `spr` (`> 0`), atom count `npr` (`≥ 1`), elastic option `iel`, cold-hydrogen option `ncold` (0–4), pair-correlation option `nsk` (0–2). See the `iel` table below. |
 | **6** | `nss b7 aws sps mss` | `0 0 0 0 0` | Secondary scatterer: count `nss` (0 or 1); `b7` selects the secondary type; mass ratio `aws` (`> 0`), cross section `sps` (`> 0`), atom count `mss` (`≥ 1`). Fields 2–5 are validated only when `nss > 0`. A bound two-pass secondary (`nss=1`, `b7=0`) is rejected with `iel=10` (see the `b7` table below). |
 
@@ -109,7 +109,7 @@ not resolve.
 |-------|---------|
 | `0` | No coherent elastic. (Falls back to incoherent elastic when there is also no translational mode.) |
 | `1`–`6` | Built-in coherent elastic for graphite, Be, BeO, Al, Pb, Fe (in that order). |
-| `10` | Generalized coherent elastic: Bragg edges computed from the user's crystal structure (any material). Cards 6b–6g follow. Recommended for new evaluations. |
+| `10` | Generalized coherent elastic: Bragg edges computed from the user's crystal structure (any material). Cards 6b–6h follow. Recommended for new evaluations. |
 
 **`ncold` (Card 5): cold hydrogen/deuterium option**
 
@@ -306,10 +306,32 @@ converge the anisotropic-DW Poisson sum at the grid's Q-max; a graphite
 grid reaching Q ≈ 100 Å⁻¹ needs an order near 223, and a fixed `nphon=100`
 truncates the high-Q part of the table (the engine warns).
 
+#### Card 6h: multiphonon convolution (`inelastic_mode=1/2`, optional)
+
+```
+convolution_method fft /
+convolution_method direct /
+```
+
+A named card right after Card 6g. It chooses how the multiphonon orders are
+computed; without it, `fft`.
+
+- `fft` (default): fast. The FFT's rounding error is about 1e-16 of the
+  largest value of each order, so values further below an order's peak come
+  out as noise or zero, and each order is cut at the top of the energy grid
+  before the next is built from it.
+- `direct`: the convolutions are summed directly, so every value is exact,
+  down to the far tails of S(α,β). It costs five to nine times as long in
+  this step (graphite validation deck: 275 s against 32 s on 14 workers).
+
+In the graphite, beryllium and BeO validation cases the two give the same
+stored values above 1e-16 and the same cross sections after NJOY
+([validation methodology](validation/methodology.md#fft-and-direct-multiphonon-orders)).
+
 #### Extinction card: crystalline extinction (optional)
 
 An optional card placed **last in the `iel=10` block** (after Card 6d, or
-Card 6g for `inelastic_mode=1/2`), before Card 7. It is off by default; when
+Cards 6g/6h for `inelastic_mode=1/2`), before Card 7. It is off by default; when
 present it reduces the coherent-elastic Bragg edges of MF7/MT2 for
 dynamical-diffraction extinction, a property of the physical specimen. The
 card needs a coherent-elastic component: `elastic_mode=2` (MEF)

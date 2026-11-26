@@ -138,7 +138,7 @@ def test_alpha_grid_linear_q_layout():
     """
     awr, T = 11.898, 296.0
     beta = generate_beta_grid(0.2, T)
-    alpha = generate_alpha_grid(beta, awr, T)
+    alpha = generate_alpha_grid(beta, awr, T, resolve_ridge=False)   # the base layout, before the ridge rule
     kt_mev = KB * T * 1.0e3
     q = np.sqrt(alpha * awr * kt_mev / HB2)
 
@@ -318,3 +318,61 @@ def test_linlin_grid_survives_the_deck_precision_round_trip():
     # the helper itself keeps the later node of a pair, so the end node survives
     kept = _drop_nodes_indistinct_in_a_deck(np.array([0.0, 1.0, 1.0 + 1e-9, 2.0]))
     np.testing.assert_allclose(kept, [0.0, 1.0 + 1e-9, 2.0])
+
+
+def test_the_log_lin_beta_tail_resolves_the_recoil_ridge():
+    """THERMR interpolates linearly in ln S across the tail, so a step wider than a fraction of the recoil ridge's
+    width, sqrt(2 beta T_eff/T), loses cross section at high incident energy (hydrogen in polyethylene, 20-point log
+    tail to 10 eV: 4.5% at 10 eV). Given the scatterer's mass, the log-lin tail keeps its nodes and divides every
+    step below the ridge limit to at most RIDGE_STEP_SIGMAS widths, with T_eff >= T as the width's lower bound."""
+    from irma.core.grids import RIDGE_STEP_SIGMAS, linlin_fine_beta_limit
+    T, freq_max = 293.6, 0.369
+    plain = generate_beta_grid(freq_max, T, beta_max_eV=10.0)
+    light = generate_beta_grid(freq_max, T, beta_max_eV=10.0, awr=0.9992)
+    end = freq_max / (KB * T) * 299.0 / 300.0                      # last node of the phonon region
+    tail = light >= end * (1.0 - 1e-12)
+    widths = np.diff(light)[tail[:-1]] / np.sqrt(2.0 * light[:-1][tail[:-1]])
+    assert widths.max() <= RIDGE_STEP_SIGMAS * (1.0 + 1e-9)
+    assert (np.diff(plain)[plain[:-1] >= end] / np.sqrt(2.0 * plain[:-1][plain[:-1] >= end])).max() > 1.0
+    assert np.isin(plain, light).all() and len(light) > len(plain)
+    np.testing.assert_array_equal(light[~tail], plain[plain < end * (1.0 - 1e-12)])
+    # a heavier scatterer: resolved up to its ridge limit, the plain log steps above it
+    heavy = generate_beta_grid(freq_max, T, beta_max_eV=10.0, awr=11.904)
+    limit = linlin_fine_beta_limit(heavy[-1], 11.904, freq_max, T)
+    assert end < limit < heavy[-1]
+    below = (heavy[:-1] >= end * (1.0 - 1e-12)) & (heavy[:-1] < limit)
+    assert (np.diff(heavy)[below] / np.sqrt(2.0 * heavy[:-1][below])).max() <= RIDGE_STEP_SIGMAS * (1.0 + 1e-9)
+    np.testing.assert_array_equal(heavy[heavy > limit * 1.2], plain[plain > limit * 1.2])
+    # switched off, or without the mass, the tail is the plain log tail
+    np.testing.assert_array_equal(generate_beta_grid(freq_max, T, beta_max_eV=10.0, awr=0.9992,
+                                                     resolve_ridge=False), plain)
+    # a lat=1 grid evaluated below its 293.6 K reference: the ridge is narrower in stored units
+    cold = generate_beta_grid(freq_max, T, beta_max_eV=10.0, awr=0.9992, evaluation_temperatures_K=[77.0])
+    cold_tail = cold[:-1] >= end * (1.0 - 1e-12)
+    assert (np.diff(cold)[cold_tail] / np.sqrt(2.0 * cold[:-1][cold_tail] * 77.0 / T)).max() \
+        <= RIDGE_STEP_SIGMAS * (1.0 + 1e-9)
+    assert len(cold) > len(light)
+
+
+def test_the_alpha_tail_resolves_the_recoil_ridge():
+    """The same rule on the alpha axis: the log tail above q_cut is divided to at most RIDGE_STEP_SIGMAS ridge widths
+    up to the largest alpha on the ridge, min(beta_max, 4 beta_max/awr), plus the margin; the linear-in-Q segment and
+    the nodes of the base grid are kept."""
+    from irma.core.grids import RIDGE_STEP_SIGMAS, _ridge_limit
+    T, freq_max, awr = 293.6, 0.369, 0.9992
+    beta = generate_beta_grid(freq_max, T, beta_max_eV=10.0, awr=awr)
+    base = generate_alpha_grid(beta, awr, T, resolve_ridge=False)
+    alpha = generate_alpha_grid(beta, awr, T, freq_max_eV=freq_max)
+    whole = generate_alpha_grid(beta, awr, T)
+    start = 12.0 ** 2 * HB2 / (awr * KB * T * 1.0e3)
+    top = _ridge_limit(min(beta[-1], 4.0 * beta[-1] / awr), freq_max, T, None)
+    assert start < top < alpha[-1]
+    on_ridge = (alpha[:-1] >= start * (1.0 - 1e-9)) & (alpha[:-1] < top)
+    assert (np.diff(alpha)[on_ridge] / np.sqrt(2.0 * alpha[:-1][on_ridge])).max() <= RIDGE_STEP_SIGMAS * (1.0 + 1e-9)
+    assert (np.diff(base)[base[:-1] >= start] / np.sqrt(2.0 * base[:-1][base[:-1] >= start])).max() > RIDGE_STEP_SIGMAS
+    assert np.isin(base, alpha).all() and np.isin(alpha, whole).all()
+    np.testing.assert_array_equal(alpha[alpha < start * (1.0 - 1e-9)], base[base < start * (1.0 - 1e-9)])
+    np.testing.assert_array_equal(alpha[alpha > top * 1.2], base[base > top * 1.2])
+    # without freq_max the whole tail is resolved
+    tail = whole[:-1] >= start * (1.0 - 1e-9)
+    assert (np.diff(whole)[tail] / np.sqrt(2.0 * whole[:-1][tail])).max() <= RIDGE_STEP_SIGMAS * (1.0 + 1e-9)

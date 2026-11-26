@@ -257,6 +257,7 @@ def run_noncubic_standalone_sab(
     min_phonon_energy_mev = float(controls.min_phonon_energy_mev)
     num_directions = int(controls.num_directions)
     multiphonon_num_directions = int(controls.multiphonon_num_directions)
+    multiphonon_convolution = str(getattr(controls, "multiphonon_convolution", "fft"))
 
     q_grid_ang_inv, e_grid_mev, _, _ = _irma_grid_to_physical_qe(
         alpha, beta, lat, temperature_k, awr)
@@ -266,7 +267,8 @@ def run_noncubic_standalone_sab(
         f"mode={inelastic_mode}, mesh={tuple(int(x) for x in mesh_dim)}, "
         f"nac={'on (' + born.name + ')' if born is not None else 'off'}, "
         f"multiphonon_max_order={multiphonon_max_order}"
-        f"{' [auto-size]' if auto_multiphonon_order else ''}, jobs={max(1, int(num_jobs))}"
+        f"{' [auto-size]' if auto_multiphonon_order else ''}, "
+        f"convolution={multiphonon_convolution}, jobs={max(1, int(num_jobs))}"
     , flush=True)
     from irma.core.noncubic_inelastic import run_noncubic_sab_inprocess
 
@@ -316,6 +318,7 @@ def run_noncubic_standalone_sab(
         jobs=max(1, int(num_jobs)),
         multiphonon_max_order=multiphonon_max_order,
         auto_multiphonon_order=auto_multiphonon_order,
+        multiphonon_convolution=multiphonon_convolution,
         min_phonon_energy_mev=min_phonon_energy_mev,
         represented_principal_site_count=represented_principal_site_count,
         principal_group_index=principal_group_index,

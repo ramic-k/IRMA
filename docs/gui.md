@@ -83,6 +83,7 @@ When `inelastic_mode` is 1 or 2, the sub-frame exposes:
 | `ndir` | `10000` | One-phonon powder-average direction count: the validation-campaign sampling, well converged for production runs; drop to ~4000 for a faster look or ~1000 for a quick one. Cost is roughly linear. |
 | `mpdir` | `1000` | Multiphonon powder-average directions over the unit sphere (golden-spiral / Fibonacci); converged by ~50–100, so the default carries ample margin. |
 | Auto-size multiphonon order | **on** | When on (the default), IRMA sizes the multiphonon order `nphon` from the anisotropic Debye-Waller physics. When off, your Card 3 `nphon` is honored exactly (see below). |
+| Multiphonon convolution | **FFT (fast)** | How the multiphonon orders are computed (Card 6h). *Direct (exact tails)* gives exact values down to the far tails of S(α,β), at five to nine times the cost of this step; the FFT turns values more than about 16 decades below each order's peak into noise or zero. The deck carries Card 6h only for *Direct*. |
 | Minimum phonon energy [meV] | blank | Removes every phonon mode with energy at or below the value from all terms (nothing replaces them; the run is a truncated vibrational model, and the log reports the removed weight and the Debye-Waller change, with a warning above 1%). Blank or 0 keeps the automatic floors, which already exclude imaginary modes. Written as the optional one-value card before Card 6g. |
 | Use BORN corrections (NAC) | off | Non-analytical correction for polar materials; checking it reveals a BORN-file selector. Leave unchecked for non-polar materials such as graphite. |
 
@@ -238,7 +239,7 @@ Each input file evaluates one principal scatterer: for `inelastic_mode=1/2`, IRM
 | `nphon` | `100` | Maximum phonon expansion order. Light scatterers (H, D) reach much larger α for the same β grid and generally need *more* terms; heavy scatterers converge with fewer. For modes 1/2 this is also the multiphonon maximum order (unless Auto-size is on, the GUI default). |
 | `isabt` | `0 — S(α,β)` | Which form of S(α,β) is stored. `0` is the standard symmetric S(α,β) required by THERMR; `1` writes the asymmetric S̃ form (diagnostics only, not for library production). |
 | `ilog` | `0 — S values` | Storage form. `0` stores S directly; `1` stores ln(S) (ENDF LLN=1), useful when the table spans many decades and the processor supports it. |
-| `smin` | `1e-75` | S(α,β) values below this threshold are treated as zero (LEAPR convention). |
+| `smin` | `1e-295` | S(α,β) values below this threshold are written as zero. 1e-295 is the smallest value the tape writer stores in linear (`ilog=0`) storage, so nothing it can hold is set to zero. NJOY's THERMR treats any S at or below exp(−225) ≈ 1.9e-98 as missing, switches to its short-collision-time form there, and prints `sab contains numbers that are too small to represent on this machine` when a tape has such values; its results are the same as with `smin = 2e-98`, which avoids the message. A deck that leaves `smin` out keeps LEAPR's 1e-75. |
 
 ### Special Modes
 
@@ -302,7 +303,7 @@ The beta grid has three regions: a logarithmic low-β tail, a linear phonon regi
 | Max phonon freq | blank | Upper bound of the linear region (eV). The **Detect from DOS** and **Detect from phonopy.yaml** buttons fill it in; an automatic grid needs a value. |
 | N lower (log) | `15` | Logarithmic points in the low-β (thermal quasi-elastic) tail. |
 | N phonon (linear) | `300` | Linear points across [0, freq_max], where phonon features live. |
-| N upper (log) | `80` | Density of the logarithmic high-β multiphonon tail. On a lin-lin (INT=2) grid the tail near the recoil ridge is protected by the step cap whatever this value is (see [Automatic grids](grids.md#the-upper-tail-on-lin-lin-int2-grids)); `n_upper` sets the density of the log tail beyond it. For log-lin grids fewer points (~20) suffice. |
+| N upper (log) | `80` | Density of the logarithmic high-β multiphonon tail. On a lin-lin (INT=2) grid the tail near the recoil ridge is protected by the step cap whatever this value is (see [Automatic grids](grids.md#the-upper-tail-on-lin-lin-int2-grids)); `n_upper` sets the density of the log tail beyond it. On a log-lin grid the tail steps on the recoil ridge are divided automatically (see [The recoil ridge](grids.md#the-recoil-ridge-on-the-tails)), whatever this value is. |
 | Beta max | `5.0` | Maximum energy transfer (eV) for the upper tail. Hydrogen may need 10 eV or more. |
 
 #### Automatic alpha controls

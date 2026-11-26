@@ -81,9 +81,14 @@ class ComputationRunner:
         self._cancelled = False
         self._tail.clear()
         # errors="replace": a non-UTF-8 byte must not kill the reader thread
+        # The child's output is read as UTF-8. On Windows a Python child whose
+        # output is redirected otherwise writes in the active ANSI code page
+        # (for example cp1252), and printing a progress line with a Greek
+        # letter raises UnicodeEncodeError and stops a valid calculation.
+        child_env = dict(os.environ, PYTHONIOENCODING="utf-8")
         kw = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                   bufsize=1, universal_newlines=True, encoding="utf-8",
-                  errors="replace", cwd=self._spawn_cwd)
+                  errors="replace", cwd=self._spawn_cwd, env=child_env)
         if os.name == "posix":
             kw["start_new_session"] = True            # own process group
         else:  # pragma: no cover - Windows
