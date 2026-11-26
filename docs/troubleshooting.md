@@ -64,6 +64,23 @@ that happens to contain a module word will not truncate the input.
 
 ## phonopy not installed / force-constants resolution failures
 
+### pip stops at h5py on Python 3.15
+
+```
+error: Unable to load dependency HDF5, make sure HDF5 is installed properly
+error: libhdf5.so: cannot open shared object file: No such file or directory
+ERROR: Failed building wheel for h5py
+```
+
+phonopy requires h5py, which has no ready-built wheel for Python 3.15 yet, so
+pip tries to build it from source and needs the HDF5 library. Use Python 3.14
+or earlier, install phonopy from conda-forge first, or install HDF5 and a C
+compiler before running pip; the
+[installation page](installation.md#python-315-and-the-phonopy-extra) gives the
+commands.
+
+### phonopy missing or its force constants not found
+
 The noncubic inelastic modes (`iel=10` with `inelastic_mode=1` or `2`)
 need the optional `phonopy` extra. Neither the classic kernels (`iel=0`–`6`)
 nor `iel=10` with `inelastic_mode=0` needs it.

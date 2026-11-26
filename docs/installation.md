@@ -65,6 +65,33 @@ pip install -e ".[phonopy]"
 
 This adds `phonopy>=4.2` on top of the core dependencies and enables the mode-1/2 S(α,β) calculation. Phonopy 4 is the only major version the suite is tested against.
 
+#### Python 3.15 and the phonopy extra
+
+phonopy requires h5py, and neither package has published ready-built wheels
+for Python 3.15 on PyPI yet (h5py's next release, 3.17.0, is planned to add
+them). On Python 3.15, `pip install "irma[phonopy]"` (and `"irma[mlip]"`)
+therefore builds both from source, and stops with
+
+```
+error: Unable to load dependency HDF5, make sure HDF5 is installed properly
+```
+
+unless the HDF5 library is installed. Three routes work:
+
+1. Use Python 3.14 or earlier, where every dependency installs ready-built.
+2. Install phonopy from conda-forge, which has builds for Python 3.15 on Linux,
+   macOS and Windows, then IRMA with pip:
+   `conda install -c conda-forge phonopy`, then `pip install "irma[phonopy]"`.
+3. Install the HDF5 library and a C compiler first, then use pip as usual:
+   `sudo apt install libhdf5-dev` on Debian or Ubuntu (gcc is usually
+   present), or `brew install hdf5` on macOS (with Xcode's command-line tools).
+   If pip still does not find HDF5, name its location in `HDF5_DIR`, for
+   example `HDF5_DIR=/usr/lib/x86_64-linux-gnu/hdf5/serial` on Ubuntu or
+   `HDF5_DIR=$(brew --prefix hdf5)` on macOS. On Windows, use route 1 or 2.
+
+The core package (`pip install irma`) does not need phonopy and installs
+ready-built on Python 3.15.
+
 Installing the extra makes the code available but does not supply the physics input: a mode 1/2 input file also needs a phonopy calculation on disk, a `phonopy.yaml` plus force constants (named on `Card 6f`) and the `Card 6g` controls. The force constants are read from the YAML if embedded, otherwise discovered next to it (`force_constants.hdf5`, `FORCE_CONSTANTS`, `FORCE_SETS`, in that order); the working directory is never consulted. See the [input file reference](input-reference.md) for the full `Card 6f`/`Card 6g` layout.
 
 ### Adding the spectra extra

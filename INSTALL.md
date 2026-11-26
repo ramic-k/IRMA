@@ -42,6 +42,33 @@ The NCrystal pack exporter (`irma ncrystal`) needs `[phonopy,spectra]`: it
 exports modes 1/2 and reads a YAML config. The C++ NCrystal plugins are
 built separately (see the manual's installation page).
 
+### Python 3.15 and the phonopy extra
+
+phonopy requires h5py, and neither package has published ready-built wheels
+for Python 3.15 on PyPI yet (h5py's next release, 3.17.0, is planned to add
+them). On Python 3.15, `pip install "irma[phonopy]"` (and `"irma[mlip]"`)
+therefore builds both from source, and stops with
+
+```
+error: Unable to load dependency HDF5, make sure HDF5 is installed properly
+```
+
+unless the HDF5 library is installed. Three routes work:
+
+1. Use Python 3.14 or earlier, where every dependency installs ready-built.
+2. Install phonopy from conda-forge, which has builds for Python 3.15 on Linux,
+   macOS and Windows, then IRMA with pip:
+   `conda install -c conda-forge phonopy`, then `pip install "irma[phonopy]"`.
+3. Install the HDF5 library and a C compiler first, then use pip as usual:
+   `sudo apt install libhdf5-dev` on Debian or Ubuntu (gcc is usually
+   present), or `brew install hdf5` on macOS (with Xcode's command-line tools).
+   If pip still does not find HDF5, name its location in `HDF5_DIR`, for
+   example `HDF5_DIR=/usr/lib/x86_64-linux-gnu/hdf5/serial` on Ubuntu or
+   `HDF5_DIR=$(brew --prefix hdf5)` on macOS. On Windows, use route 1 or 2.
+
+The core package (`pip install irma`) does not need phonopy and installs
+ready-built on Python 3.15.
+
 ### Dependency documentation
 
 If you need help installing or configuring the dependencies:

@@ -67,9 +67,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"        # latest stable, no pre-releases
-      - name: install python3-tk (the GUI suites need a display toolkit)
-        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
-      - run: |
+      - name: install python3-tk (the GUI suites need a display toolkit) and HDF5
+        # libhdf5-dev and HDF5_DIR: h5py, which phonopy requires, has no wheel
+        # for Python 3.15, so pip builds it from source, and that needs the HDF5
+        # library. This job then tests the pip route that INSTALL.md describes
+        # for Python 3.15. Remove both once h5py publishes wheels for the newest
+        # Python (planned for h5py 3.17.0, with abi3 wheels; h5py issue #2993).
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb libhdf5-dev
+      - env:
+          HDF5_DIR: /usr/lib/x86_64-linux-gnu/hdf5/serial
+        run: |
           python -m pip install --upgrade pip
           python -m pip install -e .[mlip,spectra] pytest
           { echo "### python-latest: $(python -V)"; echo '```'; \
