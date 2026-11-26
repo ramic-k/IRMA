@@ -93,7 +93,7 @@ Cards are the numbered records of the input file; the
 [input file reference](input-reference.md) shows the complete layout
 with the extinction card in place. Add the optional `extinction` card as
 the last card of the `iel=10`
-elastic block (after Cards 6d/6e, or Card 6g for `inelastic_mode=1/2`),
+elastic block (after Cards 6d/6e, or Card 6g, or Card 6h when present, for `inelastic_mode=1/2`),
 before Card 7:
 
 ```

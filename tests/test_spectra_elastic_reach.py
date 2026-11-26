@@ -1,6 +1,6 @@
 """Instrument-reach Bragg cutoff: the reach algebra, truncation as a
-bit-identical prefix of the engine builder, and byte-identical elastic
-output on the committed graphite mode-0 example against a wider enumeration.
+bit-identical prefix of the engine builder, and the same elastic output (to
+rounding) on the committed graphite mode-0 example against a wider enumeration.
 """
 import numpy as np
 import pytest
@@ -79,8 +79,12 @@ def test_committed_example_spectrum_identical_to_a_wider_enumeration(monkeypatch
     """End-to-end on examples/spectra/graphite_mode0_dosfile.yaml (plus two
     constant-Q cuts to exercise the q_res-broadened peak path): enumerating
     the edges to 1 eV, past the instrument's reach, changes nothing in the
-    elastic output -- the extra edges are beyond the reach by construction.
-    Equality is asserted bitwise (tolerance 0)."""
+    elastic output -- the extra edges are beyond the reach by construction, so
+    their terms are exactly zero. Equality is asserted to rounding, not bitwise:
+    a BLAS matrix-vector product may add the same terms in a different order
+    when the number of terms changes (Apple Accelerate on an M4 Max changes the
+    last bit of one value, 1.5e-16 relative). Reordering a sum of 84 positive
+    terms changes it by at most about 2e-14 relative."""
     yaml = pytest.importorskip("yaml")  # noqa: F841  (example config is YAML)
     from irma.spectra.config import load, _assemble_dos_species
     import irma.spectra.elastic as el
@@ -111,9 +115,7 @@ def test_committed_example_spectrum_identical_to_a_wider_enumeration(monkeypatch
 
     # the reach-derived run really enumerates far fewer edges...
     assert 0 < r_reach.metadata["n_bragg_edges"] < r_full.metadata["n_bragg_edges"]
-    # ...and the elastic output is BYTE-IDENTICAL everywhere it is evaluated
-    np.testing.assert_array_equal(r_reach.I_elastic, r_full.I_elastic)
-    np.testing.assert_array_equal(r_reach.I_elastic_per_angle,
-                                  r_full.I_elastic_per_angle)
-    np.testing.assert_array_equal(r_reach.I_elastic_per_q, r_full.I_elastic_per_q)
-    np.testing.assert_array_equal(r_reach.I_total, r_full.I_total)
+    # ...and the elastic output is the same everywhere it is evaluated (zeros stay exactly zero)
+    for name in ("I_elastic", "I_elastic_per_angle", "I_elastic_per_q", "I_total"):
+        np.testing.assert_allclose(getattr(r_reach, name), getattr(r_full, name), rtol=2e-14, atol=0,
+                                   err_msg=name)

@@ -51,6 +51,10 @@ _DECK = """20 /
 
 # Frozen regression pins; re-bless only for an intended physics change.
 _PINS = {1: 9.098600568286e-01, 2: 2.633836729729e+00}
+# Mode 2 with Card 6h 'convolution_method direct': the exact orders keep the contributions the FFT path loses by
+# cutting each order at the top of the energy window (this deck's window ends at beta = 12, below the reach of
+# orders 2-6), so the sum is larger by 7e-7 relative.
+_PIN_DIRECT = 2.633838637500e+00
 _TEFF0 = 707.2741
 
 
@@ -116,6 +120,17 @@ def test_user_cutoff_reaches_complete_mode2_calculation(tapes, tmp_path, capsys)
     default_sum, _, _ = _mt4_stats(tapes[2])
     assert cutoff_min >= 0.0
     assert cutoff_sum != pytest.approx(default_sum, rel=1.0e-6)
+
+
+def test_direct_convolution_card_reaches_the_multiphonon_step(tmp_path, capsys):
+    deck = _DECK.format(mode=2, yaml=_YAML).replace("40 20/\n", "40 20/\nconvolution_method direct /\n")
+    inp, out = tmp_path / "direct.input", tmp_path / "direct.endf"
+    inp.write_text(deck)
+    run_leapr(str(inp), str(out))
+    assert "convolution=direct" in capsys.readouterr().out
+    s_sum, s_min, _ = _mt4_stats(str(out))
+    assert s_sum == pytest.approx(_PIN_DIRECT, rel=1.0e-9)
+    assert s_min >= 0.0
 
 
 def test_parallel_pool_matches_serial_byte_for_byte(tapes):

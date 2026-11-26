@@ -177,6 +177,24 @@ any change to the classic kernels, even a harmless-looking refactor, is
 caught before it ships. The comparisons with the published tapes (≤ 7×10⁻⁵)
 run in the manual harness under `tests/native_LEAPR_NJOY_ENDF_validation/`.
 
+### FFT and direct multiphonon orders
+
+IRMA computes the mode 1 and 2 multiphonon orders by FFT unless Card 6h asks
+for direct summation ([theory](../theory.md#multiphonon-via-self-convolution-on-a-work-grid)).
+The results on these pages use the FFT. The validation decks of graphite,
+beryllium and BeO (mode 2, 296 K, 10,000 and 1,000 directions) were also run
+with direct summation and processed with the same NJOY chain. Every stored
+S(α,β) value above 1e-8 agrees to 1e-6 or better (graphite: all values above
+1e-16 are identical); the values that differ lie below 1e-16, where the FFT
+gives noise or zeros (graphite: 5,124 zeros become values, about 15,000 other
+values change, by up to 33 orders of magnitude). After NJOY the cross sections
+on 1e-5 to 5 eV are identical to the printed digits for all four tapes
+(graphite, beryllium, and the Be and O tapes of BeO); the ACE files of graphite,
+beryllium and BeO's oxygen are byte-identical, and that of BeO's beryllium
+differs in three of 3.9 million lines, by at most 3.4e-7 in a scattering cosine.
+The choice of method therefore does not change the numbers and figures on these
+pages.
+
 ## The Debye-Waller convention
 
 The released OCLIMAX attenuates its coherent powder average with a

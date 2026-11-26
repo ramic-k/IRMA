@@ -209,10 +209,13 @@ def _auto_grids(freq_max_ev, awr, temperature_k, iint, coarse=None):
         float(freq_max_ev), tref, iint=iint, awr=float(awr),
         n_lower=d["n_lower"], n_phonon=d["n_phonon"],
         n_upper=d["n_upper"], beta_max_eV=d["beta_max_eV"],
-        evaluation_temperatures_K=[float(temperature_k)])
+        evaluation_temperatures_K=[float(temperature_k)],
+        resolve_ridge=not coarse)
     alpha = generate_alpha_grid(
         beta, float(awr), tref, dq_ang_inv=d["alpha_dq_invA"],
-        q_cut_ang_inv=d["alpha_qcut_invA"], n_log=d["alpha_nlog"])
+        q_cut_ang_inv=d["alpha_qcut_invA"], n_log=d["alpha_nlog"],
+        resolve_ridge=not coarse, freq_max_eV=float(freq_max_ev),
+        evaluation_temperatures_K=[float(temperature_k)])
     if not coarse:
         print("  " + describe_beta_grid(beta, tref, iint), flush=True)
     return alpha, beta
@@ -414,7 +417,7 @@ def _emit_iel10_decks(bundle, species, temperature_k, mats, out_dir,
             "20 /",
             f"'tsl {prin.symbol} in MLIP model | {GENERATED_NOTE}' /",
             f"1 1 {nphon} /",
-            f"{mats[prin.symbol]} {prin.za} 0 0 1.000000e-75 {iint} /",
+            f"{mats[prin.symbol]} {prin.za} 0 0 1.000000e-295 {iint} /",
             f"{prin.awr:.6f} {prin.sigma_free_b:.9f} 1 10 0 0 /",
             "0 0 0 0 0 /",
             f"{ef_field} {nat} {len(others)} {inelastic_mode} /",
@@ -528,7 +531,7 @@ def _emit_classic_decks(bundle, species, temperature_k, mats, out_dir,
             f"'tsl {prin.symbol} in disordered MLIP model | incoherent "
             f"elastic SB=sigma_bound_total' /",
             f"1 1 {NPHON_CARD3} /",
-            f"{mats[prin.symbol]} {prin.za} 0 0 1.000000e-75 0 /",
+            f"{mats[prin.symbol]} {prin.za} 0 0 1.000000e-295 0 /",
             f"{prin.awr:.6f} {sigma_free:.9f} 1 0 0 0 /",
             "0 0 0 0 0 /",
             f"{len(alpha)} {len(beta)} 1 /",

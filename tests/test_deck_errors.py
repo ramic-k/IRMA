@@ -332,6 +332,11 @@ def test_five_field_card_6g_rejected():
     _expect(deck, "Card 6g", "2 values plus an optional 3rd value")
 
 
+def test_card_6h_with_an_unknown_method_rejected():
+    deck = _MODE1_HEAD + "100 100 /\nconvolution_method exact /\n"
+    _expect(deck, "Card 6h", "'convolution_method direct /'")
+
+
 def test_two_field_card_6g_parses_then_fails_at_phonopy_load():
     """A 2-field Card 6g passes parsing; with a bogus phonopy path the
     deck then fails at the mesh load, proving 6g itself was accepted."""
