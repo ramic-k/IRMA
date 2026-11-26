@@ -1,7 +1,7 @@
 # Dependency canary: run IRMA's gates against the LATEST releases of
 # everything on a weekly clock, plus a preview job that deliberately
 # upgrades past the declared caps (early warning for the day a cap must
-# be revalidated, e.g. endf-parserpy 0.18). Any failure files/updates a
+# be revalidated, e.g. endf-parserpy 0.20). Any failure files/updates a
 # 'deps-watch' issue with the run link and the resolved versions.
 #
 # NOTE: GitHub auto-disables scheduled workflows after ~60 days without
