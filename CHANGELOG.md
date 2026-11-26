@@ -3,7 +3,15 @@
 Notable changes to IRMA. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] — 2026-11-26
+
+The fixes made since 1.1.0. One changes the input layout: mode-0 `iel=10`
+input files with more than one species give the other species' spectra per
+temperature (Card 12e), and a file with the old layout is refused. Tapes
+change in three cases, listed below: grids built anew by the automatic
+generators, coherent elastic output at later temperatures when an edge
+contributes more there, and `smin` in input files written by the GUI and
+the MLIP emitter. Card 6h is new and optional.
 
 - Automatic alpha and beta grids resolve the recoil ridge on their tails.
   NJOY's THERMR interpolates linearly in ln S across the coarse logarithmic
