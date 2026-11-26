@@ -27,13 +27,14 @@ keywords = [
 dependencies = [
     "numpy>=2.0",
     # endf-parserpy is pre-1.0 and sits on the MF7 write path; cap below the next
-    # unvalidated minor so a silent 0.x bump cannot change tape output. 0.17 is
-    # the CI-validated version. Bump protocol: the weekly deps-watch canary's
-    # core-preview job runs the FULL suite (including the bit-for-bit reference
-    # tape gates) past this cap, so a green preview against a new minor IS the
-    # revalidation -- raise the cap in the same change that cites that run, and
-    # keep the conda recipe's pin in step.
-    "endf-parserpy>=0.12,<0.19",
+    # unvalidated minor so a silent 0.x bump cannot change tape output. 0.19 is
+    # the newest validated version (deps-watch core-preview, full suite: 0.18.0
+    # in run 43898878516, 0.19.0 in run 45233893493). Bump protocol: the weekly
+    # deps-watch canary's core-preview job runs the FULL suite (including the
+    # bit-for-bit reference tape gates) past this cap, so a green preview
+    # against a new minor IS the revalidation -- raise the cap in the same
+    # change that cites that run, and keep the conda recipe's pin in step.
+    "endf-parserpy>=0.12,<0.20",
     # threadpoolctl backs limit_native_threads_to_one() (irma.core.noncubic_workers):
     # the noncubic mode-1/2 spawn ProcessPool pins native BLAS/OMP threads to 1 in the
     # parent and in every spawned worker. Without it the pin silently no-ops and a

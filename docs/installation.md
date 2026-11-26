@@ -10,7 +10,7 @@ IRMA is a pure-Python package. The core needs NumPy, `endf-parserpy` and `thread
 |-----------|-------------|------------------|
 | Python | >= 3.11 | Always |
 | NumPy | >= 2.0 | Always (installed automatically) |
-| `endf-parserpy` | >= 0.12, < 0.18 | Always (installed automatically; version-capped below 0.18, the next untested minor release) |
+| `endf-parserpy` | >= 0.12, < 0.20 | Always (installed automatically; version-capped below 0.20, the next untested minor release) |
 | `threadpoolctl` | >= 3.0 | Always (installed automatically; pins native BLAS/OpenMP threads for the mode-1/2 workers) |
 | `tkinter` | standard library | Only for the graphical interface |
 | `phonopy` | >= 4.2 | For `iel=10` with `inelastic_mode=1` or `2`, and for `irma.spectra` inelastic modes 1/2 or `dos_source: phonopy`, the spectra-config option that takes the DOS from the phonopy calculation (4.x is the only tested major) |
