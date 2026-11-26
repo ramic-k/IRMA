@@ -361,6 +361,26 @@ def test_min_phonon_energy_gui_rejects_invalid_values(app, value):
         app._generate_input_text()
 
 
+def test_direct_convolution_gui_deck_roundtrip(app, tmp_path):
+    _reset(app)
+    _setup_iel10(app)
+    app.inelastic_mode_var.set(2)
+    app.nc_phonopy_yaml.set("/nonexistent/phonopy.yaml")
+    app.nc_min_phonon_energy.set("")
+    assert "convolution_method" not in app._generate_input_text()      # FFT, the default, needs no card
+    app.nc_convolution_var.set("direct")
+    text = app._generate_input_text()
+    assert "\nconvolution_method direct /\n" in text
+
+    deck = tmp_path / "direct.input"
+    deck.write_text(text)
+    _reset(app)
+    app.nc_convolution_var.set("fft")
+    app._import_leapr_from_path(str(deck))
+    assert app.nc_convolution_var.get() == "direct"
+    assert app._generate_input_text() == text
+
+
 def test_nsk_with_empty_cfrac_rejected(app):
     _reset(app)
     app.nsk.set("2 — Skold")

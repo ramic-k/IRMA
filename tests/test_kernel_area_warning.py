@@ -27,3 +27,17 @@ def test_mode_off_the_grid_is_reported_as_a_deficit():
         np.array([1.0]), _EIGVECS, _EMISSION, _ABSORPTION,
         np.array([0]), np.array([0]), _THERMAL)
     assert abs(deficit - 0.5) < 1e-12
+
+
+def test_a_symmetry_reduced_mesh_is_judged_by_its_star_averaged_tensors():
+    """Two equivalent atoms and one irreducible mode whose eigenvector sits on the first: its symmetry copy sits on
+    the second, so the star-averaged tensors, which the seed uses, give each atom half. The check takes the area from
+    them; from the irreducible eigenvector alone each atom would be off by its whole displacement."""
+    eigvecs = np.array([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]])
+    star = np.zeros((1, 2, 6))
+    star[0, :, 0] = 0.5
+    thermal = np.tile(np.diag([0.15, 0.0, 0.0]), (2, 1, 1))
+    arguments = (np.array([1.0, 1.0]), eigvecs, np.array([0.2]), np.array([0.1]),
+                 np.array([0]), np.array([0]), thermal)
+    assert multiphonon_seed_area_deficit(*arguments, star) < 1e-12
+    assert abs(multiphonon_seed_area_deficit(*arguments) - 1.0) < 1e-12
