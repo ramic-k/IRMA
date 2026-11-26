@@ -419,18 +419,26 @@ def precompute_directional_multiphonon_orders(
 
 def multiphonon_seed_area_deficit(base_prefactors, mode_eigvecs, emission_prefactors,
                                   absorption_prefactors, emission_valid, absorption_valid,
-                                  thermal_mats) -> float:
+                                  thermal_mats, mode_projection_components=None) -> float:
     """Largest relative difference, over atoms, between the direction-averaged
     area of the multiphonon one-phonon seed and Tr(U_a)/3.
 
     The two agree to rounding when every mode lands inside the signed work grid
     and the seed uses the same modes as the Debye-Waller tensors; a gap means
     the multiphonon background loses area and cannot reach the free-atom limit.
+
+    On a symmetry-reduced mesh the seed is built from the star-averaged
+    projection tensors (``mode_projection_components``, (modes, atoms, 6)), and
+    the area is taken from them: an irreducible point's own eigenvector gives
+    one atom the weight that the star shares among its equivalent atoms.
     """
     weights = np.zeros(len(emission_prefactors), dtype=float)
     weights[emission_valid] += emission_prefactors[emission_valid]
     weights[absorption_valid] += absorption_prefactors[absorption_valid]
-    e2 = np.sum(np.abs(mode_eigvecs) ** 2, axis=2)              # (modes, atoms)
+    if mode_projection_components is not None:
+        e2 = np.asarray(mode_projection_components, dtype=float)[..., :3].sum(axis=2)
+    else:
+        e2 = np.sum(np.abs(mode_eigvecs) ** 2, axis=2)          # (modes, atoms)
     area = np.asarray(base_prefactors, dtype=float) * (weights @ e2) / 3.0
     msd = np.trace(np.asarray(thermal_mats, dtype=float), axis1=1, axis2=2) / 3.0
     mask = msd > 1.0e-12

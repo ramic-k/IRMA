@@ -868,7 +868,8 @@ def compute_from_args(
             seed_deficit = multiphonon_seed_area_deficit(
                 multiphonon_base_prefactors, multiphonon_mode_eigvecs_valid,
                 multiphonon_creation_prefactors, multiphonon_absorption_prefactors,
-                signed_emission_lookup[0], signed_absorption_lookup[0], thermal_mats)
+                signed_emission_lookup[0], signed_absorption_lookup[0], thermal_mats,
+                multiphonon_mode_projection_components)
             if seed_deficit > 1.0e-5:
                 print(
                     f"WARNING: the multiphonon one-phonon seed differs from the "
