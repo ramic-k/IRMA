@@ -159,7 +159,7 @@ in this distribution.
   oxide, including the comparisons with NJOY, Euphonic, OCLIMAX, and measured
   data.
 - **[Installation](installation.md)**: requirements (Python ≥ 3.11, numpy ≥ 2.0,
-  endf-parserpy ≥ 0.12, < 0.18; phonopy and scipy/PyYAML optional), the
+  endf-parserpy ≥ 0.12, < 0.20; phonopy and scipy/PyYAML optional), the
   `[phonopy]`/`[spectra]`/`[mlip]` extras, and verifying the install.
 - **[Quickstart](quickstart.md)**: from a fresh install to a written ENDF
   tape in about five minutes, with the console output explained.

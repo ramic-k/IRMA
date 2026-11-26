@@ -3,6 +3,12 @@
 Notable changes to IRMA. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- endf-parserpy 0.18 and 0.19 are allowed (cap `<0.20`, was `<0.18`). The
+  weekly dependency check ran the full suite, including the byte-for-byte
+  reference-tape tests, with 0.18.0 and with 0.19.0, and both passed.
+
 ## [1.2.0] — 2026-11-26
 
 The fixes made since 1.1.0. One changes the input layout: mode-0 `iel=10`
