@@ -5,6 +5,31 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Automatic alpha and beta grids resolve the recoil ridge on their tails.
+  NJOY's THERMR interpolates linearly in ln S across the coarse logarithmic
+  tail, and a step wider than a fraction of the ridge's width,
+  sqrt(2 beta T_eff/T), loses cross section at high incident energy: for
+  hydrogen in polyethylene with a 20-point log tail the processed total fell
+  0.6% below the free-atom value at 5 eV, and 4.5% below it at 10 eV on a
+  10 eV grid. `generate_beta_grid` (log-lin tail, given `awr`) and
+  `generate_alpha_grid` now divide every tail step on the ridge to at most
+  0.15 ridge widths, with T_eff >= T as the lower bound of the width; the
+  existing nodes are kept. The same case then gives +0.86% at 5 eV and
+  +0.43% at 10 eV, against the expected +0.87% and +0.44%. Grids grow for
+  light scatterers (hydrogen in polyethylene to 5 eV: 370 x 399 to 460 x 465
+  beta x alpha points; graphite with the GUI defaults: 395 x 399 to
+  431 x 400) and not for heavy ones. Decks carry their grids, so existing
+  decks give the same tapes; grids built anew by the GUI, `irma mlip emit`
+  or a direct call differ. `resolve_ridge=False` restores the plain tails;
+  the NCrystal pack exporter and the coarse preview grids use it.
+  `docs/grids.md` has the measurements.
+- Modes 1 and 2: the check that compares the multiphonon one-phonon seed with
+  the Debye-Waller displacement no longer warns on symmetry-reduced meshes.
+  It took each atom's own eigenvector weight at the irreducible q-points,
+  while the seed is built from the star-averaged tensors, so a crystal with
+  several equivalent atoms got "the multiphonon background loses area" with
+  a deviation of about 1% (polyethylene at 293.6 K) although the seed's area
+  equals the full-mesh displacement to rounding. No output changes.
 - Modes 1 and 2: optional Card 6h chooses how the multiphonon orders are
   computed: `convolution_method fft /` (the default, as before) or
   `convolution_method direct /`. The FFT's rounding error is a fraction
